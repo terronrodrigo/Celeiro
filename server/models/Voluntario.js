@@ -22,6 +22,7 @@ const voluntarioSchema = new mongoose.Schema({
   disponibilidade: { type: String, trim: true },
   horasSemana: { type: String, trim: true },
   areas: { type: [String], default: [] },
+  testemunho: { type: String, trim: true },
   timestamp: { type: Date, default: Date.now },
   timestampMs: { type: Number, default: () => Date.now() },
   // Para rastreamento

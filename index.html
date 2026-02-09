@@ -553,9 +553,22 @@
                   <div class="form-group"><label for="perfilVoluntarioIgreja">Já é voluntário na igreja?</label><select id="perfilVoluntarioIgreja"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
                 </div>
                 <div class="form-group"><label for="perfilMinisterio">Ministério</label><select id="perfilMinisterio"><option value="">Selecione</option></select><input type="text" id="perfilMinisterioOutro" placeholder="Outro (especifique)" class="ministerio-outro-input" style="display:none"></div>
-                <div class="form-group"><label for="perfilDisponibilidade">Disponibilidade</label><select id="perfilDisponibilidade"><option value="">Selecione</option><option value="Domingos manhã">Domingos manhã</option><option value="Domingos noite">Domingos noite</option><option value="Sábados">Sábados</option><option value="Durante a semana">Durante a semana</option><option value="Finais de semana">Finais de semana</option><option value="Conforme necessidade">Conforme necessidade</option><option value="Outro">Outro</option></select></div>
+                <div class="form-group">
+                  <label>Disponibilidade</label>
+                  <p class="form-hint">Em quais dias da semana você está disponível?</p>
+                  <div id="perfilDisponibilidadeGroup" class="disponibilidade-dias" role="group" aria-label="Dias da semana">
+                    <label class="checkbox-label"><input type="checkbox" name="perfilDisponibilidadeDia" value="Segunda"> Segunda</label>
+                    <label class="checkbox-label"><input type="checkbox" name="perfilDisponibilidadeDia" value="Terça"> Terça</label>
+                    <label class="checkbox-label"><input type="checkbox" name="perfilDisponibilidadeDia" value="Quarta"> Quarta</label>
+                    <label class="checkbox-label"><input type="checkbox" name="perfilDisponibilidadeDia" value="Quinta"> Quinta</label>
+                    <label class="checkbox-label"><input type="checkbox" name="perfilDisponibilidadeDia" value="Sexta"> Sexta</label>
+                    <label class="checkbox-label"><input type="checkbox" name="perfilDisponibilidadeDia" value="Sábado"> Sábado</label>
+                    <label class="checkbox-label"><input type="checkbox" name="perfilDisponibilidadeDia" value="Domingo"> Domingo</label>
+                  </div>
+                </div>
                 <div class="form-group"><label for="perfilHorasSemana">Horas/semana</label><select id="perfilHorasSemana"><option value="">Selecione</option><option value="Até 2 horas">Até 2 horas</option><option value="2 a 4 horas">2 a 4 horas</option><option value="4 a 6 horas">4 a 6 horas</option><option value="6 a 10 horas">6 a 10 horas</option><option value="Mais de 10 horas">Mais de 10 horas</option></select></div>
                 <div class="form-group"><label for="perfilAreas">Áreas de interesse</label><input type="text" id="perfilAreas" placeholder="Ex: Mídia, Louvor"></div>
+                <div class="form-group"><label for="perfilTestemunho">Testemunho</label><p class="form-hint">Preencha o testemunho de como sua vida foi mudada através de Jesus (não obrigatório).</p><textarea id="perfilTestemunho" placeholder="Conte um pouco da sua história com Jesus..." rows="4"></textarea></div>
                 <button type="submit" class="btn btn-primary">Salvar</button>
               </form>
             </div>
@@ -564,11 +577,11 @@
 
         <!-- Voluntário: Realizar check-in do dia -->
         <section class="view" data-view="checkin-hoje">
-          <div class="filters-card">
+          <div class="checkin-hoje-card">
             <h2>Realizar check-in do dia</h2>
-            <p class="auth-subtitle">Confirme presença no culto de hoje.</p>
-            <div id="eventosHojeList"></div>
-            <div id="formConfirmarCheckin" style="display: none;">
+            <p class="checkin-hoje-subtitle">Confirme presença no culto de hoje.</p>
+            <div id="eventosHojeList" class="checkin-hoje-eventos"></div>
+            <div id="formConfirmarCheckin" class="checkin-hoje-form" style="display: none;">
               <div class="form-group"><label for="confirmarMinisterio">Ministério</label><select id="confirmarMinisterio"><option value="">Selecione</option></select></div>
               <button type="button" class="btn btn-primary" id="btnConfirmarCheckin">Confirmar presença</button>
             </div>
@@ -577,6 +590,7 @@
 
         <!-- Voluntário: Histórico próprio de check-ins -->
         <section class="view" data-view="meus-checkins">
+          <p id="checkinRecebidoMsg" class="checkin-recebido-msg" style="display: none;" role="status"></p>
           <div class="table-card">
             <div class="chart-header"><h2>Meus check-ins <span id="meusCheckinsCount" class="list-count">(0)</span></h2></div>
             <div class="table-wrapper">
@@ -658,6 +672,7 @@
         <div class="form-group"><label for="cadastroDisponibilidade">Disponibilidade</label><select id="cadastroDisponibilidade"><option value="">Selecione</option><option value="Domingos manhã">Domingos manhã</option><option value="Domingos noite">Domingos noite</option><option value="Sábados">Sábados</option><option value="Durante a semana">Durante a semana</option><option value="Finais de semana">Finais de semana</option><option value="Conforme necessidade">Conforme necessidade</option><option value="Outro">Outro</option></select></div>
         <div class="form-group"><label for="cadastroHorasSemana">Horas/semana</label><select id="cadastroHorasSemana"><option value="">Selecione</option><option value="Até 2 horas">Até 2 horas</option><option value="2 a 4 horas">2 a 4 horas</option><option value="4 a 6 horas">4 a 6 horas</option><option value="6 a 10 horas">6 a 10 horas</option><option value="Mais de 10 horas">Mais de 10 horas</option></select></div>
         <div class="form-group"><label for="cadastroAreas">Áreas de interesse</label><input type="text" id="cadastroAreas" placeholder="Ex: Mídia, Louvor"></div>
+        <div class="form-group"><label for="cadastroTestemunho">Testemunho</label><p class="form-hint">Preencha o testemunho de como sua vida foi mudada através de Jesus (não obrigatório).</p><textarea id="cadastroTestemunho" placeholder="Conte um pouco da sua história com Jesus..." rows="4"></textarea></div>
         <p id="cadastroPublicoError" class="auth-error"></p>
         <p id="cadastroPublicoSuccess" class="auth-success" style="display: none;"></p>
         <button type="submit" class="btn btn-primary" id="btnCadastroPublico">Enviar inscrição</button>

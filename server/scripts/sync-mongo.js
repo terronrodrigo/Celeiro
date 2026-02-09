@@ -29,6 +29,7 @@ const COLS = {
   disponibilidade: ['disponibilidade'],
   horas_semana: ['Horas que pode', 'horas por semana'],
   areas: ['áreas gostaria de servir', 'Em quais áreas'],
+  testemunho: ['testemunho', 'como sua vida foi mudada'],
 };
 
 const CHECKIN_COLS = {
@@ -116,6 +117,7 @@ function rowToVoluntario(headers, row, colMap) {
     disponibilidade: get('disponibilidade'),
     horasSemana: get('horas_semana'),
     areas: get('areas').split(',').map(a => a.trim()).filter(Boolean),
+    testemunho: get('testemunho') || undefined,
     timestamp: timestampMs ? new Date(timestampMs) : undefined,
     timestampMs,
   };

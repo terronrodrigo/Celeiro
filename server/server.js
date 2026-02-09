@@ -142,6 +142,7 @@ app.post('/api/cadastro', async (req, res) => {
     const areas = Array.isArray(areasRaw)
       ? areasRaw.map(a => String(a).trim()).filter(Boolean)
       : (typeof areasRaw === 'string' ? areasRaw.split(',').map(a => a.trim()).filter(Boolean) : []);
+    const testemunho = (body.testemunho || '').trim() || undefined;
 
     const doc = {
       email,
@@ -159,6 +160,7 @@ app.post('/api/cadastro', async (req, res) => {
       disponibilidade: disponibilidade || undefined,
       horasSemana: horasSemana || undefined,
       areas,
+      testemunho,
       fonte: 'manual',
       ativo: true,
     };

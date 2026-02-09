@@ -153,9 +153,10 @@ const perfilIgreja = document.getElementById('perfilIgreja');
 const perfilTempoIgreja = document.getElementById('perfilTempoIgreja');
 const perfilVoluntarioIgreja = document.getElementById('perfilVoluntarioIgreja');
 const perfilMinisterio = document.getElementById('perfilMinisterio');
-const perfilDisponibilidade = document.getElementById('perfilDisponibilidade');
+const perfilDisponibilidadeGroup = document.getElementById('perfilDisponibilidadeGroup');
 const perfilHorasSemana = document.getElementById('perfilHorasSemana');
 const perfilAreas = document.getElementById('perfilAreas');
+const perfilTestemunho = document.getElementById('perfilTestemunho');
 const eventosHojeList = document.getElementById('eventosHojeList');
 const formConfirmarCheckin = document.getElementById('formConfirmarCheckin');
 const confirmarMinisterio = document.getElementById('confirmarMinisterio');
@@ -229,8 +230,11 @@ function clearUserContent() {
   selectedEmails.clear();
   currentView = '';
   ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio'].forEach(v => setViewLoading(v, false));
-  const perfilFields = [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilEstado, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilMinisterio, perfilDisponibilidade, perfilHorasSemana, perfilAreas];
+  const perfilFields = [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilEstado, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilMinisterio, perfilHorasSemana, perfilAreas, perfilTestemunho];
   perfilFields.forEach(el => { if (el) el.value = ''; });
+  if (perfilDisponibilidadeGroup) {
+    perfilDisponibilidadeGroup.querySelectorAll('input[name="perfilDisponibilidadeDia"]').forEach(cb => { cb.checked = false; });
+  }
   if (meusCheckinsBody) meusCheckinsBody.innerHTML = '<tr><td colspan="3">Carregando...</td></tr>';
   if (eventosHojeList) eventosHojeList.innerHTML = '';
   if (eventosCheckinBody) eventosCheckinBody.innerHTML = '';
@@ -674,7 +678,7 @@ function renderUsers() {
     const mins = u.ministerioIds || [];
     const minNomes = mins.length ? mins.map(m => (m && m.nome) ? m.nome : '').filter(Boolean).join(', ') || '—' : (u.role === 'lider' || (u.role === 'admin' && mins.length) ? '—' : '');
     return `<tr>
-      <td>${escapeHtml(u.nome || '—')}</td>
+      <td>${escapeHtml(capitalizeWords(u.nome) || '—')}</td>
       <td>${escapeHtml(u.email || '—')}</td>
       <td>${escapeHtml(roleLabel(u.role))}</td>
       <td>${escapeHtml(minNomes)}</td>
@@ -944,10 +948,15 @@ async function confirmarCheckin() {
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || 'Falha ao confirmar');
-    alert('Check-in realizado com sucesso!');
     confirmarMinisterio.value = '';
-    fetchEventosHoje();
-    fetchMeusCheckins();
+    await fetchMeusCheckins();
+    setView('meus-checkins');
+    const msgEl = document.getElementById('checkinRecebidoMsg');
+    if (msgEl) {
+      msgEl.textContent = 'Check-in recebido!';
+      msgEl.style.display = 'block';
+      setTimeout(() => { msgEl.style.display = 'none'; }, 4000);
+    }
   } catch (e) {
     alert(e.message || 'Erro ao confirmar check-in.');
   }
@@ -1064,11 +1073,20 @@ async function fetchPerfil() {
       if (perfilVoluntarioIgreja) perfilVoluntarioIgreja.value = perfil.voluntarioIgreja || '';
       renderMinisterioSelect('perfilMinisterio', perfil.ministerio || '');
       toggleMinisterioOutroVisibility('perfilMinisterio');
-      if (perfilDisponibilidade) perfilDisponibilidade.value = perfil.disponibilidade || '';
+      const dispVal = (perfil.disponibilidade || '').split(',').map(d => d.trim()).filter(Boolean);
+      if (perfilDisponibilidadeGroup) {
+        perfilDisponibilidadeGroup.querySelectorAll('input[name="perfilDisponibilidadeDia"]').forEach(cb => {
+          cb.checked = dispVal.includes(cb.value);
+        });
+      }
       if (perfilHorasSemana) perfilHorasSemana.value = perfil.horasSemana || '';
       if (perfilAreas) perfilAreas.value = Array.isArray(perfil.areas) ? perfil.areas.join(', ') : (perfil.areas || '');
+      if (perfilTestemunho) perfilTestemunho.value = perfil.testemunho || '';
     } else {
-      [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilDisponibilidade, perfilHorasSemana, perfilAreas].forEach(el => { if (el) el.value = ''; });
+      [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilHorasSemana, perfilAreas, perfilTestemunho].forEach(el => { if (el) el.value = ''; });
+      if (perfilDisponibilidadeGroup) {
+        perfilDisponibilidadeGroup.querySelectorAll('input[name="perfilDisponibilidadeDia"]').forEach(cb => { cb.checked = false; });
+      }
       renderMinisterioSelect('perfilMinisterio', '');
       const perfilMinisterioOutro = document.getElementById('perfilMinisterioOutro');
       if (perfilMinisterioOutro) { perfilMinisterioOutro.value = ''; perfilMinisterioOutro.style.display = 'none'; }
@@ -1105,9 +1123,12 @@ async function savePerfil(e) {
     tempoIgreja: perfilTempoIgreja?.value?.trim(),
     voluntarioIgreja: perfilVoluntarioIgreja?.value?.trim(),
     ministerio: getMinisterioValue('perfilMinisterio') || undefined,
-    disponibilidade: perfilDisponibilidade?.value?.trim(),
+    disponibilidade: perfilDisponibilidadeGroup
+    ? Array.from(perfilDisponibilidadeGroup.querySelectorAll('input[name="perfilDisponibilidadeDia"]:checked')).map(cb => cb.value).join(', ')
+    : '',
     horasSemana: perfilHorasSemana?.value?.trim(),
     areas: areasStr ? areasStr.split(',').map(a => a.trim()).filter(Boolean) : [],
+    testemunho: perfilTestemunho?.value?.trim() || undefined,
   };
   try {
     const r = await authFetch(`${API_BASE}/api/me/perfil`, {
@@ -1600,6 +1621,12 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
+/** Formata nome com iniciais maiúsculas (cada palavra). */
+function capitalizeWords(str) {
+  if (str == null || String(str).trim() === '') return str;
+  return String(str).trim().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function escapeAttr(s) {
   return String(s).replace(/"/g, '&quot;');
 }
@@ -1685,6 +1712,7 @@ async function openPerfilVoluntario(email, options) {
       ${fieldRow('Disponibilidade', v.disponibilidade)}
       ${fieldRow('Horas por semana', v.horasSemana)}
       ${fieldRow('Áreas', areasStr || null)}
+      ${fieldRow('Testemunho', v.testemunho || null)}
       ${checkinsSection}
     `.trim() || '<p>Nenhum dado cadastrado.</p>');
   } else {
@@ -2487,6 +2515,7 @@ document.getElementById('cadastroPublicoForm')?.addEventListener('submit', async
     disponibilidade: (document.getElementById('cadastroDisponibilidade')?.value || '').trim() || undefined,
     horasSemana: (document.getElementById('cadastroHorasSemana')?.value || '').trim() || undefined,
     areas: (document.getElementById('cadastroAreas')?.value || '').trim() || undefined,
+    testemunho: (document.getElementById('cadastroTestemunho')?.value || '').trim() || undefined,
   };
   if (!payload.email || !payload.email.includes('@')) {
     if (errEl) errEl.textContent = 'Email é obrigatório e deve ser válido.';
