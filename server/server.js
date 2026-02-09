@@ -1344,6 +1344,56 @@ app.post('/api/email/review-llm', requireAuth, requireAdmin, async (req, res) =>
   }
 });
 
+// Cache do versículo do dia (por data, para não chamar Grok a cada request)
+let versiculoDiaCache = { date: '', text: '', reference: '' };
+
+// GET /api/versiculo-dia - Versículo do dia via Grok (testa a API e enriquece o resumo)
+app.get('/api/versiculo-dia', requireAuth, async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    if (versiculoDiaCache.date === today && versiculoDiaCache.text) {
+      return res.json({ text: versiculoDiaCache.text, reference: versiculoDiaCache.reference || '' });
+    }
+    const apiKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'GROK_API_KEY não configurada.' });
+    }
+    const systemPrompt = 'Você é um assistente que retorna apenas um versículo bíblico em português, adequado para o dia. Responda em uma única linha no formato: "Texto do versículo" — Referência (ex.: João 3.16). Sem explicação, sem markdown, só o texto e a referência.';
+    const userPrompt = `Hoje é ${new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}. Retorne um versículo bíblico inspirador para o dia, em português.`;
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'grok-4-latest',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.5,
+        max_tokens: 150,
+      }),
+    });
+    const raw = await response.text();
+    if (!response.ok) {
+      const errMsg = (() => { try { const p = JSON.parse(raw); return p.error?.message || raw; } catch (_) { return raw; } })();
+      return res.status(502).json({ error: `Grok: ${String(errMsg).slice(0, 120)}` });
+    }
+    const data = JSON.parse(raw);
+    const content = (data?.choices?.[0]?.message?.content || '').trim();
+    const dash = content.indexOf('—');
+    const ref = dash >= 0 ? content.slice(dash + 1).replace(/^[\s—\-]+/, '').trim() : '';
+    const text = dash >= 0 ? content.slice(0, dash).trim().replace(/^["']|["']$/g, '') : content;
+    versiculoDiaCache = { date: today, text: text || content, reference: ref };
+    res.json({ text: versiculoDiaCache.text, reference: versiculoDiaCache.reference });
+  } catch (err) {
+    console.error('versiculo-dia:', err);
+    res.status(500).json({ error: err.message || 'Erro ao buscar versículo.' });
+  }
+});
+
 app.post('/api/send-email', requireAuth, requireAdmin, async (req, res) => {
   const { to, subject, html, text, voluntarios: voluntariosMap } = req.body;
   const apiKey = process.env.RESEND_API_KEY;
