@@ -518,8 +518,8 @@
                   <div class="form-group"><label for="perfilEmail">Email</label><input type="email" id="perfilEmail" placeholder="seu@email.com" disabled></div>
                 </div>
                 <div class="form-row">
-                  <div class="form-group"><label for="perfilNascimento">Data de nascimento</label><input type="date" id="perfilNascimento" max="2015-12-31"></div>
-                  <div class="form-group"><label for="perfilWhatsapp">WhatsApp</label><input type="text" id="perfilWhatsapp" placeholder="(11) 99999-9999"></div>
+                  <div class="form-group"><label for="perfilNascimento">Data de nascimento</label><input type="date" id="perfilNascimento" min="1920-01-01" max="2015-12-31" title="Data válida entre 1920 e 2015"></div>
+                  <div class="form-group"><label for="perfilWhatsapp">WhatsApp</label><input type="tel" id="perfilWhatsapp" placeholder="(11) 99999-9999" maxlength="16" inputmode="numeric" pattern="[0-9\s\(\)\-]+" title="Apenas números. Ex: (11) 99999-9999"></div>
                 </div>
                 <div class="form-row">
                   <div class="form-group"><label for="perfilPais">País</label><input type="text" id="perfilPais" placeholder="Brasil"></div>
@@ -529,12 +529,12 @@
                 <div class="form-group"><label for="perfilEvangelico">É cristão/evangélico?</label><select id="perfilEvangelico"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
                 <div class="form-group"><label for="perfilIgreja">Igreja onde congrega</label><input type="text" id="perfilIgreja" placeholder="Nome da igreja"></div>
                 <div class="form-row">
-                  <div class="form-group"><label for="perfilTempoIgreja">Tempo que frequenta a igreja</label><input type="text" id="perfilTempoIgreja" placeholder="Ex: 2 anos"></div>
+                  <div class="form-group"><label for="perfilTempoIgreja">Tempo que frequenta a igreja</label><select id="perfilTempoIgreja"><option value="">Selecione</option><option value="Menos de 1 ano">Menos de 1 ano</option><option value="1 a 3 anos">1 a 3 anos</option><option value="3 a 5 anos">3 a 5 anos</option><option value="5 a 10 anos">5 a 10 anos</option><option value="Mais de 10 anos">Mais de 10 anos</option><option value="Não frequento">Não frequento</option></select></div>
                   <div class="form-group"><label for="perfilVoluntarioIgreja">Já é voluntário na igreja?</label><select id="perfilVoluntarioIgreja"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
                 </div>
                 <div class="form-group"><label for="perfilMinisterio">Ministério em que serve ou deseja servir</label><select id="perfilMinisterio"><option value="">Selecione</option></select><input type="text" id="perfilMinisterioOutro" placeholder="Outro (especifique)" class="ministerio-outro-input" style="display:none"></div>
-                <div class="form-group"><label for="perfilDisponibilidade">Disponibilidade</label><input type="text" id="perfilDisponibilidade" placeholder="Ex: Domingos manhã"></div>
-                <div class="form-group"><label for="perfilHorasSemana">Horas por semana que pode dedicar</label><input type="text" id="perfilHorasSemana" placeholder="Ex: 2 a 4 horas"></div>
+                <div class="form-group"><label for="perfilDisponibilidade">Disponibilidade</label><select id="perfilDisponibilidade"><option value="">Selecione</option><option value="Domingos manhã">Domingos manhã</option><option value="Domingos noite">Domingos noite</option><option value="Sábados">Sábados</option><option value="Durante a semana">Durante a semana</option><option value="Finais de semana">Finais de semana</option><option value="Conforme necessidade">Conforme necessidade</option><option value="Outro">Outro</option></select></div>
+                <div class="form-group"><label for="perfilHorasSemana">Horas por semana que pode dedicar</label><select id="perfilHorasSemana"><option value="">Selecione</option><option value="Até 2 horas">Até 2 horas</option><option value="2 a 4 horas">2 a 4 horas</option><option value="4 a 6 horas">4 a 6 horas</option><option value="6 a 10 horas">6 a 10 horas</option><option value="Mais de 10 horas">Mais de 10 horas</option></select></div>
                 <div class="form-group"><label for="perfilAreas">Áreas de interesse (separadas por vírgula)</label><input type="text" id="perfilAreas" placeholder="Ex: Mídia, Louvor"></div>
                 <button type="submit" class="btn btn-primary">Salvar</button>
               </form>
@@ -620,8 +620,8 @@
           <div class="form-group"><label for="cadastroEmail">Email</label><input type="email" id="cadastroEmail" placeholder="seu@email.com" required></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label for="cadastroNascimento">Data de nascimento</label><input type="date" id="cadastroNascimento" max="2015-12-31"></div>
-          <div class="form-group"><label for="cadastroWhatsapp">WhatsApp</label><input type="text" id="cadastroWhatsapp" placeholder="(11) 99999-9999"></div>
+          <div class="form-group"><label for="cadastroNascimento">Data de nascimento</label><input type="date" id="cadastroNascimento" min="1920-01-01" max="2015-12-31" title="Data válida entre 1920 e 2015"></div>
+          <div class="form-group"><label for="cadastroWhatsapp">WhatsApp</label><input type="tel" id="cadastroWhatsapp" placeholder="(11) 99999-9999" maxlength="16" inputmode="numeric" pattern="[0-9\s\(\)\-]+" title="Apenas números. Ex: (11) 99999-9999"></div>
         </div>
         <div class="form-row">
           <div class="form-group"><label for="cadastroPais">País</label><input type="text" id="cadastroPais" placeholder="Brasil"></div>
@@ -631,12 +631,12 @@
         <div class="form-group"><label for="cadastroEvangelico">É cristão/evangélico?</label><select id="cadastroEvangelico"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
         <div class="form-group"><label for="cadastroIgreja">Igreja onde congrega</label><input type="text" id="cadastroIgreja" placeholder="Nome da igreja"></div>
         <div class="form-row">
-          <div class="form-group"><label for="cadastroTempoIgreja">Tempo que frequenta a igreja</label><input type="text" id="cadastroTempoIgreja" placeholder="Ex: 2 anos"></div>
+          <div class="form-group"><label for="cadastroTempoIgreja">Tempo que frequenta a igreja</label><select id="cadastroTempoIgreja"><option value="">Selecione</option><option value="Menos de 1 ano">Menos de 1 ano</option><option value="1 a 3 anos">1 a 3 anos</option><option value="3 a 5 anos">3 a 5 anos</option><option value="5 a 10 anos">5 a 10 anos</option><option value="Mais de 10 anos">Mais de 10 anos</option><option value="Não frequento">Não frequento</option></select></div>
           <div class="form-group"><label for="cadastroVoluntarioIgreja">Já é voluntário na igreja?</label><select id="cadastroVoluntarioIgreja"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
         </div>
         <div class="form-group"><label for="cadastroMinisterio">Ministério em que serve ou deseja servir</label><select id="cadastroMinisterio"><option value="">Selecione</option></select><input type="text" id="cadastroMinisterioOutro" placeholder="Outro (especifique)" class="ministerio-outro-input" style="display:none"></div>
-        <div class="form-group"><label for="cadastroDisponibilidade">Disponibilidade</label><input type="text" id="cadastroDisponibilidade" placeholder="Ex: Domingos manhã, Sábados"></div>
-        <div class="form-group"><label for="cadastroHorasSemana">Horas por semana que pode dedicar</label><input type="text" id="cadastroHorasSemana" placeholder="Ex: 2 a 4 horas"></div>
+        <div class="form-group"><label for="cadastroDisponibilidade">Disponibilidade</label><select id="cadastroDisponibilidade"><option value="">Selecione</option><option value="Domingos manhã">Domingos manhã</option><option value="Domingos noite">Domingos noite</option><option value="Sábados">Sábados</option><option value="Durante a semana">Durante a semana</option><option value="Finais de semana">Finais de semana</option><option value="Conforme necessidade">Conforme necessidade</option><option value="Outro">Outro</option></select></div>
+        <div class="form-group"><label for="cadastroHorasSemana">Horas por semana que pode dedicar</label><select id="cadastroHorasSemana"><option value="">Selecione</option><option value="Até 2 horas">Até 2 horas</option><option value="2 a 4 horas">2 a 4 horas</option><option value="4 a 6 horas">4 a 6 horas</option><option value="6 a 10 horas">6 a 10 horas</option><option value="Mais de 10 horas">Mais de 10 horas</option></select></div>
         <div class="form-group"><label for="cadastroAreas">Áreas de interesse (separadas por vírgula)</label><input type="text" id="cadastroAreas" placeholder="Ex: Mídia, Louvor, Crianças"></div>
         <p id="cadastroPublicoError" class="auth-error"></p>
         <p id="cadastroPublicoSuccess" class="auth-success" style="display: none;"></p>

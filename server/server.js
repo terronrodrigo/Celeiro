@@ -86,13 +86,30 @@ app.get('/api/health', (req, res) => {
 
 // POST /api/cadastro - Cadastro público de voluntários (sem auth). Padroniza estado (UF) e cidade.
 function parseNascimento(val) {
-  if (!val) return undefined;
+  if (val == null) return undefined;
   if (val instanceof Date) return val;
   const s = String(val).trim();
   const m = s.match(/(\d{2})\/(\d{2})\/(\d{4})/);
   if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+const NASCIMENTO_MIN = new Date(1920, 0, 1);
+const NASCIMENTO_MAX = new Date(2015, 11, 31);
+function validarNascimento(d) {
+  if (!d || !(d instanceof Date) || Number.isNaN(d.getTime())) return false;
+  const t = d.getTime();
+  return t >= NASCIMENTO_MIN.getTime() && t <= NASCIMENTO_MAX.getTime();
+}
+
+/** Retorna apenas dígitos do WhatsApp (10 ou 11) ou null se inválido. */
+function normalizarWhatsapp(val) {
+  if (val == null || val === '') return undefined;
+  const digits = String(val).replace(/\D/g, '');
+  if (digits.length === 0) return undefined;
+  if (digits.length !== 10 && digits.length !== 11) return null;
+  return digits;
 }
 
 app.post('/api/cadastro', async (req, res) => {
@@ -104,9 +121,13 @@ app.post('/api/cadastro', async (req, res) => {
     const email = (body.email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
 
+    const whatsappNorm = normalizarWhatsapp(body.whatsapp);
+    if (body.whatsapp != null && body.whatsapp !== '' && whatsappNorm === null) return sendError(res, 400, 'WhatsApp inválido. Informe 10 ou 11 dígitos (DDD + número).');
+    const nascimentoParsed = parseNascimento(body.nascimento);
+    if (body.nascimento != null && body.nascimento !== '' && nascimentoParsed != null && !validarNascimento(nascimentoParsed)) return sendError(res, 400, 'Data de nascimento deve estar entre 1920 e 2015.');
     const nome = (body.nome || '').trim();
-    const nascimento = parseNascimento(body.nascimento);
-    const whatsapp = (body.whatsapp || '').trim();
+    const nascimento = nascimentoParsed;
+    const whatsapp = whatsappNorm !== undefined && whatsappNorm !== null ? whatsappNorm : (body.whatsapp || '').trim() || undefined;
     const pais = (body.pais || '').trim();
     let estado = normalizarEstado((body.estado || '').trim());
     let cidade = normalizarCidade((body.cidade || '').trim());
@@ -943,7 +964,18 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
     delete body.email;
     delete body._id;
     if (body.areas && typeof body.areas === 'string') body.areas = body.areas.split(',').map(a => a.trim()).filter(Boolean);
-    if (body.nascimento != null && typeof body.nascimento === 'string') body.nascimento = parseNascimento(body.nascimento) || body.nascimento;
+    if (body.whatsapp != null) {
+      const w = normalizarWhatsapp(body.whatsapp);
+      if (body.whatsapp !== '' && w === null) return sendError(res, 400, 'WhatsApp inválido. Informe 10 ou 11 dígitos (DDD + número).');
+      body.whatsapp = (w != null ? w : (body.whatsapp === '' ? undefined : body.whatsapp));
+    }
+    if (body.nascimento != null && body.nascimento !== '') {
+      const n = parseNascimento(body.nascimento);
+      body.nascimento = n || body.nascimento;
+      if (n && !validarNascimento(n)) return sendError(res, 400, 'Data de nascimento deve estar entre 1920 e 2015.');
+    } else if (body.nascimento != null && typeof body.nascimento === 'string') {
+      body.nascimento = parseNascimento(body.nascimento) || body.nascimento;
+    }
     if (body.estado != null) body.estado = normalizarEstado(body.estado);
     if (body.cidade != null) body.cidade = normalizarCidade(body.cidade);
     const perfil = await Voluntario.findOneAndUpdate(

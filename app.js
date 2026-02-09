@@ -24,6 +24,23 @@ const MINISTERIOS_PADRAO = [
   'Intercessão Online',
 ];
 
+const TEMPO_IGREJA_OPCOES = ['', 'Menos de 1 ano', '1 a 3 anos', '3 a 5 anos', '5 a 10 anos', 'Mais de 10 anos', 'Não frequento'];
+const DISPONIBILIDADE_OPCOES = ['', 'Domingos manhã', 'Domingos noite', 'Sábados', 'Durante a semana', 'Finais de semana', 'Conforme necessidade', 'Outro'];
+const HORAS_SEMANA_OPCOES = ['', 'Até 2 horas', '2 a 4 horas', '4 a 6 horas', '6 a 10 horas', 'Mais de 10 horas'];
+
+/** Formata e valida WhatsApp: só dígitos, 10 ou 11 caracteres. Retorna string formatada (11) 99999-9999 ou vazio se inválido. */
+function formatarWhatsApp(val) {
+  const digits = String(val || '').replace(/\D/g, '');
+  if (digits.length === 0) return '';
+  if (digits.length === 11) return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  if (digits.length === 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return digits.length <= 11 ? digits : digits.slice(0, 11);
+}
+function validarWhatsApp(val) {
+  const digits = String(val || '').replace(/\D/g, '');
+  return digits.length === 10 || digits.length === 11;
+}
+
 let voluntarios = [];
 let resumo = {};
 let areasChart = null;
@@ -932,7 +949,7 @@ async function fetchPerfil() {
       if (perfilNome) perfilNome.value = perfil.nome || '';
       if (perfilEmail) perfilEmail.value = perfil.email || '';
       if (perfilNascimento) perfilNascimento.value = formatNascimentoParaInput(perfil.nascimento);
-      if (perfilWhatsapp) perfilWhatsapp.value = perfil.whatsapp || '';
+      if (perfilWhatsapp) perfilWhatsapp.value = perfil.whatsapp ? (formatarWhatsApp(perfil.whatsapp) || perfil.whatsapp) : '';
       if (perfilPais) perfilPais.value = perfil.pais || '';
       if (perfilEstado) perfilEstado.value = perfil.estado || '';
       if (perfilCidade) perfilCidade.value = perfil.cidade || '';
@@ -965,11 +982,16 @@ async function fetchPerfil() {
 async function savePerfil(e) {
   e.preventDefault();
   if (!authToken) return;
+  const whatsappRaw = perfilWhatsapp?.value?.trim();
+  if (whatsappRaw && !validarWhatsApp(whatsappRaw)) {
+    alert('WhatsApp inválido. Informe 10 ou 11 dígitos (DDD + número).');
+    return;
+  }
   const areasStr = perfilAreas?.value?.trim();
   const payload = {
     nome: perfilNome?.value?.trim(),
     nascimento: nascimentoDateInputToApi(perfilNascimento?.value) || undefined,
-    whatsapp: perfilWhatsapp?.value?.trim(),
+    whatsapp: whatsappRaw || undefined,
     pais: perfilPais?.value?.trim(),
     estado: perfilEstado?.value?.trim(),
     cidade: perfilCidade?.value?.trim(),
@@ -2301,6 +2323,10 @@ document.getElementById('cadastroPublicoForm')?.addEventListener('submit', async
     if (errEl) errEl.textContent = 'Email é obrigatório e deve ser válido.';
     return;
   }
+  if (payload.whatsapp && !validarWhatsApp(payload.whatsapp)) {
+    if (errEl) errEl.textContent = 'WhatsApp inválido. Informe 10 ou 11 dígitos (DDD + número).';
+    return;
+  }
   const btn = document.getElementById('btnCadastroPublico');
   if (btn) btn.disabled = true;
   try {
@@ -2335,6 +2361,18 @@ document.getElementById('btnCopiarLinkCadastro')?.addEventListener('click', () =
 
 document.getElementById('cadastroMinisterio')?.addEventListener('change', () => toggleMinisterioOutroVisibility('cadastroMinisterio'));
 document.getElementById('perfilMinisterio')?.addEventListener('change', () => toggleMinisterioOutroVisibility('perfilMinisterio'));
+perfilWhatsapp?.addEventListener('blur', function () {
+  const v = this.value?.trim();
+  if (!v) return;
+  const formatted = formatarWhatsApp(v);
+  if (formatted) this.value = formatted;
+});
+document.getElementById('cadastroWhatsapp')?.addEventListener('blur', function () {
+  const v = this.value?.trim();
+  if (!v) return;
+  const formatted = formatarWhatsApp(v);
+  if (formatted) this.value = formatted;
+});
 
 window.addEventListener('hashchange', () => {
   if (window.location.hash === '#cadastro') showCadastroPublico();
