@@ -428,6 +428,9 @@ async function syncCheckins() {
 // Setup inicial: criar primeiro admin (após deploy). Protegido por SETUP_SECRET.
 app.get('/api/setup/status', async (_req, res) => {
   try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ needsSetup: false, error: 'MongoDB não conectado. Configure MONGODB_URI no Railway.' });
+    }
     const hasAdmin = await User.exists({ role: 'admin' });
     res.json({ needsSetup: !!SETUP_SECRET && !hasAdmin });
   } catch (err) {
@@ -437,6 +440,9 @@ app.get('/api/setup/status', async (_req, res) => {
 
 app.post('/api/setup', async (req, res) => {
   try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ error: 'MongoDB não conectado. Configure MONGODB_URI nas variáveis do Railway e faça redeploy.' });
+    }
     const { secret, email, nome, senha } = req.body || {};
     if (!SETUP_SECRET) return res.status(400).json({ error: 'Setup não configurado no servidor.' });
     if (String(secret).trim() !== SETUP_SECRET) return res.status(403).json({ error: 'Código de setup inválido.' });

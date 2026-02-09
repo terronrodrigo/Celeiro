@@ -10,6 +10,7 @@ const VOLUNTARIOS_CSV_PATH = (process.env.VOLUNTARIOS_CSV_PATH || '').trim();
 const CHECKIN_CSV_PATH = (process.env.CHECKIN_CSV_PATH || '').trim();
 const CSV_URL = process.env.GOOGLE_SHEETS_CSV_URL ||
   'https://docs.google.com/spreadsheets/d/1uTgaI8Ct_rPr1KwyDOPCH5SLqdzv0Bwxog0B9k-PbPo/export?format=csv&gid=1582636562';
+const CHECKIN_CSV_URL = (process.env.GOOGLE_SHEETS_CHECKIN_URL || '').trim();
 
 const COLS = {
   timestamp: ['Carimbo', 'data/hora'],
@@ -186,12 +187,12 @@ async function normalizarVoluntariosExistentes() {
 }
 
 async function syncCheckins() {
-  if (!CHECKIN_CSV_PATH) {
+  if (!CHECKIN_CSV_PATH && !CHECKIN_CSV_URL) {
     return { inserted: 0, updated: 0, skipped: true };
   }
   const text = await readCsvTextFromSource({
     path: CHECKIN_CSV_PATH,
-    url: '',
+    url: CHECKIN_CSV_PATH ? '' : CHECKIN_CSV_URL,
   });
   const rows = parseCsvRows(text);
   if (!rows.length) return { inserted: 0, updated: 0 };

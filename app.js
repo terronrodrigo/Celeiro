@@ -66,7 +66,7 @@ const loginEmail = document.getElementById('loginEmail');
 const loginPass = document.getElementById('loginPass');
 const loginError = document.getElementById('loginError');
 const btnLogin = document.getElementById('btnLogin');
-const btnLogout = document.getElementById('btnLogout');
+const btnLogout = document.getElementById('btnLogoutSidebar');
 const authUserName = document.getElementById('authUserName');
 const authUserInitial = document.getElementById('authUserInitial');
 const filterArea = document.getElementById('filterArea');
@@ -170,7 +170,8 @@ function updateAuthUi() {
   if (navVoluntario) navVoluntario.style.display = isLogged && isVoluntario ? 'flex' : 'none';
   if (searchBox) searchBox.style.display = isLogged && isAdmin ? 'flex' : 'none';
   const btnRefresh = document.getElementById('btnRefresh');
-  if (btnRefresh) btnRefresh.style.display = isLogged && isAdmin ? '' : 'none';
+  const filtersSection = document.querySelector('.view[data-view="resumo voluntarios emails"]');
+  if (btnRefresh && filtersSection) btnRefresh.style.display = isLogged && isAdmin ? '' : 'none';
 }
 
 /** Limpa dados em memória e DOM de conteúdo por usuário, para não exibir tela do login anterior ao trocar de perfil. */
@@ -303,17 +304,17 @@ function setViewLoading(viewName, loading) {
 }
 
 const VIEW_META = {
-  resumo: { title: 'Inscrição Voluntários', subtitle: 'Resumo das inscrições e envio de emails via Resend.', role: 'admin' },
-  voluntarios: { title: 'Voluntários', subtitle: 'Lista completa e seleção para envio de email.', role: 'admin' },
-  emails: { title: 'Enviar Email', subtitle: 'Selecione voluntários e envie via Resend.', role: 'admin' },
-  ministros: { title: 'Ministérios', subtitle: 'Crie ministérios e defina líderes.', role: 'admin' },
-  usuarios: { title: 'Usuários e perfis', subtitle: 'Altere perfil (voluntário, admin, líder) e veja histórico.', role: 'admin' },
-  'eventos-checkin': { title: 'Eventos de check-in', subtitle: 'Crie um evento para o dia do culto.', role: 'admin' },
-  checkin: { title: 'Check-in', subtitle: 'Registros por ministério e data. Filtre por data e evento.', role: 'admin' },
-  'checkin-ministerio': { title: 'Check-ins do ministério', subtitle: 'Pessoas com check-in no seu ministério.', role: 'lider' },
-  perfil: { title: 'Atualizar dados de perfil', subtitle: 'Revise e altere suas informações de cadastro.', role: 'voluntario' },
-  'checkin-hoje': { title: 'Realizar check-in do dia', subtitle: 'Confirme sua presença no culto de hoje.', role: 'voluntario' },
-  'meus-checkins': { title: 'Visualizar histórico próprio de check-ins', subtitle: 'Histórico de suas confirmações de presença.', role: 'voluntario' },
+  resumo: { title: 'Resumo', subtitle: 'Gerenciador de voluntários da Igreja Celeiro São Paulo — visão geral e disparo de emails.', role: 'admin' },
+  voluntarios: { title: 'Voluntários', subtitle: 'Lista de voluntários da Igreja Celeiro São Paulo. Selecione para envio de emails.', role: 'admin' },
+  emails: { title: 'Enviar email', subtitle: 'Selecione voluntários e envie emails pelo disparador da plataforma.', role: 'admin' },
+  ministros: { title: 'Ministérios', subtitle: 'Ministérios da Igreja Celeiro São Paulo. Crie e defina líderes.', role: 'admin' },
+  usuarios: { title: 'Usuários', subtitle: 'Perfis e permissões (voluntário, líder, admin). Histórico de alterações.', role: 'admin' },
+  'eventos-checkin': { title: 'Eventos de check-in', subtitle: 'Eventos para confirmação de presença (cultos, reuniões).', role: 'admin' },
+  checkin: { title: 'Check-in', subtitle: 'Registros de presença por ministério e data. Filtre por data e evento.', role: 'admin' },
+  'checkin-ministerio': { title: 'Check-ins do ministério', subtitle: 'Pessoas que confirmaram presença no seu ministério.', role: 'lider' },
+  perfil: { title: 'Meu perfil', subtitle: 'Revise e atualize seus dados de cadastro na Igreja Celeiro São Paulo.', role: 'voluntario' },
+  'checkin-hoje': { title: 'Check-in do dia', subtitle: 'Confirme sua presença no culto ou evento de hoje.', role: 'voluntario' },
+  'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico das suas confirmações de presença.', role: 'voluntario' },
 };
 
 function setView(view) {
@@ -1886,6 +1887,7 @@ function toggleSidebar() {
   const overlay = document.getElementById('sidebarOverlay');
   if (sidebar) sidebar.classList.toggle('open');
   if (overlay) { overlay.classList.toggle('show'); overlay.setAttribute('aria-hidden', sidebar?.classList.contains('open') ? 'false' : 'true'); }
+  document.body.classList.toggle('sidebar-open', sidebar?.classList.contains('open') ?? false);
 }
 document.getElementById('sidebarToggle')?.addEventListener('click', toggleSidebar);
 document.getElementById('sidebarOverlay')?.addEventListener('click', toggleSidebar);
@@ -2082,6 +2084,7 @@ navItems.forEach(item => {
     if (sidebar?.classList.contains('open')) {
       sidebar.classList.remove('open');
       if (overlay) { overlay.classList.remove('show'); overlay.setAttribute('aria-hidden', 'true'); }
+      document.body.classList.remove('sidebar-open');
     }
   });
 });

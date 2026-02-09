@@ -69,15 +69,15 @@
       <nav class="sidebar-nav" id="navVoluntario" style="display: none;">
         <a href="#" class="nav-item active" data-view="perfil">
           <span class="nav-icon">👤</span>
-          <span>Atualizar dados de perfil</span>
+          <span>Meu perfil</span>
         </a>
         <a href="#" class="nav-item" data-view="checkin-hoje">
           <span class="nav-icon">✅</span>
-          <span>Realizar check-in do dia</span>
+          <span>Check-in do dia</span>
         </a>
         <a href="#" class="nav-item" data-view="meus-checkins">
           <span class="nav-icon">📋</span>
-          <span>Visualizar histórico próprio de check-ins</span>
+          <span>Meus check-ins</span>
         </a>
       </nav>
       <div class="sidebar-footer">
@@ -88,6 +88,7 @@
             <span class="user-role" id="authUserRole"></span>
           </div>
         </div>
+        <button type="button" class="btn btn-ghost btn-block btn-sidebar-logout" id="btnLogoutSidebar" disabled>Sair</button>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
@@ -98,16 +99,14 @@
           <span></span><span></span><span></span>
         </button>
         <div class="page-title">
-          <h1 id="pageTitle">Inscrição Voluntários</h1>
-          <p class="subtitle" id="pageSubtitle">Resumo das inscrições e envio de emails via Resend.</p>
+          <h1 id="pageTitle">Voluntários</h1>
+          <p class="subtitle" id="pageSubtitle">Gerenciador de voluntários da Igreja Celeiro São Paulo.</p>
         </div>
         <div class="top-actions">
           <div class="search-box">
             <span class="search-icon">🔍</span>
             <input type="text" id="searchInput" placeholder="Buscar nome ou email...">
           </div>
-          <button type="button" class="btn btn-primary" id="btnRefresh">Atualizar dados</button>
-          <button type="button" class="btn btn-ghost" id="btnLogout" disabled>Sair</button>
         </div>
       </header>
 
@@ -154,6 +153,7 @@
                 </div>
               </div>
               <div class="filters-actions">
+                <button type="button" class="btn btn-primary btn-sm" id="btnRefresh">Atualizar dados</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnClearFilters">Limpar filtros</button>
               </div>
             </div>
@@ -746,7 +746,7 @@
     <div class="modal-backdrop"></div>
     <div class="modal-box">
       <div class="modal-header">
-        <h2>Enviar email via Resend</h2>
+        <h2>Enviar email</h2>
         <button type="button" class="modal-close" id="modalClose" aria-label="Fechar">&times;</button>
       </div>
       <div class="modal-body">
@@ -759,7 +759,7 @@
           <label for="emailBody">Mensagem (HTML ou texto)</label>
           <textarea id="emailBody" rows="8" placeholder="Olá [nome],&#10;&#10;..."></textarea>
         </div>
-        <p class="form-hint">Use <code>[nome]</code> para substituir pelo nome do voluntário em cada email.</p>
+        <p class="form-hint">Use <code>[nome]</code> para substituir pelo nome do voluntário em cada email. Os emails são enviados pelo disparador de emails da plataforma.</p>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-ghost" id="modalCancel">Cancelar</button>
