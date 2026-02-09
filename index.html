@@ -81,7 +81,7 @@
         </a>
       </nav>
       <div class="sidebar-footer">
-        <div class="user-card">
+        <div class="user-card" id="userCardGoPerfil" role="button" tabindex="0" aria-label="Ir para meu perfil">
           <div class="user-avatar" id="authUserInitial">A</div>
           <div class="user-info">
             <span class="user-name" id="authUserName"></span>
@@ -126,12 +126,9 @@
           <section class="filters-row">
             <div class="filters-card">
               <div class="filters-left">
-                <div class="form-group compact">
-                  <label for="filterArea">Área</label>
-                  <select id="filterArea" multiple size="4" title="Segure Ctrl/Cmd para escolher várias">
-                    <option value="" disabled>Carregando…</option>
-                  </select>
-                  <p class="form-hint" style="margin-top:4px">Segure Ctrl (ou Cmd no Mac) para selecionar várias áreas.</p>
+                <div class="form-group compact filter-areas-wrap">
+                  <label class="block-label">Área (opcional)</label>
+                  <div id="filterAreaCheckboxes" class="filter-area-checkboxes"></div>
                 </div>
                 <div class="form-group compact">
                   <label for="filterDisponibilidade">Disponibilidade</label>
@@ -426,6 +423,7 @@
             <div class="modal-box">
               <div class="modal-header"><h2>Criar usuário</h2><button type="button" class="modal-close" id="modalCriarUsuarioClose">&times;</button></div>
               <form id="formCriarUsuario" class="modal-body">
+                <p id="criarUsuarioError" class="form-error" role="alert" style="display:none; margin-bottom:12px;"></p>
                 <div class="form-group"><label for="criarUsuarioEmail">Email</label><input type="email" id="criarUsuarioEmail" placeholder="usuario@exemplo.com" required></div>
                 <div class="form-group"><label for="criarUsuarioNome">Nome</label><input type="text" id="criarUsuarioNome" placeholder="Nome completo" required></div>
                 <div class="form-group"><label for="criarUsuarioSenha">Senha temporária</label><input type="password" id="criarUsuarioSenha" placeholder="Mínimo 6 caracteres" minlength="6" required autocomplete="new-password"></div>

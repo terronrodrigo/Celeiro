@@ -111,7 +111,7 @@ const btnLogin = document.getElementById('btnLogin');
 const btnLogout = document.getElementById('btnLogoutSidebar');
 const authUserName = document.getElementById('authUserName');
 const authUserInitial = document.getElementById('authUserInitial');
-const filterArea = document.getElementById('filterArea');
+const filterAreaCheckboxes = document.getElementById('filterAreaCheckboxes');
 const filterDisp = document.getElementById('filterDisponibilidade');
 const filterEstado = document.getElementById('filterEstado');
 const filterCidade = document.getElementById('filterCidade');
@@ -229,7 +229,15 @@ function updateAuthUi() {
   const displayName = (authUser || defaultName).trim();
   const displayNameFormatted = displayName ? displayName.replace(/\b\w/g, (c) => c.toUpperCase()) : defaultName;
   if (authUserName) authUserName.textContent = displayNameFormatted;
-  if (authUserInitial) authUserInitial.textContent = (displayNameFormatted || defaultName).slice(0, 1).toUpperCase();
+  const initial = (displayNameFormatted || defaultName).slice(0, 1).toUpperCase();
+  if (authUserInitial) {
+    if (authFotoUrl) {
+      const url = authFotoUrl.startsWith('http') ? authFotoUrl : `${API_BASE}${authFotoUrl}`;
+      authUserInitial.innerHTML = `<img class="avatar-img" src="${escapeAttr(url)}" alt="">`;
+    } else {
+      authUserInitial.innerHTML = `<span class="avatar-initial">${escapeHtml(initial)}</span>`;
+    }
+  }
   const roleEl = document.getElementById('authUserRole');
   const liderLabel = authMinisterioNomes?.length ? authMinisterioNomes.join(', ') : (authMinisterioNome || '');
   if (roleEl) roleEl.textContent = isVoluntario ? 'Voluntário' : (isLider ? (liderLabel ? `Líder · ${liderLabel}` : 'Líder') : 'Admin');
@@ -2009,13 +2017,15 @@ function updateFilters() {
     return (a || '').localeCompare(b || '');
   });
   const cidades = countByField(vol, 'cidade').map(([label]) => label).sort((a, b) => (a || '').localeCompare(b || ''));
-  if (filterArea) {
+  if (filterAreaCheckboxes) {
     const selectedSet = new Set(filters.areas || []);
-    filterArea.innerHTML = areas.length ? areas.map(area => {
-      const sel = selectedSet.has(area) ? ' selected' : '';
-      return `<option value="${escapeAttr(area)}"${sel}>${escapeHtml(area)}</option>`;
-    }).join('') : '<option value="">Nenhuma área</option>';
-    filterArea.size = Math.min(8, Math.max(4, areas.length || 1));
+    filterAreaCheckboxes.innerHTML = areas.length ? areas.map(area => {
+      const checked = selectedSet.has(area) ? ' checked' : '';
+      return `<label class="checkbox-label"><input type="checkbox" data-filter-area="${escapeAttr(area)}"${checked}> ${escapeHtml(area)}</label>`;
+    }).join('') : '<span class="form-hint">Nenhuma área cadastrada</span>';
+    filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => {
+      cb.addEventListener('change', () => applyAreaFilter());
+    });
   }
   populateSelect(filterDisp, disp, 'Todas as disponibilidades');
   populateSelect(filterEstado, estados, 'Todos os estados');
@@ -2028,9 +2038,11 @@ function updateFilterUi() {
   if (filterEstado) filterEstado.value = filters.estado || '';
   if (filterCidade) filterCidade.value = filters.cidade || '';
   if (filterComCheckin) filterComCheckin.value = filters.comCheckin || '';
-  if (filterArea && filterArea.options.length) {
+  if (filterAreaCheckboxes) {
     const selectedSet = new Set(filters.areas || []);
-    Array.from(filterArea.options).forEach(opt => { opt.selected = selectedSet.has(opt.value); });
+    filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => {
+      cb.checked = selectedSet.has(cb.getAttribute('data-filter-area'));
+    });
   }
   if (!activeFilters) return;
   const comCheckinLabel = { com: 'Com check-in', sem: 'Sem check-in', 'so-checkin': 'Só check-in (sem cadastro)' }[filters.comCheckin] || '';
@@ -2055,7 +2067,7 @@ function updateFilterUi() {
     btn.addEventListener('click', () => {
       if (key === 'areas') {
         filters.areas = [];
-        if (filterArea) Array.from(filterArea.options).forEach(opt => { opt.selected = false; });
+        if (filterAreaCheckboxes) filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => { cb.checked = false; });
         voluntariosPageOffset = 0;
         updateKpis();
         renderCharts();
@@ -2105,7 +2117,19 @@ function clearFilters() {
   filters.cidade = '';
   filters.comCheckin = '';
   voluntariosPageOffset = 0;
-  if (filterArea) Array.from(filterArea.options).forEach(opt => { opt.selected = false; });
+  if (filterAreaCheckboxes) filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => { cb.checked = false; });
+  updateKpis();
+  renderCharts();
+  renderTable(getFilteredVoluntarios());
+  updateSelectedCount();
+  syncSelectAll();
+  updateFilterUi();
+}
+
+function applyAreaFilter() {
+  if (!filterAreaCheckboxes) return;
+  filters.areas = Array.from(filterAreaCheckboxes.querySelectorAll('input[data-filter-area]:checked')).map(cb => cb.getAttribute('data-filter-area')).filter(Boolean);
+  voluntariosPageOffset = 0;
   updateKpis();
   renderCharts();
   renderTable(getFilteredVoluntarios());
@@ -2279,51 +2303,63 @@ async function sendEmails() {
   }
 
   const to = [...selectedEmails];
+  const total = to.length;
   btnSendEmail.disabled = true;
-  btnSendEmail.textContent = 'Enviando...';
-  sendResult.style.display = 'none';
+  sendResult.style.display = 'block';
+  sendResult.className = 'send-result';
+  sendResult.textContent = total > 0 ? `Enviando 0/${total}...` : '';
 
   const html = hasEditorContent && editorRaw ? editorRaw : `<p>${baseText.replace(/\n/g, '<br>')}</p>`;
+  const BATCH_SIZE = 50;
+  let totalSent = 0;
+  let totalFailed = 0;
 
   try {
     const volList = Array.isArray(voluntarios) ? voluntarios : [];
     const voluntariosByEmail = new Map(volList.map(v => [(v.email || '').toLowerCase(), v]));
-    const voluntariosMap = {};
-    to.forEach(email => {
-      const v = voluntariosByEmail.get(email);
-      if (v?.nome) voluntariosMap[email] = v.nome;
-    });
-    const r = await authFetch(`${API_BASE}/api/send-email`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        to,
-        subject,
-        html,
-        voluntarios: voluntariosMap,
-      }),
-    });
-    const data = await r.json().catch(() => ({}));
-    sendResult.style.display = 'block';
-    const isError = !r.ok || data.error;
-    if (isError) {
-      sendResult.className = 'send-result error';
-      sendResult.innerHTML = `Erro: ${data.error || 'Falha no envio. Tente novamente.'}`;
-    } else {
-      const sent = data.sent || 0;
-      const failed = data.failed || 0;
+
+    for (let i = 0; i < to.length; i += BATCH_SIZE) {
+      const chunk = to.slice(i, i + BATCH_SIZE);
+      const voluntariosMap = {};
+      chunk.forEach(email => {
+        const v = voluntariosByEmail.get(email);
+        if (v?.nome) voluntariosMap[email] = v.nome;
+      });
+      sendResult.textContent = `Enviando ${Math.min(i + BATCH_SIZE, total)}/${total}...`;
+      const r = await authFetch(`${API_BASE}/api/send-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: chunk,
+          subject,
+          html,
+          voluntarios: voluntariosMap,
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        sendResult.className = 'send-result error';
+        sendResult.textContent = `Erro: ${data.error || 'Falha no envio.'} (lote ${Math.floor(i / BATCH_SIZE) + 1})`;
+        break;
+      }
+      totalSent += data.sent || 0;
+      totalFailed += data.failed || 0;
+    }
+
+    if (totalSent > 0 || totalFailed > 0) {
       sendResult.className = 'send-result success';
-      sendResult.innerHTML = sent > 0
-        ? `Enviados: ${sent}${failed > 0 ? ` · Falhas: ${failed}` : ''}.`
-        : (failed > 0 ? `Nenhum enviado. Falhas: ${failed}.` : 'Nenhum destinatário válido.');
+      sendResult.innerHTML = totalSent > 0
+        ? `Enviados: ${totalSent}${totalFailed > 0 ? ` · Falhas: ${totalFailed}` : ''}.`
+        : (totalFailed > 0 ? `Nenhum enviado. Falhas: ${totalFailed}.` : 'Nenhum destinatário válido.');
       setTimeout(() => {
         closeModal();
         if (sendResult) { sendResult.style.display = 'none'; sendResult.innerHTML = ''; }
-      }, 1800);
+      }, 2200);
+    } else if (!sendResult.classList.contains('send-result error')) {
+      sendResult.textContent = total === 0 ? 'Nenhum destinatário selecionado.' : 'Envio concluído.';
     }
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
-    sendResult.style.display = 'block';
     sendResult.className = 'send-result error';
     sendResult.textContent = 'Erro de rede: ' + (e.message || 'Verifique o servidor e RESEND_API_KEY.');
   }
@@ -2417,6 +2453,25 @@ function toggleSidebar() {
 }
 document.getElementById('sidebarToggle')?.addEventListener('click', toggleSidebar);
 document.getElementById('sidebarOverlay')?.addEventListener('click', toggleSidebar);
+document.getElementById('userCardGoPerfil')?.addEventListener('click', () => {
+  setView('perfil');
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar?.classList.contains('open')) {
+    sidebar.classList.remove('open');
+    document.getElementById('sidebarOverlay')?.setAttribute('aria-hidden', 'true');
+  }
+});
+document.getElementById('userCardGoPerfil')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    setView('perfil');
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar?.classList.contains('open')) {
+      sidebar.classList.remove('open');
+      document.getElementById('sidebarOverlay')?.setAttribute('aria-hidden', 'true');
+    }
+  }
+});
 
 selectAll?.addEventListener('change', () => toggleSelectAll(selectAll.checked));
 selectAllHeader?.addEventListener('change', () => toggleSelectAll(selectAllHeader.checked));
@@ -2465,16 +2520,6 @@ filterDisp?.addEventListener('change', () => setFilter('disponibilidade', filter
 filterEstado?.addEventListener('change', () => setFilter('estado', filterEstado.value));
 filterCidade?.addEventListener('change', () => setFilter('cidade', filterCidade.value));
 filterComCheckin?.addEventListener('change', () => setFilter('comCheckin', filterComCheckin.value));
-filterArea?.addEventListener('change', () => {
-  filters.areas = Array.from(filterArea.selectedOptions).map(opt => opt.value).filter(Boolean);
-  voluntariosPageOffset = 0;
-  updateKpis();
-  renderCharts();
-  renderTable(getFilteredVoluntarios());
-  updateSelectedCount();
-  syncSelectAll();
-  updateFilterUi();
-});
 document.getElementById('usuariosSearch')?.addEventListener('input', () => { if (currentView === 'usuarios') fetchUsers(); });
 document.getElementById('usuariosSearch')?.addEventListener('change', () => { if (currentView === 'usuarios') fetchUsers(); });
 document.getElementById('usuariosFilterAtivo')?.addEventListener('change', () => { if (currentView === 'usuarios') fetchUsers(); });
@@ -2572,7 +2617,9 @@ document.getElementById('userRoleSelect')?.addEventListener('change', () => {
 });
 
 const modalCriarUsuario = document.getElementById('modalCriarUsuario');
+const criarUsuarioError = document.getElementById('criarUsuarioError');
 function openModalCriarUsuario() {
+  if (criarUsuarioError) { criarUsuarioError.style.display = 'none'; criarUsuarioError.textContent = ''; }
   document.getElementById('criarUsuarioEmail').value = '';
   document.getElementById('criarUsuarioNome').value = '';
   document.getElementById('criarUsuarioSenha').value = '';
@@ -2612,21 +2659,40 @@ document.getElementById('formCriarUsuario')?.addEventListener('submit', async (e
   const ministerioIds = (role === 'lider' || role === 'admin') && minContainer
     ? Array.from(minContainer.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.getAttribute('data-ministerio-id')).filter(Boolean)
     : [];
-  if (!email || !email.includes('@')) { alert('Informe um email válido.'); return; }
-  if (!nome) { alert('Informe o nome.'); return; }
-  if (!senha || senha.length < 6) { alert('Senha temporária deve ter no mínimo 6 caracteres.'); return; }
+  if (criarUsuarioError) { criarUsuarioError.style.display = 'none'; criarUsuarioError.textContent = ''; }
+  if (!email || !email.includes('@')) {
+    if (criarUsuarioError) { criarUsuarioError.textContent = 'Informe um email válido.'; criarUsuarioError.style.display = 'block'; }
+    return;
+  }
+  if (!nome) {
+    if (criarUsuarioError) { criarUsuarioError.textContent = 'Informe o nome.'; criarUsuarioError.style.display = 'block'; }
+    return;
+  }
+  if (!senha || senha.length < 6) {
+    if (criarUsuarioError) { criarUsuarioError.textContent = 'Senha temporária deve ter no mínimo 6 caracteres.'; criarUsuarioError.style.display = 'block'; }
+    return;
+  }
   try {
     const r = await authFetch(`${API_BASE}/api/users`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, nome, senha, role, ministerioIds }),
     });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha ao criar usuário.');
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const msg = body.error || body.message || `Falha ao criar usuário (${r.status}).`;
+      if (criarUsuarioError) { criarUsuarioError.textContent = msg; criarUsuarioError.style.display = 'block'; }
+      return;
+    }
     modalCriarUsuario?.classList.remove('open');
     document.getElementById('formCriarUsuario')?.reset();
     fetchUsers();
     alert('Usuário criado. Ele deverá trocar a senha no primeiro acesso.');
-  } catch (err) { alert(err.message || 'Erro ao criar usuário.'); }
+  } catch (err) {
+    const msg = err.message || 'Erro ao criar usuário. Verifique a conexão.';
+    if (criarUsuarioError) { criarUsuarioError.textContent = msg; criarUsuarioError.style.display = 'block'; }
+    else alert(msg);
+  }
 });
 document.getElementById('btnUserRoleBack')?.addEventListener('click', () => {
   document.getElementById('modalUserRoleFormBody').style.display = 'block';

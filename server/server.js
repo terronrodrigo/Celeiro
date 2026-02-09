@@ -1280,7 +1280,7 @@ app.post('/api/email/review-llm', requireAuth, requireAdmin, async (req, res) =>
 4. Usar <strong> nos títulos e termos importantes.
 5. Manter [nome] como está (será substituído pelo nome do destinatário).
 6. Usar parágrafos <p>, listas <ul>/<li> se fizer sentido. Tom profissional e cordial.`;
-    const modelsToTry = ['grok-beta', 'grok-2-latest', 'grok-2'];
+    const modelsToTry = ['grok-4-latest', 'grok-beta', 'grok-2-latest', 'grok-2'];
     let lastError = null;
     let lastStatus = 0;
     let lastBody = '';
