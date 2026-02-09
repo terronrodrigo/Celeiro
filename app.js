@@ -64,7 +64,7 @@ let authMustChangePassword = false;
 let eventosCheckin = [];
 let eventoSelecionadoHoje = null;
 const filters = {
-  area: '',
+  areas: [], // múltiplas áreas (array)
   disponibilidade: '',
   estado: '',
   cidade: '',
@@ -111,7 +111,7 @@ const btnLogin = document.getElementById('btnLogin');
 const btnLogout = document.getElementById('btnLogoutSidebar');
 const authUserName = document.getElementById('authUserName');
 const authUserInitial = document.getElementById('authUserInitial');
-const filterArea = document.getElementById('filterArea');
+const filterAreaCheckboxes = document.getElementById('filterAreaCheckboxes');
 const filterDisp = document.getElementById('filterDisponibilidade');
 const filterEstado = document.getElementById('filterEstado');
 const filterCidade = document.getElementById('filterCidade');
@@ -1512,7 +1512,7 @@ function renderCharts() {
           const el = elements?.[0];
           if (!el) return;
           const label = topAreas[el.index]?.label;
-          toggleFilter('area', label);
+          toggleFilter('area', label); // area: single toggle para gráfico; filters.areas é array
         },
         scales: {
           x: { beginAtZero: true, grid: { color: 'rgba(42,42,42,0.5)' } },
@@ -1693,9 +1693,10 @@ function getFilteredVoluntarios() {
         (v.areas || '').toLowerCase().includes(q);
       if (!matchText) return false;
     }
-    if (filters.area) {
-      const areas = (v.areas || '').split(',').map(a => a.trim());
-      if (!areas.includes(filters.area)) return false;
+    if (filters.areas && filters.areas.length > 0) {
+      const volAreas = (v.areas || '').split(',').map(a => a.trim()).filter(Boolean);
+      const hasMatch = filters.areas.some(fa => volAreas.includes(fa));
+      if (!hasMatch) return false;
     }
     if (filters.disponibilidade) {
       const disp = (v.disponibilidade || '').split(',').map(d => d.trim());
@@ -1913,11 +1914,12 @@ function updateSelectedCount() {
 function toggleSelectAll(checked) {
   const filtered = getFilteredVoluntarios();
   filtered.forEach(v => {
-    const e = (v.email || '').toLowerCase();
+    const e = (v.email || '').toLowerCase().trim();
     if (e) (checked ? selectedEmails.add(e) : selectedEmails.delete(e));
   });
   renderTable(getFilteredVoluntarios());
   updateSelectedCount();
+  syncSelectAll();
 }
 
 function countByField(list, field) {
@@ -1973,7 +1975,6 @@ function updateFilters() {
   const areas = countByMultiValueField(vol, 'areas').map(([label]) => label);
   const disp = countByMultiValueField(vol, 'disponibilidade').map(([label]) => label);
   const estados = countByField(vol, 'estado').map(([label]) => label);
-  // Ordena estados: UFs (2 letras) primeiro em ordem alfabética, depois o resto
   estados.sort((a, b) => {
     const aIsUF = a && a.length === 2;
     const bIsUF = b && b.length === 2;
@@ -1983,28 +1984,54 @@ function updateFilters() {
     return (a || '').localeCompare(b || '');
   });
   const cidades = countByField(vol, 'cidade').map(([label]) => label).sort((a, b) => (a || '').localeCompare(b || ''));
-  populateSelect(filterArea, areas, 'Todas as áreas');
+  if (filterAreaCheckboxes) {
+    const selectedSet = new Set(filters.areas || []);
+    filterAreaCheckboxes.innerHTML = areas.map(area => {
+      const checked = selectedSet.has(area) ? ' checked' : '';
+      return `<label class="checkbox-label filter-area-chip"><input type="checkbox" data-filter-area="${escapeAttr(area)}"${checked}> ${escapeHtml(area)}</label>`;
+    }).join('');
+    filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => {
+      cb.addEventListener('change', () => applyAreaFilter());
+    });
+  }
   populateSelect(filterDisp, disp, 'Todas as disponibilidades');
   populateSelect(filterEstado, estados, 'Todos os estados');
   populateSelect(filterCidade, cidades, 'Todas as cidades');
   updateFilterUi();
 }
 
+function applyAreaFilter() {
+  if (!filterAreaCheckboxes) return;
+  filters.areas = Array.from(filterAreaCheckboxes.querySelectorAll('input[data-filter-area]:checked')).map(cb => cb.getAttribute('data-filter-area')).filter(Boolean);
+  voluntariosPageOffset = 0;
+  updateKpis();
+  renderCharts();
+  renderTable(getFilteredVoluntarios());
+  updateSelectedCount();
+  syncSelectAll();
+  updateFilterUi();
+}
+
 function updateFilterUi() {
-  if (filterArea) filterArea.value = filters.area || '';
   if (filterDisp) filterDisp.value = filters.disponibilidade || '';
   if (filterEstado) filterEstado.value = filters.estado || '';
   if (filterCidade) filterCidade.value = filters.cidade || '';
   if (filterComCheckin) filterComCheckin.value = filters.comCheckin || '';
+  if (filterAreaCheckboxes) {
+    const selectedSet = new Set(filters.areas || []);
+    filterAreaCheckboxes.querySelectorAll('input[data-filter-area]').forEach(cb => {
+      cb.checked = selectedSet.has(cb.getAttribute('data-filter-area'));
+    });
+  }
   if (!activeFilters) return;
   const comCheckinLabel = { com: 'Com check-in', sem: 'Sem check-in', 'so-checkin': 'Só check-in (sem cadastro)' }[filters.comCheckin] || '';
   const chips = [
-    ['area', 'Área', filters.area],
+    ['areas', 'Área', (filters.areas || []).length ? (filters.areas || []).join(', ') : ''],
     ['disponibilidade', 'Disponibilidade', filters.disponibilidade],
     ['estado', 'Estado', filters.estado],
     ['cidade', 'Cidade', filters.cidade],
     ['comCheckin', 'Check-in', comCheckinLabel],
-  ].filter(([, , value]) => value);
+  ].filter(([, , value]) => value && (Array.isArray(value) ? value.length : true));
   activeFilters.innerHTML = '';
   if (!chips.length) {
     activeFilters.style.display = 'none';
@@ -2016,38 +2043,64 @@ function updateFilterUi() {
     btn.type = 'button';
     btn.className = 'filter-chip';
     btn.textContent = `${label}: ${value} ×`;
-    btn.addEventListener('click', () => setFilter(key, ''));
+    btn.addEventListener('click', () => {
+      if (key === 'areas') {
+        filters.areas = [];
+        voluntariosPageOffset = 0;
+        updateKpis();
+        renderCharts();
+        renderTable(getFilteredVoluntarios());
+        updateSelectedCount();
+        syncSelectAll();
+        updateFilterUi();
+      } else {
+        setFilter(key, '');
+      }
+    });
     activeFilters.appendChild(btn);
   });
 }
 
 function setFilter(key, value) {
-  filters[key] = value || '';
+  if (key === 'area' || key === 'areas') {
+    filters.areas = value ? (Array.isArray(value) ? value : [value]) : [];
+  } else {
+    filters[key] = value || '';
+  }
   voluntariosPageOffset = 0;
   const filtered = getFilteredVoluntarios();
   updateKpis();
   renderCharts();
   renderTable(filtered);
   updateSelectedCount();
+  syncSelectAll();
   updateFilterUi();
 }
 
 function toggleFilter(key, value) {
   if (!value) return;
-  setFilter(key, filters[key] === value ? '' : value);
+  if (key === 'area') {
+    const arr = filters.areas || [];
+    const has = arr.includes(value);
+    setFilter(key, has ? arr.filter(a => a !== value) : [...arr, value]);
+  } else {
+    setFilter(key, filters[key] === value ? '' : value);
+  }
 }
 
 function clearFilters() {
-  filters.area = '';
+  filters.areas = [];
   filters.disponibilidade = '';
   filters.estado = '';
   filters.cidade = '';
   filters.comCheckin = '';
   voluntariosPageOffset = 0;
+  if (filterAreaCheckboxes) filterAreaCheckboxes.querySelectorAll('input[data-filter-area]').forEach(cb => { cb.checked = false; });
   updateKpis();
   renderCharts();
   renderTable(getFilteredVoluntarios());
   updateSelectedCount();
+  syncSelectAll();
   updateFilterUi();
 }
 
@@ -2370,13 +2423,15 @@ btnReviewLLM?.addEventListener('click', async () => {
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
-      if (emailReviewError) { emailReviewError.textContent = data.error || 'Erro ao revisar. Verifique GROK_API_KEY.'; emailReviewError.style.display = 'block'; }
+      const msg = data.error || `Erro ${r.status}. Verifique GROK_API_KEY nas variáveis da cloud.`;
+      if (emailReviewError) { emailReviewError.textContent = msg; emailReviewError.style.display = 'block'; }
       return;
     }
     if (emailBodyEditor && data.html) emailBodyEditor.innerHTML = data.html;
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
-    if (emailReviewError) { emailReviewError.textContent = e.message || 'Erro de rede.'; emailReviewError.style.display = 'block'; }
+    const msg = e.message || 'Erro de rede. Tente novamente.';
+    if (emailReviewError) { emailReviewError.textContent = msg; emailReviewError.style.display = 'block'; }
   } finally {
     btnReviewLLM.disabled = false;
     btnReviewLLM.textContent = '✨ Revisar com IA';
@@ -2384,7 +2439,6 @@ btnReviewLLM?.addEventListener('click', async () => {
 });
 loginForm?.addEventListener('submit', handleLogin);
 btnLogout?.addEventListener('click', handleLogout);
-filterArea?.addEventListener('change', () => setFilter('area', filterArea.value));
 filterDisp?.addEventListener('change', () => setFilter('disponibilidade', filterDisp.value));
 filterEstado?.addEventListener('change', () => setFilter('estado', filterEstado.value));
 filterCidade?.addEventListener('change', () => setFilter('cidade', filterCidade.value));

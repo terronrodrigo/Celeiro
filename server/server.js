@@ -1215,7 +1215,9 @@ app.post('/api/email/review-llm', requireAuth, requireAdmin, async (req, res) =>
     const raw = (text || '').toString().trim();
     if (!raw) return sendError(res, 400, 'Envie o texto base em "text".');
     const apiKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY;
-    if (!apiKey) return sendError(res, 503, 'GROK_API_KEY (ou XAI_API_KEY) não configurada. Adicione no .env ou nas variáveis da cloud para usar a revisão com IA.');
+    if (!apiKey) {
+      return res.status(503).json({ error: 'GROK_API_KEY não configurada. Adicione a variável no painel da cloud (ex.: Railway → Variables) e reinicie o app.' });
+    }
     const systemPrompt = `Você é um revisor de emails. Sua tarefa é:
 1. Revisar o texto e propor pequenas melhorias (clareza, tom profissional, correções).
 2. Devolver APENAS o corpo do email em HTML, sem markdown, sem \`\`\`.
@@ -1223,33 +1225,67 @@ app.post('/api/email/review-llm', requireAuth, requireAdmin, async (req, res) =>
 4. Usar <strong> nos títulos e termos importantes.
 5. Manter [nome] como está (será substituído pelo nome do destinatário).
 6. Usar parágrafos <p>, listas <ul>/<li> se fizer sentido. Tom profissional e cordial.`;
-    const response = await fetch('https://api.x.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'grok-beta',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: raw },
-        ],
-        temperature: 0.3,
-      }),
-    });
-    if (!response.ok) {
-      const errBody = await response.text();
-      console.error('Grok API error:', response.status, errBody);
-      return sendError(res, 502, `Erro na API Grok: ${response.status}. Verifique GROK_API_KEY e limite de uso.`);
+    const modelsToTry = ['grok-beta', 'grok-2-latest', 'grok-2'];
+    let lastError = null;
+    let lastStatus = 0;
+    let lastBody = '';
+
+    for (const model of modelsToTry) {
+      try {
+        const response = await fetch('https://api.x.ai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: raw },
+            ],
+            temperature: 0.3,
+          }),
+        });
+        lastStatus = response.status;
+        lastBody = await response.text();
+
+        if (!response.ok) {
+          let errMsg = lastBody;
+          try {
+            const parsed = JSON.parse(lastBody);
+            errMsg = parsed.error?.message || parsed.error?.code || parsed.message || lastBody;
+          } catch (_) {}
+          lastError = errMsg;
+          if (response.status === 401) {
+            return res.status(502).json({ error: 'Chave GROK_API_KEY inválida ou expirada. Verifique em console.x.ai.' });
+          }
+          if (response.status === 404) {
+            continue;
+          }
+          return res.status(502).json({ error: `API Grok (${response.status}): ${String(errMsg).slice(0, 200)}` });
+        }
+
+        const data = JSON.parse(lastBody);
+        const content = data?.choices?.[0]?.message?.content?.trim() || '';
+        const html = content.replace(/^```html?\s*|\s*```$/gi, '').trim() || content;
+        return res.json({ html: html || '<p>Nenhum conteúdo retornado.</p>' });
+      } catch (parseErr) {
+        lastError = parseErr.message;
+        if (parseErr.message && parseErr.message.includes('fetch')) {
+          return res.status(502).json({ error: 'Não foi possível conectar à API Grok. Verifique sua rede e GROK_API_KEY.' });
+        }
+      }
     }
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content?.trim() || '';
-    const html = content.replace(/^```html?\s*|\s*```$/gi, '').trim() || content;
-    res.json({ html });
+
+    return res.status(502).json({
+      error: lastError
+        ? `Grok: ${String(lastError).slice(0, 150)}`
+        : `Erro na API Grok (status ${lastStatus}). Verifique GROK_API_KEY em console.x.ai e variáveis da cloud.`,
+    });
   } catch (err) {
-    console.error(err);
-    sendError(res, 500, err.message || 'Erro ao revisar com IA.');
+    console.error('review-llm:', err);
+    res.status(500).json({ error: err.message || 'Erro interno ao revisar com IA.' });
   }
 });
 

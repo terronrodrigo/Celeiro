@@ -938,6 +938,20 @@ body {
   gap: 12px;
   flex: 1;
 }
+
+.filter-area-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+}
+.filter-area-checkboxes .checkbox-label {
+  margin: 0;
+  white-space: nowrap;
+}
+.filter-areas-wrap {
+  min-width: 200px;
+}
 .form-group.compact {
   margin-bottom: 0;
 }
