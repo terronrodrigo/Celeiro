@@ -1,0 +1,24 @@
+# Dependências
+node_modules/
+server/node_modules/
+
+# Ambiente e segredos
+.env
+server/.env
+*.local
+
+# Logs e dados locais
+*.log
+server/data/
+*.db
+server/uploads/
+
+# IDE e OS
+.DS_Store
+.idea
+.vscode
+.cursor
+
+# Build / cache (se houver no futuro)
+dist/
+.cache

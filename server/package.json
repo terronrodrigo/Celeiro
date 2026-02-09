@@ -1,0 +1,28 @@
+{
+  "name": "celeiro-dashboard-api",
+  "version": "1.0.0",
+  "description": "API para dashboard Celeiro São Paulo - voluntários e envio via Resend",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "migrate": "node scripts/sync-mongo.js",
+    "create-voluntario-test": "node scripts/create-voluntario-test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "multer": "^1.4.5-lts.1",
+    "better-sqlite3": "^12.6.2",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "csv-parse": "^5.5.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "google-auth-library": "^9.6.3",
+    "mongoose": "^8.0.3",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "resend": "^4.0.0"
+  }
+}

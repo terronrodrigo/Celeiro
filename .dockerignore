@@ -1,0 +1,31 @@
+# Git e IDE
+.git
+.gitignore
+.cursor
+.vscode
+*.md
+!README.md
+
+# Dependências (serão instaladas no build)
+server/node_modules
+
+# Ambiente local
+server/.env
+.env
+*.log
+
+# Uploads locais (não levar para imagem)
+server/uploads
+
+# Documentação e testes (opcional)
+COMO-TESTAR.md
+TESTAR-AGORA.md
+VERIFICAR.md
+VSCODE-TERMINAL.md
+OTIMIZACOES.md
+MONGODB-SETUP.md
+INICIAR-SERVIDOR.command
+
+# Data local
+server/data
+*.db

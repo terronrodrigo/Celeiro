@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard Voluntários | Celeiro São Paulo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="dashboard">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <span class="logo-icon">◇</span>
+          <span class="logo-text">Celeiro SP</span>
+        </div>
+      </div>
+      <nav class="sidebar-nav" id="navAdmin">
+        <a href="#" class="nav-item active" data-view="resumo">
+          <span class="nav-icon">📊</span>
+          <span>Resumo</span>
+        </a>
+        <a href="#" class="nav-item" data-view="voluntarios">
+          <span class="nav-icon">👥</span>
+          <span>Voluntários</span>
+        </a>
+        <a href="#" class="nav-item" data-view="emails">
+          <span class="nav-icon">✉️</span>
+          <span>Enviar Email</span>
+        </a>
+        <a href="#" class="nav-item" data-view="ministros">
+          <span class="nav-icon">⛪</span>
+          <span>Ministérios</span>
+        </a>
+        <a href="#" class="nav-item" data-view="usuarios">
+          <span class="nav-icon">🔐</span>
+          <span>Usuários</span>
+        </a>
+        <a href="#" class="nav-item" data-view="eventos-checkin">
+          <span class="nav-icon">📅</span>
+          <span>Eventos Check-in</span>
+        </a>
+        <a href="#" class="nav-item" data-view="checkin">
+          <span class="nav-icon">✅</span>
+          <span>Check-in</span>
+        </a>
+        <a href="#" class="nav-item" data-view="perfil">
+          <span class="nav-icon">👤</span>
+          <span>Perfil</span>
+        </a>
+      </nav>
+      <nav class="sidebar-nav" id="navLider" style="display: none;">
+        <a href="#" class="nav-item active" data-view="checkin-ministerio">
+          <span class="nav-icon">✅</span>
+          <span>Check-ins do ministério</span>
+        </a>
+        <a href="#" class="nav-item" data-view="perfil">
+          <span class="nav-icon">👤</span>
+          <span>Perfil</span>
+        </a>
+        <a href="#" class="nav-item" data-view="meus-checkins">
+          <span class="nav-icon">📋</span>
+          <span>Meus check-ins</span>
+        </a>
+      </nav>
+      <nav class="sidebar-nav" id="navVoluntario" style="display: none;">
+        <a href="#" class="nav-item active" data-view="perfil">
+          <span class="nav-icon">👤</span>
+          <span>Atualizar dados de perfil</span>
+        </a>
+        <a href="#" class="nav-item" data-view="checkin-hoje">
+          <span class="nav-icon">✅</span>
+          <span>Realizar check-in do dia</span>
+        </a>
+        <a href="#" class="nav-item" data-view="meus-checkins">
+          <span class="nav-icon">📋</span>
+          <span>Visualizar histórico próprio de check-ins</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="user-card">
+          <div class="user-avatar" id="authUserInitial">A</div>
+          <div class="user-info">
+            <span class="user-name" id="authUserName"></span>
+            <span class="user-role" id="authUserRole"></span>
+          </div>
+        </div>
+      </div>
+    </aside>
+    <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
+
+    <main class="main-content">
+      <header class="top-bar">
+        <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="Abrir menu">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="page-title">
+          <h1 id="pageTitle">Inscrição Voluntários</h1>
+          <p class="subtitle" id="pageSubtitle">Resumo das inscrições e envio de emails via Resend.</p>
+        </div>
+        <div class="top-actions">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="searchInput" placeholder="Buscar nome ou email...">
+          </div>
+          <button type="button" class="btn btn-primary" id="btnRefresh">Atualizar dados</button>
+          <button type="button" class="btn btn-ghost" id="btnLogout" disabled>Sair</button>
+        </div>
+      </header>
+
+      <div id="loading" class="loading-state">
+        <div class="spinner"></div>
+        <p>Carregando...</p>
+      </div>
+
+      <div id="error" class="error-state" style="display: none;">
+        <p class="error-message"></p>
+        <button type="button" class="btn btn-primary" id="btnRetry">Tentar novamente</button>
+      </div>
+
+      <div id="content" style="display: none;">
+        <!-- Filtros (visíveis em Resumo, Voluntários e Enviar email) -->
+        <section class="view active" data-view="resumo voluntarios emails">
+          <section class="filters-row">
+            <div class="filters-card">
+              <div class="filters-left">
+                <div class="form-group compact">
+                  <label for="filterArea">Área</label>
+                  <select id="filterArea"></select>
+                </div>
+                <div class="form-group compact">
+                  <label for="filterDisponibilidade">Disponibilidade</label>
+                  <select id="filterDisponibilidade"></select>
+                </div>
+                <div class="form-group compact">
+                  <label for="filterEstado">Estado</label>
+                  <select id="filterEstado"></select>
+                </div>
+                <div class="form-group compact">
+                  <label for="filterCidade">Cidade</label>
+                  <select id="filterCidade"></select>
+                </div>
+                <div class="form-group compact">
+                  <label for="filterComCheckin">Check-in</label>
+                  <select id="filterComCheckin">
+                    <option value="">Todos</option>
+                    <option value="com">Com check-in</option>
+                    <option value="sem">Sem check-in</option>
+                    <option value="so-checkin">Só check-in (sem cadastro)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="filters-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="btnClearFilters">Limpar filtros</button>
+              </div>
+            </div>
+            <div id="activeFilters" class="active-filters" style="display: none;"></div>
+          </section>
+          <!-- Link de cadastro (admin) -->
+          <section class="cadastro-link-card filters-row">
+            <div class="filters-card cadastro-link-box">
+              <div class="cadastro-link-content">
+                <span class="cadastro-link-label">Link para novos voluntários se cadastrarem:</span>
+                <input type="text" id="cadastroLinkInput" class="cadastro-link-input" readonly>
+                <button type="button" class="btn btn-primary btn-sm" id="btnCopiarLinkCadastro">Copiar link</button>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="view active" data-view="resumo">
+          <!-- KPIs -->
+          <section class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Total de inscrições</span>
+              </div>
+              <div class="kpi-value" id="kpiTotal">0</div>
+              <div class="kpi-footer">voluntários únicos (por email)</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Áreas de atuação</span>
+              </div>
+              <div class="kpi-value" id="kpiAreas">0</div>
+              <div class="kpi-footer">tipos diferentes</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Selecionados</span>
+              </div>
+              <div class="kpi-value" id="kpiSelected">0</div>
+              <div class="kpi-footer">para envio de email</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Com check-in</span>
+              </div>
+              <div class="kpi-value" id="kpiComCheckin">0</div>
+              <div class="kpi-footer">já confirmaram presença (por email)</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Sem check-in</span>
+              </div>
+              <div class="kpi-value" id="kpiSemCheckin">0</div>
+              <div class="kpi-footer">nunca confirmaram</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Só check-in (sem cadastro)</span>
+              </div>
+              <div class="kpi-value" id="kpiSoCheckin">0</div>
+              <div class="kpi-footer">confirmaram mas não estão na lista</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Total (lista + só check-in)</span>
+              </div>
+              <div class="kpi-value" id="kpiTotalGeral">0</div>
+              <div class="kpi-footer">pessoas únicas no sistema</div>
+            </div>
+          </section>
+
+          <!-- Charts -->
+          <section class="charts-row">
+            <div class="chart-card chart-main">
+              <div class="chart-header">
+                <h2>Por área de atuação</h2>
+              </div>
+              <div class="chart-container">
+                <canvas id="areasChart"></canvas>
+              </div>
+            </div>
+            <div class="chart-card chart-side">
+              <div class="chart-header">
+                <h2>Por disponibilidade</h2>
+              </div>
+              <div class="chart-container chart-donut">
+                <canvas id="disponibilidadeChart"></canvas>
+              </div>
+            </div>
+          </section>
+
+          <section class="charts-row">
+            <div class="chart-card chart-main">
+              <div class="chart-header">
+                <h2>Por estado</h2>
+              </div>
+              <div class="chart-container">
+                <canvas id="estadoChart"></canvas>
+              </div>
+            </div>
+            <div class="chart-card chart-side">
+              <div class="chart-header">
+                <h2>Por cidade</h2>
+              </div>
+              <div class="chart-container">
+                <canvas id="cidadeChart"></canvas>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- Tabela de voluntários -->
+        <section class="view" data-view="voluntarios emails">
+          <section class="table-section">
+            <div class="table-card">
+              <div class="chart-header">
+                <h2>Voluntários — <span id="voluntariosCountTop" class="list-count">0</span> na lista</h2>
+                <div class="table-actions">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="selectAll" title="Selecionar todos na página">
+                    <span>Selecionar todos</span>
+                  </label>
+                  <button type="button" class="btn btn-primary btn-sm" id="btnOpenSend">
+                    ✉️ Enviar email (<span id="countSelected">0</span>)
+                  </button>
+                </div>
+              </div>
+              <div class="table-wrapper">
+                <table class="data-table" id="voluntariosTable">
+                  <thead>
+                    <tr>
+                      <th class="col-check"><input type="checkbox" id="selectAllHeader" title="Selecionar todos"></th>
+                      <th>Nome</th>
+                      <th>Email</th>
+                      <th>Cidade / Estado</th>
+                      <th>Áreas</th>
+                      <th>Disponibilidade</th>
+                    </tr>
+                  </thead>
+                  <tbody id="voluntariosBody">
+                  </tbody>
+                </table>
+              </div>
+              <div class="table-footer">
+                <span id="tableCount">0</span> voluntários na lista
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- Ministérios (admin) -->
+        <section class="view" data-view="ministros">
+          <section class="filters-row">
+            <div class="filters-card">
+              <button type="button" class="btn btn-primary" id="btnNovoMinisterio">➕ Novo ministério</button>
+            </div>
+          </section>
+          <div class="table-card">
+            <div class="chart-header"><h2>Ministérios</h2></div>
+            <p class="auth-subtitle">Crie ministérios e defina um voluntário como líder de cada um. O líder verá os check-ins associados ao ministério.</p>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Nome</th><th>Líder</th><th>Ação</th></tr></thead>
+                <tbody id="ministrosBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="modalNovoMinisterio" class="modal" aria-hidden="true">
+            <div class="modal-backdrop"></div>
+            <div class="modal-box">
+              <div class="modal-header"><h2>Novo ministério</h2><button type="button" class="modal-close" id="modalNovoMinisterioClose">&times;</button></div>
+              <form id="formNovoMinisterio" class="modal-body">
+                <div class="form-group"><label for="ministerioNome">Nome</label><input type="text" id="ministerioNome" placeholder="Ex: Louvor" required></div>
+                <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalNovoMinisterioCancel">Cancelar</button><button type="submit" class="btn btn-primary">Criar</button></div>
+              </form>
+            </div>
+          </div>
+          <div id="modalAssignLider" class="modal" aria-hidden="true">
+            <div class="modal-backdrop"></div>
+            <div class="modal-box">
+              <div class="modal-header"><h2>Definir líder do ministério</h2><button type="button" class="modal-close" id="modalAssignLiderClose">&times;</button></div>
+              <div class="modal-body">
+                <p class="auth-subtitle" id="assignLiderMinisterioNome"></p>
+                <div class="form-group"><label for="assignLiderSelect">Voluntário (ou usuário) como líder</label><select id="assignLiderSelect"></select></div>
+                <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalAssignLiderCancel">Cancelar</button><button type="button" class="btn btn-primary" id="btnAssignLider">Definir como líder</button></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Usuários e perfis (admin) -->
+        <section class="view" data-view="usuarios">
+          <div class="table-card">
+            <div class="chart-header"><h2>Usuários e perfis</h2></div>
+            <p class="auth-subtitle">Altere o perfil (voluntário, admin ou líder de ministério). Histórico de alterações é guardado.</p>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Nome</th><th>Email</th><th>Perfil</th><th>Ministério (líder)</th><th>Ação</th></tr></thead>
+                <tbody id="usuariosBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="modalUserRole" class="modal" aria-hidden="true">
+            <div class="modal-backdrop"></div>
+            <div class="modal-box">
+              <div class="modal-header"><h2>Alterar perfil</h2><button type="button" class="modal-close" id="modalUserRoleClose">&times;</button></div>
+              <div class="modal-body" id="modalUserRoleFormBody">
+                <p class="auth-subtitle" id="modalUserRoleEmail"></p>
+                <div class="form-group"><label for="userRoleSelect">Perfil</label><select id="userRoleSelect"><option value="voluntario">Voluntário</option><option value="admin">Admin</option><option value="lider">Líder de ministério</option></select></div>
+                <div class="form-group" id="userMinisterioGroup" style="display: none;"><label for="userMinisterioSelect">Ministério</label><select id="userMinisterioSelect"></select></div>
+                <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalUserRoleCancel">Cancelar</button><button type="button" class="btn btn-primary" id="btnSaveUserRole">Salvar</button></div>
+              </div>
+              <div class="modal-body" id="modalUserHistoryBody" style="display: none;">
+                <h3>Histórico de perfil</h3>
+                <ul id="userHistoryList"></ul>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnUserRoleBack">Voltar</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Eventos de check-in (admin) -->
+        <section class="view" data-view="eventos-checkin">
+          <section class="filters-row">
+            <div class="filters-card">
+              <button type="button" class="btn btn-primary" id="btnNovoEvento">➕ Novo evento de check-in</button>
+            </div>
+          </section>
+          <div id="eventosCheckinList" class="table-card">
+            <div class="chart-header"><h2>Eventos de check-in</h2></div>
+            <p class="auth-subtitle">Eventos ativos aparecem na tela "Realizar check-in do dia" dos voluntários. Ao desligar, o evento continua listado aqui — use "Ligar" para ativá-lo de novo.</p>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Ação</th></tr></thead>
+                <tbody id="eventosCheckinBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="modalNovoEvento" class="modal" aria-hidden="true">
+            <div class="modal-backdrop"></div>
+            <div class="modal-box">
+              <div class="modal-header"><h2>Novo evento de check-in</h2><button type="button" class="modal-close" id="modalNovoEventoClose">&times;</button></div>
+              <form id="formNovoEvento" class="modal-body">
+                <div class="form-group"><label for="eventoData">Data do culto</label><input type="date" id="eventoData" required></div>
+                <div class="form-group"><label for="eventoLabel">Nome (opcional)</label><input type="text" id="eventoLabel" placeholder="Ex: Culto 09/02"></div>
+                <div class="form-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="eventoAtivo" checked>
+                    Check-in ativo (voluntários poderão realizar check-in neste dia)
+                  </label>
+                </div>
+                <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalNovoEventoCancel">Cancelar</button><button type="submit" class="btn btn-primary">Criar</button></div>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <!-- Check-in (admin) -->
+        <section class="view" data-view="checkin">
+          <section class="filters-row">
+            <div class="filters-card">
+              <div class="filters-left">
+                <div class="form-group compact">
+                  <label for="checkinData">Data</label>
+                  <select id="checkinData">
+                    <option value="">Todas as datas</option>
+                  </select>
+                </div>
+                <div class="form-group compact">
+                  <label for="checkinEvento">Evento</label>
+                  <select id="checkinEvento"></select>
+                </div>
+                <div class="form-group compact">
+                  <label for="checkinMinisterio">Ministério</label>
+                  <select id="checkinMinisterio"></select>
+                </div>
+                <div class="form-group compact">
+                  <label for="checkinSearch">Buscar</label>
+                  <input type="text" id="checkinSearch" placeholder="Nome ou email">
+                </div>
+              </div>
+              <div class="filters-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="btnClearCheckinFilters">Limpar filtros</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Total de check-ins</span>
+              </div>
+              <div class="kpi-value" id="checkinTotal">0</div>
+              <div class="kpi-footer">registros no banco</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Ministérios</span>
+              </div>
+              <div class="kpi-value" id="checkinMinisterios">0</div>
+              <div class="kpi-footer">diferentes</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header">
+                <span class="kpi-label">Hoje</span>
+              </div>
+              <div class="kpi-value" id="checkinHoje">0</div>
+              <div class="kpi-footer">check-ins</div>
+            </div>
+          </section>
+
+          <section class="charts-row">
+            <div class="chart-card chart-main">
+              <div class="chart-header">
+                <h2>Por ministério</h2>
+              </div>
+              <div class="chart-container">
+                <canvas id="ministerioChart"></canvas>
+              </div>
+            </div>
+            <div class="chart-card chart-side">
+              <div class="chart-header">
+                <h2>Lista de check-ins</h2>
+              </div>
+              <div class="table-wrapper">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Nome</th>
+                      <th>Email</th>
+                      <th>Ministério</th>
+                      <th>Data/Hora</th>
+                    </tr>
+                  </thead>
+                  <tbody id="checkinBody"></tbody>
+                </table>
+              </div>
+              <div class="table-footer">
+                <span id="checkinCount">0</span> check-ins na lista
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- Voluntário / Líder / Admin: tela de perfil -->
+        <section class="view" data-view="perfil">
+          <div class="perfil-page">
+            <div class="filters-card perfil-card">
+              <div class="perfil-foto-wrap">
+                <img id="perfilFotoImg" class="perfil-foto-img" src="" alt="Sua foto" style="display: none;">
+                <div class="perfil-foto-placeholder" id="perfilFotoPlaceholder">
+                  <span class="perfil-foto-label">Sem foto</span>
+                </div>
+                <div class="perfil-foto-actions">
+                  <input type="file" id="perfilFotoInput" accept="image/jpeg,image/png,image/gif,image/webp" hidden>
+                  <button type="button" class="btn btn-sm btn-primary" id="btnPerfilFotoUpload">Enviar foto</button>
+                  <button type="button" class="btn btn-sm btn-ghost" id="btnPerfilFotoExcluir" style="display: none;">Excluir foto</button>
+                </div>
+              </div>
+              <h2>Atualizar dados de perfil</h2>
+              <p class="auth-subtitle">Revise e altere suas informações. Os dados são os mesmos do formulário de cadastro.</p>
+              <form id="formPerfil" class="auth-form perfil-form">
+                <div class="form-row">
+                  <div class="form-group"><label for="perfilNome">Nome completo</label><input type="text" id="perfilNome" placeholder="Nome completo"></div>
+                  <div class="form-group"><label for="perfilEmail">Email</label><input type="email" id="perfilEmail" placeholder="seu@email.com" disabled></div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group"><label for="perfilNascimento">Data de nascimento</label><input type="text" id="perfilNascimento" placeholder="DD/MM/AAAA"></div>
+                  <div class="form-group"><label for="perfilWhatsapp">WhatsApp</label><input type="text" id="perfilWhatsapp" placeholder="(11) 99999-9999"></div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group"><label for="perfilPais">País</label><input type="text" id="perfilPais" placeholder="Brasil"></div>
+                  <div class="form-group"><label for="perfilEstado">Estado (UF)</label><select id="perfilEstado"><option value="">Selecione</option></select></div>
+                  <div class="form-group"><label for="perfilCidade">Cidade</label><input type="text" id="perfilCidade" placeholder="Cidade"></div>
+                </div>
+                <div class="form-group"><label for="perfilEvangelico">É cristão/evangélico?</label><input type="text" id="perfilEvangelico" placeholder="Sim / Não"></div>
+                <div class="form-group"><label for="perfilIgreja">Igreja onde congrega</label><input type="text" id="perfilIgreja" placeholder="Nome da igreja"></div>
+                <div class="form-row">
+                  <div class="form-group"><label for="perfilTempoIgreja">Tempo que frequenta a igreja</label><input type="text" id="perfilTempoIgreja" placeholder="Ex: 2 anos"></div>
+                  <div class="form-group"><label for="perfilVoluntarioIgreja">Já é voluntário na igreja?</label><input type="text" id="perfilVoluntarioIgreja" placeholder="Sim / Não"></div>
+                </div>
+                <div class="form-group"><label for="perfilMinisterio">Ministério em que serve ou deseja servir</label><input type="text" id="perfilMinisterio" placeholder="Ex: Louvor, Streaming"></div>
+                <div class="form-group"><label for="perfilDisponibilidade">Disponibilidade</label><input type="text" id="perfilDisponibilidade" placeholder="Ex: Domingos manhã"></div>
+                <div class="form-group"><label for="perfilHorasSemana">Horas por semana que pode dedicar</label><input type="text" id="perfilHorasSemana" placeholder="Ex: 2 a 4 horas"></div>
+                <div class="form-group"><label for="perfilAreas">Áreas de interesse (separadas por vírgula)</label><input type="text" id="perfilAreas" placeholder="Ex: Mídia, Louvor"></div>
+                <button type="submit" class="btn btn-primary">Salvar</button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <!-- Voluntário: Realizar check-in do dia -->
+        <section class="view" data-view="checkin-hoje">
+          <div class="filters-card">
+            <h2>Realizar check-in do dia</h2>
+            <p class="auth-subtitle">Confirme sua presença no culto de hoje. Só é possível confirmar no próprio dia.</p>
+            <div id="eventosHojeList"></div>
+            <div id="formConfirmarCheckin" style="display: none;">
+              <div class="form-group"><label for="confirmarMinisterio">Ministério em que vai atuar</label><input type="text" id="confirmarMinisterio" placeholder="Ex: Streaming"></div>
+              <button type="button" class="btn btn-primary" id="btnConfirmarCheckin">Confirmar presença</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Voluntário: Histórico próprio de check-ins -->
+        <section class="view" data-view="meus-checkins">
+          <div class="table-card">
+            <div class="chart-header"><h2>Visualizar histórico próprio de check-ins</h2></div>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Data</th><th>Ministério</th><th>Horário</th></tr></thead>
+                <tbody id="meusCheckinsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Líder: Check-ins do ministério -->
+        <section class="view" data-view="checkin-ministerio">
+          <section class="filters-row">
+            <div class="filters-card">
+              <div class="filters-left">
+                <div class="form-group compact">
+                  <label for="checkinMinisterioData">Data</label>
+                  <select id="checkinMinisterioData"></select>
+                </div>
+              </div>
+              <div class="filters-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshCheckinMinisterio">Atualizar</button>
+              </div>
+            </div>
+          </section>
+          <section class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Total</span></div>
+              <div class="kpi-value" id="checkinMinisterioTotal">0</div>
+              <div class="kpi-footer">check-ins do ministério</div>
+            </div>
+          </section>
+          <section class="charts-row">
+            <div class="table-card chart-main">
+              <div class="chart-header"><h2>Pessoas com check-in no ministério</h2></div>
+              <div class="table-wrapper">
+                <table class="data-table">
+                  <thead><tr><th>Nome</th><th>Email</th><th>Ministério</th><th>Data/Hora</th></tr></thead>
+                  <tbody id="checkinMinisterioBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- Cadastro público de voluntários (link compartilhável) -->
+  <div id="cadastroOverlay" class="auth-overlay cadastro-overlay" style="display: none;">
+    <div class="auth-card cadastro-card">
+      <div class="auth-header">
+        <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
+        <p class="auth-subtitle">Inscrição de voluntários</p>
+      </div>
+      <form id="cadastroPublicoForm" class="auth-form cadastro-form">
+        <div class="form-row">
+          <div class="form-group"><label for="cadastroNome">Nome completo</label><input type="text" id="cadastroNome" placeholder="Seu nome completo" required></div>
+          <div class="form-group"><label for="cadastroEmail">Email</label><input type="email" id="cadastroEmail" placeholder="seu@email.com" required></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label for="cadastroNascimento">Data de nascimento</label><input type="text" id="cadastroNascimento" placeholder="DD/MM/AAAA"></div>
+          <div class="form-group"><label for="cadastroWhatsapp">WhatsApp</label><input type="text" id="cadastroWhatsapp" placeholder="(11) 99999-9999"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label for="cadastroPais">País</label><input type="text" id="cadastroPais" placeholder="Brasil"></div>
+          <div class="form-group"><label for="cadastroEstado">Estado (UF)</label><select id="cadastroEstado"><option value="">Selecione</option></select></div>
+          <div class="form-group"><label for="cadastroCidade">Cidade</label><input type="text" id="cadastroCidade" placeholder="Cidade"></div>
+        </div>
+        <div class="form-group"><label for="cadastroEvangelico">É cristão/evangélico?</label><input type="text" id="cadastroEvangelico" placeholder="Sim / Não"></div>
+        <div class="form-group"><label for="cadastroIgreja">Igreja onde congrega</label><input type="text" id="cadastroIgreja" placeholder="Nome da igreja"></div>
+        <div class="form-row">
+          <div class="form-group"><label for="cadastroTempoIgreja">Tempo que frequenta a igreja</label><input type="text" id="cadastroTempoIgreja" placeholder="Ex: 2 anos"></div>
+          <div class="form-group"><label for="cadastroVoluntarioIgreja">Já é voluntário na igreja?</label><input type="text" id="cadastroVoluntarioIgreja" placeholder="Sim / Não"></div>
+        </div>
+        <div class="form-group"><label for="cadastroMinisterio">Ministério em que serve ou deseja servir</label><input type="text" id="cadastroMinisterio" placeholder="Ex: Louvor, Streaming"></div>
+        <div class="form-group"><label for="cadastroDisponibilidade">Disponibilidade</label><input type="text" id="cadastroDisponibilidade" placeholder="Ex: Domingos manhã, Sábados"></div>
+        <div class="form-group"><label for="cadastroHorasSemana">Horas por semana que pode dedicar</label><input type="text" id="cadastroHorasSemana" placeholder="Ex: 2 a 4 horas"></div>
+        <div class="form-group"><label for="cadastroAreas">Áreas de interesse (separadas por vírgula)</label><input type="text" id="cadastroAreas" placeholder="Ex: Mídia, Louvor, Crianças"></div>
+        <p id="cadastroPublicoError" class="auth-error"></p>
+        <p id="cadastroPublicoSuccess" class="auth-success" style="display: none;"></p>
+        <button type="submit" class="btn btn-primary" id="btnCadastroPublico">Enviar inscrição</button>
+      </form>
+      <p class="auth-footer-link"><a href="#" id="linkSairCadastro">Voltar ao login</a></p>
+    </div>
+  </div>
+
+  <!-- Login -->
+  <div id="authOverlay" class="auth-overlay" style="display: none;">
+    <div class="auth-card" id="loginCard">
+      <div class="auth-header">
+        <div class="logo">
+          <span class="logo-icon">◇</span>
+          <span class="logo-text">Celeiro SP</span>
+        </div>
+        <p class="auth-subtitle">Admin: use usuário do sistema. Voluntário: use seu email.</p>
+      </div>
+      <form id="loginForm" class="auth-form">
+        <div class="form-group">
+          <label for="loginEmail">Email ou usuário admin</label>
+          <input type="text" id="loginEmail" autocomplete="username" placeholder="admin ou seu@email.com">
+        </div>
+        <div class="form-group">
+          <label for="loginPass">Senha</label>
+          <input type="password" id="loginPass" autocomplete="current-password" placeholder="••••••••">
+        </div>
+        <p id="loginError" class="auth-error"></p>
+        <button type="submit" class="btn btn-primary" id="btnLogin">Entrar</button>
+        <p class="auth-footer-link">Não tem conta? <a href="#" id="linkRegistro">Cadastre-se como voluntário</a></p>
+      </form>
+    </div>
+    <div class="auth-card" id="registerCard" style="display: none;">
+      <div class="auth-header">
+        <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
+        <p class="auth-subtitle">Cadastro de voluntário</p>
+      </div>
+      <form id="registerForm" class="auth-form">
+        <div class="form-group">
+          <label for="registerNome">Nome completo</label>
+          <input type="text" id="registerNome" placeholder="Seu nome">
+        </div>
+        <div class="form-group">
+          <label for="registerEmail">Email</label>
+          <input type="email" id="registerEmail" placeholder="seu@email.com">
+        </div>
+        <div class="form-group">
+          <label for="registerPass">Senha</label>
+          <input type="password" id="registerPass" placeholder="••••••••">
+        </div>
+        <p id="registerError" class="auth-error"></p>
+        <button type="submit" class="btn btn-primary" id="btnRegister">Cadastrar</button>
+        <p class="auth-footer-link"><a href="#" id="linkLogin">Voltar ao login</a></p>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Perfil do voluntário -->
+  <div id="modalPerfilVoluntario" class="modal" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box modal-perfil">
+      <div class="modal-header">
+        <h2>Perfil do voluntário</h2>
+        <button type="button" class="modal-close" id="modalPerfilVoluntarioClose" aria-label="Fechar">&times;</button>
+      </div>
+      <div class="modal-body" id="modalPerfilVoluntarioBody">
+        <div id="perfilVoluntarioConteudo"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Enviar Email -->
+  <div id="modalEmail" class="modal" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Enviar email via Resend</h2>
+        <button type="button" class="modal-close" id="modalClose" aria-label="Fechar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-info">Destinatários: <strong id="modalDestCount">0</strong></p>
+        <div class="form-group">
+          <label for="emailSubject">Assunto</label>
+          <input type="text" id="emailSubject" placeholder="Ex: Bem-vindo ao Celeiro São Paulo">
+        </div>
+        <div class="form-group">
+          <label for="emailBody">Mensagem (HTML ou texto)</label>
+          <textarea id="emailBody" rows="8" placeholder="Olá [nome],&#10;&#10;..."></textarea>
+        </div>
+        <p class="form-hint">Use <code>[nome]</code> para substituir pelo nome do voluntário em cada email.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="modalCancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btnSendEmail">Enviar</button>
+      </div>
+      <div id="sendResult" class="send-result" style="display: none;"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

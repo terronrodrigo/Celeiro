@@ -1,0 +1,21 @@
+# Render.com - blueprint opcional (deploy sem Docker)
+# Use se preferir build Node nativo em vez de Docker
+services:
+  - type: web
+    name: celeiro-dashboard
+    env: node
+    buildCommand: cd server && npm install
+    startCommand: cd server && node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASS
+        sync: false
+      - key: RESEND_API_KEY
+        allowNull: true
+      - key: RESEND_FROM_EMAIL
+        allowNull: true
