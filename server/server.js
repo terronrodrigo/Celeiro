@@ -539,6 +539,7 @@ app.post('/api/login', async (req, res) => {
     user.ultimoAcesso = new Date();
     await user.save();
 
+    const mustChangePassword = user.mustChangePassword === true;
     let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
     if (ministerioIds.length === 0 && user.ministerioId) {
       ministerioIds = [user.ministerioId];
@@ -554,9 +555,9 @@ app.post('/api/login', async (req, res) => {
     const ministerioNome = ministerioNomes[0] || null;
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
-    authTokens.set(token, { user: user.nome, userId: user._id, role: user.role, email: user.email, ministerioId, ministerioNome, ministerioIds, ministerioNomes, expiresAt });
+    authTokens.set(token, { user: user.nome, userId: user._id, role: user.role, email: user.email, ministerioId, ministerioNome, ministerioIds, ministerioNomes, expiresAt, mustChangePassword });
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    return res.json({ token, user: { nome: user.nome, email: user.email, role: user.role, ministerioId, ministerioNome, ministerioIds, ministerioNomes, fotoUrl: user.fotoUrl || null }, expiresAt });
+    return res.json({ token, user: { nome: user.nome, email: user.email, role: user.role, ministerioId, ministerioNome, ministerioIds, ministerioNomes, fotoUrl: user.fotoUrl || null, mustChangePassword }, expiresAt });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao fazer login.' });
@@ -567,11 +568,13 @@ app.get('/api/me', requireAuth, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   let displayName = req.user;
   let fotoUrl = null;
+  let mustChangePassword = false;
   try {
     if (req.userId) {
-      const user = await User.findById(req.userId).select('nome fotoUrl').lean();
+      const user = await User.findById(req.userId).select('nome fotoUrl mustChangePassword').lean();
       if (user && user.nome) displayName = user.nome;
       if (user && user.fotoUrl) fotoUrl = user.fotoUrl;
+      if (user && user.mustChangePassword) mustChangePassword = true;
     }
     const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email').lean())?.email);
     if (email) {
@@ -581,6 +584,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
   } catch (_) {}
   const payload = { user: displayName, role: req.userRole, email: req.userEmail };
   if (fotoUrl) payload.fotoUrl = fotoUrl;
+  if (mustChangePassword) payload.mustChangePassword = true;
   if ((req.userMinisterioIds && req.userMinisterioIds.length) || req.userMinisterioId) {
     payload.ministerioId = req.userMinisterioId;
     payload.ministerioNome = req.userMinisterioNome;
@@ -1204,6 +1208,51 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
   }
 });
 
+// Revisar texto de email com LLM (Grok): devolve HTML profissional (links como botões, títulos em negrito).
+app.post('/api/email/review-llm', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { text } = req.body || {};
+    const raw = (text || '').toString().trim();
+    if (!raw) return sendError(res, 400, 'Envie o texto base em "text".');
+    const apiKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY;
+    if (!apiKey) return sendError(res, 503, 'GROK_API_KEY (ou XAI_API_KEY) não configurada. Adicione no .env ou nas variáveis da cloud para usar a revisão com IA.');
+    const systemPrompt = `Você é um revisor de emails. Sua tarefa é:
+1. Revisar o texto e propor pequenas melhorias (clareza, tom profissional, correções).
+2. Devolver APENAS o corpo do email em HTML, sem markdown, sem \`\`\`.
+3. Regras: transformar URLs/links em botões (<a href="..." style="display:inline-block;padding:10px 20px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;">Texto</a>).
+4. Usar <strong> nos títulos e termos importantes.
+5. Manter [nome] como está (será substituído pelo nome do destinatário).
+6. Usar parágrafos <p>, listas <ul>/<li> se fizer sentido. Tom profissional e cordial.`;
+    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'grok-beta',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: raw },
+        ],
+        temperature: 0.3,
+      }),
+    });
+    if (!response.ok) {
+      const errBody = await response.text();
+      console.error('Grok API error:', response.status, errBody);
+      return sendError(res, 502, `Erro na API Grok: ${response.status}. Verifique GROK_API_KEY e limite de uso.`);
+    }
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content?.trim() || '';
+    const html = content.replace(/^```html?\s*|\s*```$/gi, '').trim() || content;
+    res.json({ html });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao revisar com IA.');
+  }
+});
+
 app.post('/api/send-email', requireAuth, requireAdmin, async (req, res) => {
   const { to, subject, html, text, voluntarios: voluntariosMap } = req.body;
   const apiKey = process.env.RESEND_API_KEY;
@@ -1425,12 +1474,47 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     }
     
     user.senha = senhaNova;
+    user.mustChangePassword = false;
     await user.save();
     
     res.json({ ok: true, mensagem: 'Senha alterada com sucesso.' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao trocar senha.' });
+  }
+});
+
+// POST /api/users - Criar usuário (admin only). Senha temporária; usuário deve trocar no primeiro acesso.
+app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { email, nome, senha, role, ministerioIds } = req.body || {};
+    const em = (email || '').toString().trim().toLowerCase();
+    if (!em || !em.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
+    if (!(nome || '').toString().trim()) return sendError(res, 400, 'Nome é obrigatório.');
+    const senhaVal = (senha || '').toString().trim();
+    if (!senhaVal || senhaVal.length < 6) return sendError(res, 400, 'Senha temporária é obrigatória (mínimo 6 caracteres).');
+    const roleVal = (role || 'voluntario').toString().toLowerCase();
+    if (!['admin', 'voluntario', 'lider'].includes(roleVal)) return sendError(res, 400, 'Perfil inválido.');
+    const existing = await User.findOne({ email: em });
+    if (existing) return sendError(res, 409, 'Já existe um usuário com este email.');
+    const rawIds = Array.isArray(ministerioIds) ? ministerioIds.filter(Boolean) : [];
+    const user = new User({
+      email: em,
+      nome: (nome || '').toString().trim(),
+      senha: senhaVal,
+      role: roleVal,
+      ministerioIds: (roleVal === 'lider' || roleVal === 'admin') ? rawIds : [],
+      ativo: true,
+      mustChangePassword: true,
+    });
+    await user.save();
+    try { await ensureVoluntarioInList({ email: user.email, nome: user.nome }); } catch (_) {}
+    invalidateCache();
+    const created = await User.findById(user._id).select('-senha -resetToken -resetTokenExpires').populate('ministerioIds', 'nome').lean();
+    res.status(201).json(created);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao criar usuário.');
   }
 });
 

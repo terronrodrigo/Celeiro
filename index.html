@@ -273,7 +273,7 @@
                 <h2>Voluntários <span id="voluntariosCountTop" class="list-count">(0)</span></h2>
                 <div class="table-actions">
                   <label class="checkbox-label">
-                    <input type="checkbox" id="selectAll" title="Selecionar todos na página">
+                    <input type="checkbox" id="selectAll" title="Selecionar todos da filtragem">
                     <span>Selecionar todos</span>
                   </label>
                   <button type="button" class="btn btn-primary btn-sm" id="btnOpenSend">
@@ -285,7 +285,7 @@
                 <table class="data-table" id="voluntariosTable">
                   <thead>
                     <tr>
-                      <th class="col-check"><input type="checkbox" id="selectAllHeader" title="Selecionar todos"></th>
+                      <th class="col-check"><input type="checkbox" id="selectAllHeader" title="Selecionar todos da filtragem"></th>
                       <th>Nome</th>
                       <th>Email</th>
                       <th>Cidade / Estado</th>
@@ -371,7 +371,10 @@
         <!-- Usuários e perfis (admin) -->
         <section class="view" data-view="usuarios">
           <div class="table-card">
-            <div class="chart-header"><h2>Usuários e perfis</h2></div>
+            <div class="chart-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+              <h2>Usuários e perfis</h2>
+              <button type="button" class="btn btn-primary" id="btnCriarUsuario">➕ Criar usuário</button>
+            </div>
             <div class="filters-row" style="margin-bottom:12px">
               <div class="filters-card">
                 <div class="filters-left">
@@ -413,6 +416,21 @@
                 <ul id="userHistoryList"></ul>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnUserRoleBack">Voltar</button>
               </div>
+            </div>
+          </div>
+          <div id="modalCriarUsuario" class="modal" aria-hidden="true">
+            <div class="modal-backdrop"></div>
+            <div class="modal-box">
+              <div class="modal-header"><h2>Criar usuário</h2><button type="button" class="modal-close" id="modalCriarUsuarioClose">&times;</button></div>
+              <form id="formCriarUsuario" class="modal-body">
+                <div class="form-group"><label for="criarUsuarioEmail">Email</label><input type="email" id="criarUsuarioEmail" placeholder="usuario@exemplo.com" required></div>
+                <div class="form-group"><label for="criarUsuarioNome">Nome</label><input type="text" id="criarUsuarioNome" placeholder="Nome completo" required></div>
+                <div class="form-group"><label for="criarUsuarioSenha">Senha temporária</label><input type="password" id="criarUsuarioSenha" placeholder="Mínimo 6 caracteres" minlength="6" required autocomplete="new-password"></div>
+                <p class="form-hint">O usuário deverá trocar a senha no primeiro acesso.</p>
+                <div class="form-group"><label for="criarUsuarioRole">Perfil</label><select id="criarUsuarioRole"><option value="voluntario">Voluntário</option><option value="admin">Admin</option><option value="lider">Líder de ministério</option></select></div>
+                <div class="form-group" id="criarUsuarioMinisterioGroup" style="display: none;"><label class="block-label">Ministérios</label><div id="criarUsuarioMinisterioCheckboxes"></div></div>
+                <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalCriarUsuarioCancel">Cancelar</button><button type="submit" class="btn btn-primary">Criar</button></div>
+              </form>
             </div>
           </div>
         </section>
@@ -791,6 +809,29 @@
         <p class="auth-footer-link" id="setupLinkWrap" style="display: none;"><a href="#" id="linkSetup">Configurar primeiro admin (deploy)</a></p>
       </form>
     </div>
+    <div class="auth-card" id="mustChangePasswordCard" style="display: none;">
+      <div class="auth-header">
+        <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
+        <p class="auth-subtitle">Troque sua senha (primeiro acesso)</p>
+      </div>
+      <form id="mustChangePasswordForm" class="auth-form">
+        <div class="form-group">
+          <label for="firstAccessSenhaAtual">Senha atual (temporária)</label>
+          <input type="password" id="firstAccessSenhaAtual" placeholder="••••••••" autocomplete="current-password" required>
+        </div>
+        <div class="form-group">
+          <label for="firstAccessSenhaNova">Nova senha</label>
+          <input type="password" id="firstAccessSenhaNova" placeholder="Mínimo 6 caracteres" autocomplete="new-password" minlength="6" required>
+        </div>
+        <div class="form-group">
+          <label for="firstAccessSenhaConfirmar">Confirmar nova senha</label>
+          <input type="password" id="firstAccessSenhaConfirmar" placeholder="Repita a nova senha" autocomplete="new-password" minlength="6" required>
+        </div>
+        <p id="firstAccessError" class="auth-error"></p>
+        <p id="firstAccessSuccess" class="auth-success" style="display: none;"></p>
+        <button type="submit" class="btn btn-primary" id="btnFirstAccessSubmit">Trocar senha</button>
+      </form>
+    </div>
     <div class="auth-card" id="forgotPasswordCard" style="display: none;">
       <div class="auth-header">
         <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
@@ -895,7 +936,7 @@
   </div>
 
   <!-- Modal Enviar Email -->
-  <div id="modalEmail" class="modal" aria-hidden="true">
+  <div id="modalEmail" class="modal modal-email-box" aria-hidden="true">
     <div class="modal-backdrop"></div>
     <div class="modal-box">
       <div class="modal-header">
@@ -909,10 +950,16 @@
           <input type="text" id="emailSubject" placeholder="Ex: Bem-vindo ao Celeiro São Paulo">
         </div>
         <div class="form-group">
-          <label for="emailBody">Mensagem (HTML ou texto)</label>
-          <textarea id="emailBody" rows="8" placeholder="Olá [nome],&#10;&#10;..."></textarea>
+          <label for="emailBodyBase">Rascunho (base do email)</label>
+          <textarea id="emailBodyBase" rows="6" placeholder="Digite aqui o rascunho do email. Depois clique em Revisar com IA para melhorar o texto (links em botões, títulos em negrito, tom profissional)."></textarea>
+          <button type="button" class="btn btn-ghost btn-sm" id="btnReviewLLM" style="margin-top:6px">✨ Revisar com IA</button>
+          <p id="emailReviewError" class="auth-error" style="margin-top:6px;display:none"></p>
         </div>
-        <p class="form-hint">Use <code>[nome]</code> para substituir pelo nome do voluntário em cada email. Os emails são enviados pelo disparador de emails da plataforma.</p>
+        <div class="form-group">
+          <label>Mensagem para envio (edite abaixo)</label>
+          <div id="emailBodyEditor" class="email-body-editor" contenteditable="true" data-placeholder="Após Revisar com IA, o HTML aparecerá aqui. Você pode editar. Ou digite/cole HTML ou texto diretamente."></div>
+        </div>
+        <p class="form-hint">Use <code>[nome]</code> para substituir pelo nome do voluntário. Os emails são enviados pelo disparador da plataforma.</p>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-ghost" id="modalCancel">Cancelar</button>

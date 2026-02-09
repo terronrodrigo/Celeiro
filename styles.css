@@ -801,6 +801,28 @@ body {
   background: var(--bg-card-hover);
   color: var(--text-primary);
 }
+.email-body-editor {
+  min-height: 180px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  outline: none;
+}
+.email-body-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+}
+.email-body-editor a {
+  color: var(--primary);
+}
+.modal-email-box .modal-box {
+  max-width: 560px;
+}
+
 .send-result {
   margin-top: 16px;
   padding: 12px 16px;

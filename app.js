@@ -60,6 +60,7 @@ let authMinisterioNome = null;
 let authMinisterioIds = [];
 let authMinisterioNomes = [];
 let authFotoUrl = null;
+let authMustChangePassword = false;
 let eventosCheckin = [];
 let eventoSelecionadoHoje = null;
 const filters = {
@@ -95,8 +96,11 @@ const modalCancel = document.getElementById('modalCancel');
 const modalBackdrop = modal?.querySelector('.modal-backdrop');
 const modalDestCount = document.getElementById('modalDestCount');
 const emailSubject = document.getElementById('emailSubject');
-const emailBody = document.getElementById('emailBody');
+const emailBodyBase = document.getElementById('emailBodyBase');
+const emailBodyEditor = document.getElementById('emailBodyEditor');
 const btnSendEmail = document.getElementById('btnSendEmail');
+const btnReviewLLM = document.getElementById('btnReviewLLM');
+const emailReviewError = document.getElementById('emailReviewError');
 const sendResult = document.getElementById('sendResult');
 const authOverlay = document.getElementById('authOverlay');
 const loginForm = document.getElementById('loginForm');
@@ -189,6 +193,7 @@ const linkEsqueciSenha = document.getElementById('linkEsqueciSenha');
 const forgotPasswordCard = document.getElementById('forgotPasswordCard');
 const resetPasswordCard = document.getElementById('resetPasswordCard');
 const setupLinkWrap = document.getElementById('setupLinkWrap');
+const mustChangePasswordCard = document.getElementById('mustChangePasswordCard');
 
 function updateAuthUi() {
   const isLogged = Boolean(authToken);
@@ -196,13 +201,28 @@ function updateAuthUi() {
   const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
   const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
   const isAdmin = authRole === 'admin';
-  if (authOverlay) authOverlay.style.display = isLogged ? 'none' : 'flex';
+  if (authOverlay) {
+    if (isLogged && authMustChangePassword) {
+      authOverlay.style.display = 'flex';
+      if (loginCard) loginCard.style.display = 'none';
+      if (mustChangePasswordCard) mustChangePasswordCard.style.display = 'block';
+      [forgotPasswordCard, resetPasswordCard, setupCard, registerCard].forEach(c => { if (c) c.style.display = 'none'; });
+    } else if (isLogged) {
+      authOverlay.style.display = 'none';
+      if (loginCard) loginCard.style.display = 'block';
+      if (mustChangePasswordCard) mustChangePasswordCard.style.display = 'none';
+    } else {
+      authOverlay.style.display = 'flex';
+      if (loginCard) loginCard.style.display = 'block';
+      if (mustChangePasswordCard) mustChangePasswordCard.style.display = 'none';
+    }
+  }
   if (!isLogged) {
     if (contentEl) contentEl.style.display = 'none';
     if (loadingEl) loadingEl.style.display = 'none';
     if (errorEl) errorEl.style.display = 'none';
   } else {
-    if (contentEl) contentEl.style.display = 'block';
+    if (contentEl) contentEl.style.display = authMustChangePassword ? 'none' : 'block';
   }
   if (btnLogout) btnLogout.disabled = !isLogged;
   const defaultName = isVoluntario ? 'Voluntário' : (isLider ? 'Líder' : 'Admin');
@@ -261,8 +281,9 @@ function setAuthSession(data) {
   authMinisterioIds = Array.isArray(user?.ministerioIds) ? user.ministerioIds : (Array.isArray(data?.ministerioIds) ? data.ministerioIds : []);
   authMinisterioNomes = Array.isArray(user?.ministerioNomes) ? user.ministerioNomes : (Array.isArray(data?.ministerioNomes) ? data.ministerioNomes : []);
   authFotoUrl = (user && user.fotoUrl) ? user.fotoUrl : (data?.fotoUrl != null ? data.fotoUrl : null);
+  authMustChangePassword = !!(user?.mustChangePassword || data?.mustChangePassword);
   if (authToken) {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: authToken, user: authUser, role: authRole, email: authEmail, ministerioId: authMinisterioId, ministerioNome: authMinisterioNome, ministerioIds: authMinisterioIds, ministerioNomes: authMinisterioNomes, fotoUrl: authFotoUrl }));
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: authToken, user: authUser, role: authRole, email: authEmail, ministerioId: authMinisterioId, ministerioNome: authMinisterioNome, ministerioIds: authMinisterioIds, ministerioNomes: authMinisterioNomes, fotoUrl: authFotoUrl, mustChangePassword: authMustChangePassword }));
   }
   updateAuthUi();
 }
@@ -277,6 +298,7 @@ function clearAuthSession() {
   authMinisterioIds = [];
   authMinisterioNomes = [];
   authFotoUrl = null;
+  authMustChangePassword = false;
   localStorage.removeItem(AUTH_STORAGE_KEY);
   clearUserContent();
   updateAuthUi();
@@ -312,6 +334,7 @@ async function verifyAuth() {
     authMinisterioIds = Array.isArray(data.ministerioIds) ? data.ministerioIds : authMinisterioIds;
     authMinisterioNomes = Array.isArray(data.ministerioNomes) ? data.ministerioNomes : authMinisterioNomes;
     authFotoUrl = data.fotoUrl != null ? data.fotoUrl : authFotoUrl;
+    authMustChangePassword = !!data.mustChangePassword;
     const stored = localStorage.getItem(AUTH_STORAGE_KEY);
     if (stored && authToken) {
       try {
@@ -324,6 +347,7 @@ async function verifyAuth() {
         parsed.ministerioIds = authMinisterioIds;
         parsed.ministerioNomes = authMinisterioNomes;
         parsed.fotoUrl = authFotoUrl;
+        parsed.mustChangePassword = authMustChangePassword;
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
       } catch (_) {}
     }
@@ -1871,10 +1895,9 @@ function closeModalPerfilVoluntario() {
 
 function syncSelectAll() {
   const filtered = getFilteredVoluntarios();
-  const page = filtered.slice(voluntariosPageOffset, voluntariosPageOffset + LIST_PAGE_SIZE);
-  const emailsInPage = new Set(page.map(v => (v.email || '').toLowerCase()));
-  const allSelected = emailsInPage.size > 0 && [...emailsInPage].every(e => selectedEmails.has(e));
-  const someSelected = [...emailsInPage].some(e => selectedEmails.has(e));
+  const allFilteredEmails = filtered.map(v => (v.email || '').toLowerCase()).filter(Boolean);
+  const allSelected = allFilteredEmails.length > 0 && allFilteredEmails.every(e => selectedEmails.has(e));
+  const someSelected = allFilteredEmails.some(e => selectedEmails.has(e));
   if (selectAll) selectAll.checked = allSelected;
   if (selectAllHeader) selectAllHeader.checked = allSelected;
   if (selectAll) selectAll.indeterminate = someSelected && !allSelected;
@@ -1889,8 +1912,7 @@ function updateSelectedCount() {
 
 function toggleSelectAll(checked) {
   const filtered = getFilteredVoluntarios();
-  const page = filtered.slice(voluntariosPageOffset, voluntariosPageOffset + LIST_PAGE_SIZE);
-  page.forEach(v => {
+  filtered.forEach(v => {
     const e = (v.email || '').toLowerCase();
     if (e) (checked ? selectedEmails.add(e) : selectedEmails.delete(e));
   });
@@ -2161,7 +2183,9 @@ function openModal() {
   if (!list.length) return;
   if (modalDestCount) modalDestCount.textContent = list.length;
   if (emailSubject) emailSubject.value = '';
-  if (emailBody) emailBody.value = '';
+  if (emailBodyBase) emailBodyBase.value = '';
+  if (emailBodyEditor) emailBodyEditor.innerHTML = '';
+  if (emailReviewError) { emailReviewError.style.display = 'none'; emailReviewError.textContent = ''; }
   if (sendResult) { sendResult.style.display = 'none'; sendResult.innerHTML = ''; }
   modal?.setAttribute('aria-hidden', 'false');
   modal?.classList.add('open');
@@ -2174,9 +2198,11 @@ function closeModal() {
 
 async function sendEmails() {
   const subject = (emailSubject?.value || '').trim();
-  const body = (emailBody?.value || '').trim();
+  const editorHtml = (emailBodyEditor?.innerHTML || '').trim();
+  const baseText = (emailBodyBase?.value || '').trim();
+  const body = editorHtml || (baseText ? baseText.replace(/\n/g, '<br>') : '');
   if (!subject || !body) {
-    alert('Preencha assunto e mensagem.');
+    alert('Preencha assunto e a mensagem (rascunho ou use Revisar com IA e preencha o campo de mensagem).');
     return;
   }
   const to = [...selectedEmails];
@@ -2192,7 +2218,7 @@ async function sendEmails() {
       const v = voluntariosByEmail.get(email);
       if (v?.nome) voluntariosMap[email] = v.nome;
     });
-    const html = body.replace(/\n/g, '<br>');
+    const html = editorHtml ? editorHtml : `<p>${baseText.replace(/\n/g, '<br>')}</p>`;
     const r = await authFetch(`${API_BASE}/api/send-email`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2256,6 +2282,10 @@ async function handleLogin(e) {
       return;
     }
     setAuthSession(data);
+    if (authMustChangePassword) {
+      updateAuthUi();
+      return;
+    }
     if (authOverlay) authOverlay.style.display = 'none';
     const isVol = String(authRole || '').toLowerCase() === 'voluntario';
     const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
@@ -2322,6 +2352,36 @@ modalClose?.addEventListener('click', closeModal);
 modalCancel?.addEventListener('click', closeModal);
 modalBackdrop?.addEventListener('click', closeModal);
 btnSendEmail?.addEventListener('click', sendEmails);
+
+btnReviewLLM?.addEventListener('click', async () => {
+  const text = (emailBodyBase?.value || '').trim() || (emailBodyEditor?.innerText || emailBodyEditor?.textContent || '').trim();
+  if (!text) {
+    if (emailReviewError) { emailReviewError.textContent = 'Digite o rascunho do email no campo acima.'; emailReviewError.style.display = 'block'; }
+    return;
+  }
+  if (emailReviewError) { emailReviewError.style.display = 'none'; emailReviewError.textContent = ''; }
+  btnReviewLLM.disabled = true;
+  btnReviewLLM.textContent = 'Revisando...';
+  try {
+    const r = await authFetch(`${API_BASE}/api/email/review-llm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (emailReviewError) { emailReviewError.textContent = data.error || 'Erro ao revisar. Verifique GROK_API_KEY.'; emailReviewError.style.display = 'block'; }
+      return;
+    }
+    if (emailBodyEditor && data.html) emailBodyEditor.innerHTML = data.html;
+  } catch (e) {
+    if (e.message === 'AUTH_REQUIRED') return;
+    if (emailReviewError) { emailReviewError.textContent = e.message || 'Erro de rede.'; emailReviewError.style.display = 'block'; }
+  } finally {
+    btnReviewLLM.disabled = false;
+    btnReviewLLM.textContent = '✨ Revisar com IA';
+  }
+});
 loginForm?.addEventListener('submit', handleLogin);
 btnLogout?.addEventListener('click', handleLogout);
 filterArea?.addEventListener('change', () => setFilter('area', filterArea.value));
@@ -2423,6 +2483,64 @@ document.getElementById('userRoleSelect')?.addEventListener('change', () => {
   const g = document.getElementById('userMinisterioGroup');
   const v = document.getElementById('userRoleSelect')?.value;
   if (g) g.style.display = (v === 'lider' || v === 'admin') ? 'block' : 'none';
+});
+
+const modalCriarUsuario = document.getElementById('modalCriarUsuario');
+function openModalCriarUsuario() {
+  document.getElementById('criarUsuarioEmail').value = '';
+  document.getElementById('criarUsuarioNome').value = '';
+  document.getElementById('criarUsuarioSenha').value = '';
+  document.getElementById('criarUsuarioRole').value = 'voluntario';
+  const minGrp = document.getElementById('criarUsuarioMinisterioGroup');
+  const minContainer = document.getElementById('criarUsuarioMinisterioCheckboxes');
+  if (minGrp) minGrp.style.display = 'none';
+  if (minContainer) minContainer.innerHTML = '';
+  if (!ministrosList.length) {
+    authFetch(`${API_BASE}/api/ministros`).then(r => r.ok ? r.json() : []).then(list => { ministrosList = list || []; fillCriarUsuarioMinisterios(); }).catch(() => {});
+  } else fillCriarUsuarioMinisterios();
+  if (modalCriarUsuario) modalCriarUsuario.classList.add('open');
+}
+function fillCriarUsuarioMinisterios() {
+  const role = document.getElementById('criarUsuarioRole')?.value || 'voluntario';
+  const minGrp = document.getElementById('criarUsuarioMinisterioGroup');
+  const minContainer = document.getElementById('criarUsuarioMinisterioCheckboxes');
+  if (!minContainer) return;
+  const show = role === 'lider' || role === 'admin';
+  if (minGrp) minGrp.style.display = show ? 'block' : 'none';
+  if (show && ministrosList.length) {
+    minContainer.innerHTML = (ministrosList || []).map(m => `<label class="checkbox-label" style="display:block; margin-bottom:6px;"><input type="checkbox" data-ministerio-id="${escapeAttr(m._id)}"> ${escapeHtml(m.nome || '')}</label>`).join('');
+  } else minContainer.innerHTML = '';
+}
+document.getElementById('btnCriarUsuario')?.addEventListener('click', openModalCriarUsuario);
+document.getElementById('criarUsuarioRole')?.addEventListener('change', fillCriarUsuarioMinisterios);
+document.getElementById('modalCriarUsuarioClose')?.addEventListener('click', () => modalCriarUsuario?.classList.remove('open'));
+document.getElementById('modalCriarUsuarioCancel')?.addEventListener('click', () => modalCriarUsuario?.classList.remove('open'));
+modalCriarUsuario?.querySelector('.modal-backdrop')?.addEventListener('click', () => modalCriarUsuario?.classList.remove('open'));
+document.getElementById('formCriarUsuario')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = (document.getElementById('criarUsuarioEmail')?.value || '').trim().toLowerCase();
+  const nome = (document.getElementById('criarUsuarioNome')?.value || '').trim();
+  const senha = (document.getElementById('criarUsuarioSenha')?.value || '').trim();
+  const role = (document.getElementById('criarUsuarioRole')?.value || 'voluntario');
+  const minContainer = document.getElementById('criarUsuarioMinisterioCheckboxes');
+  const ministerioIds = (role === 'lider' || role === 'admin') && minContainer
+    ? Array.from(minContainer.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.getAttribute('data-ministerio-id')).filter(Boolean)
+    : [];
+  if (!email || !email.includes('@')) { alert('Informe um email válido.'); return; }
+  if (!nome) { alert('Informe o nome.'); return; }
+  if (!senha || senha.length < 6) { alert('Senha temporária deve ter no mínimo 6 caracteres.'); return; }
+  try {
+    const r = await authFetch(`${API_BASE}/api/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, nome, senha, role, ministerioIds }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha ao criar usuário.');
+    modalCriarUsuario?.classList.remove('open');
+    document.getElementById('formCriarUsuario')?.reset();
+    fetchUsers();
+    alert('Usuário criado. Ele deverá trocar a senha no primeiro acesso.');
+  } catch (err) { alert(err.message || 'Erro ao criar usuário.'); }
 });
 document.getElementById('btnUserRoleBack')?.addEventListener('click', () => {
   document.getElementById('modalUserRoleFormBody').style.display = 'block';
@@ -2526,7 +2644,7 @@ btnConfirmarCheckin?.addEventListener('click', confirmarCheckin);
 document.getElementById('btnPerfilConfirmarCheckin')?.addEventListener('click', confirmarCheckinDesdePerfil);
 
 function showAuthCard(card) {
-  [loginCard, registerCard, setupCard, forgotPasswordCard, resetPasswordCard].forEach(c => { if (c) c.style.display = 'none'; });
+  [loginCard, registerCard, setupCard, forgotPasswordCard, resetPasswordCard, mustChangePasswordCard].forEach(c => { if (c) c.style.display = 'none'; });
   if (card) card.style.display = 'block';
 }
 
@@ -2551,6 +2669,46 @@ async function fetchSetupStatus() {
   }
 }
 if (!authToken) fetchSetupStatus();
+
+document.getElementById('mustChangePasswordForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('firstAccessError');
+  const successEl = document.getElementById('firstAccessSuccess');
+  const senhaAtual = (document.getElementById('firstAccessSenhaAtual')?.value || '').trim();
+  const senhaNova = (document.getElementById('firstAccessSenhaNova')?.value || '').trim();
+  const senhaConfirmar = (document.getElementById('firstAccessSenhaConfirmar')?.value || '').trim();
+  if (errEl) errEl.textContent = '';
+  if (successEl) successEl.style.display = 'none';
+  if (!senhaAtual || !senhaNova) { if (errEl) errEl.textContent = 'Preencha a senha atual e a nova senha.'; return; }
+  if (senhaNova.length < 6) { if (errEl) errEl.textContent = 'A nova senha deve ter no mínimo 6 caracteres.'; return; }
+  if (senhaNova !== senhaConfirmar) { if (errEl) errEl.textContent = 'A confirmação da nova senha não confere.'; return; }
+  const btn = document.getElementById('btnFirstAccessSubmit');
+  if (btn) { btn.disabled = true; btn.textContent = 'Alterando...'; }
+  try {
+    const r = await authFetch(`${API_BASE}/api/auth/change-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ senhaAtual, senhaNova }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Não foi possível alterar a senha.'; return; }
+    authMustChangePassword = false;
+    const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (stored) try { const p = JSON.parse(stored); p.mustChangePassword = false; localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(p)); } catch (_) {}
+    if (successEl) { successEl.textContent = 'Senha alterada. Redirecionando...'; successEl.style.display = 'block'; }
+    if (errEl) errEl.textContent = '';
+    updateAuthUi();
+    const isVol = String(authRole || '').toLowerCase() === 'voluntario';
+    const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
+    const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
+    const defaultView = isVol ? 'perfil' : (isLider ? 'checkin-ministerio' : 'resumo');
+    setView(defaultView);
+    if (authRole === 'admin') await fetchAllData();
+    else if (isLider) { await fetchCheckinsMinisterio(); await fetchMeusCheckins(); await fetchPerfil(); }
+    else { await fetchEventosHoje(); await fetchMeusCheckins(); await fetchPerfil(); }
+  } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro ao alterar senha.'; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Trocar senha'; } }
+});
 
 linkRegistro?.addEventListener('click', (e) => { e.preventDefault(); showAuthCard(registerCard); });
 linkLogin?.addEventListener('click', (e) => { e.preventDefault(); showAuthCard(loginCard); });
@@ -2907,12 +3065,14 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
       authMinisterioIds = Array.isArray(parsed.ministerioIds) ? parsed.ministerioIds : [];
       authMinisterioNomes = Array.isArray(parsed.ministerioNomes) ? parsed.ministerioNomes : [];
       authFotoUrl = parsed.fotoUrl != null ? parsed.fotoUrl : null;
+      authMustChangePassword = !!parsed.mustChangePassword;
     } catch (_) {
-      authToken = ''; authUser = ''; authRole = 'admin'; authEmail = null; authMinisterioId = null; authMinisterioNome = null; authMinisterioIds = []; authMinisterioNomes = []; authFotoUrl = null;
+      authToken = ''; authUser = ''; authRole = 'admin'; authEmail = null; authMinisterioId = null; authMinisterioNome = null; authMinisterioIds = []; authMinisterioNomes = []; authFotoUrl = null; authMustChangePassword = false;
     }
   }
   updateAuthUi();
   verifyAuth().then(ok => {
+    if (ok && authMustChangePassword) return;
     if (ok) {
       const isVol = authRole === 'voluntario';
       const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
