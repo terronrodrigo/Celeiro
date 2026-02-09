@@ -6,9 +6,9 @@ WORKDIR /app
 # Ferramentas para compilar dependências nativas (ex.: better-sqlite3)
 RUN apk add --no-cache python3 make g++
 
-# Dependências do servidor
+# Dependências do servidor (npm install tolera lock file desatualizado)
 COPY server/package*.json server/
-RUN cd server && npm ci --omit=dev
+RUN cd server && npm install --omit=dev
 
 # Código do servidor
 COPY server server/
