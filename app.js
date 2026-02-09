@@ -183,6 +183,9 @@ const setupSuccess = document.getElementById('setupSuccess');
 const btnSetup = document.getElementById('btnSetup');
 const linkSetup = document.getElementById('linkSetup');
 const linkSetupVoltar = document.getElementById('linkSetupVoltar');
+const linkEsqueciSenha = document.getElementById('linkEsqueciSenha');
+const forgotPasswordCard = document.getElementById('forgotPasswordCard');
+const resetPasswordCard = document.getElementById('resetPasswordCard');
 const setupLinkWrap = document.getElementById('setupLinkWrap');
 
 function updateAuthUi() {
@@ -1033,9 +1036,10 @@ function updatePerfilFotoUI() {
   const placeholder = document.getElementById('perfilFotoPlaceholder');
   const btnUpload = document.getElementById('btnPerfilFotoUpload');
   const btnExcluir = document.getElementById('btnPerfilFotoExcluir');
-  const url = authFotoUrl ? (authFotoUrl.startsWith('http') ? authFotoUrl : `${API_BASE}${authFotoUrl}`) : '';
+  const url = authFotoUrl ? getFotoUrl(authFotoUrl) : '';
   if (img) {
     if (url) {
+      img.onerror = function () { this.onerror = null; this.style.display = 'none'; if (placeholder) placeholder.style.display = 'flex'; };
       img.src = url;
       img.style.display = '';
       img.alt = 'Sua foto';
@@ -1061,7 +1065,7 @@ async function fetchPerfil() {
     if (currentView !== 'perfil') return;
     if (perfil) {
       if (perfilNome) perfilNome.value = perfil.nome || '';
-      if (perfilEmail) perfilEmail.value = perfil.email || '';
+      if (perfilEmail) perfilEmail.value = perfil.email || authEmail || '';
       if (perfilNascimento) perfilNascimento.value = formatNascimentoParaInput(perfil.nascimento);
       if (perfilWhatsapp) perfilWhatsapp.value = perfil.whatsapp ? (formatarWhatsApp(perfil.whatsapp) || perfil.whatsapp) : '';
       if (perfilPais) perfilPais.value = perfil.pais || '';
@@ -1092,10 +1096,14 @@ async function fetchPerfil() {
       if (perfilMinisterioOutro) { perfilMinisterioOutro.value = ''; perfilMinisterioOutro.style.display = 'none'; }
       if (perfilEstado) perfilEstado.value = '';
     }
-    const rMe = await authFetch(`${API_BASE}/api/me`);
-    if (rMe.ok) {
-      const meData = await rMe.json();
-      if (meData.fotoUrl != null) authFotoUrl = meData.fotoUrl;
+    if (perfil && perfil.fotoUrl != null) {
+      authFotoUrl = perfil.fotoUrl;
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+          if (stored) { const p = JSON.parse(stored); p.fotoUrl = authFotoUrl; localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(p)); }
+        } catch (_) {}
+      }
     }
     updatePerfilFotoUI();
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
@@ -2090,7 +2098,7 @@ async function sendEmails() {
 
 async function handleLogin(e) {
   e.preventDefault();
-  if (loginError) loginError.textContent = '';
+  if (loginError) { loginError.textContent = ''; loginError.style.color = ''; }
   const login = (loginEmail?.value || '').trim();
   const password = (loginPass?.value || '').trim();
   if (!login || !password) {
@@ -2353,32 +2361,96 @@ document.getElementById('btnPerfilFotoExcluir')?.addEventListener('click', async
 btnConfirmarCheckin?.addEventListener('click', confirmarCheckin);
 document.getElementById('btnPerfilConfirmarCheckin')?.addEventListener('click', confirmarCheckinDesdePerfil);
 
+function showAuthCard(card) {
+  [loginCard, registerCard, setupCard, forgotPasswordCard, resetPasswordCard].forEach(c => { if (c) c.style.display = 'none'; });
+  if (card) card.style.display = 'block';
+}
+
 async function fetchSetupStatus() {
   const urlParams = new URLSearchParams(window.location.search);
+  const resetToken = urlParams.get('reset');
+  if (resetToken && resetPasswordCard) {
+    showAuthCard(resetPasswordCard);
+    document.getElementById('resetPasswordForm')?.setAttribute('data-reset-token', resetToken);
+    return;
+  }
   const forceSetup = urlParams.get('setup') === '1';
   try {
     const r = await fetch(`${API_BASE}/api/setup/status`);
     const data = await r.json().catch(() => ({}));
     if (data.needsSetup && setupLinkWrap) setupLinkWrap.style.display = 'block';
     if ((forceSetup || data.needsSetup) && setupCard && loginCard) {
-      loginCard.style.display = 'none';
-      if (registerCard) registerCard.style.display = 'none';
-      setupCard.style.display = 'block';
+      showAuthCard(setupCard);
     }
   } catch (_) {
-    if (forceSetup && setupCard && loginCard) {
-      loginCard.style.display = 'none';
-      if (registerCard) registerCard.style.display = 'none';
-      setupCard.style.display = 'block';
-    }
+    if (forceSetup && setupCard && loginCard) showAuthCard(setupCard);
   }
 }
 if (!authToken) fetchSetupStatus();
 
-linkRegistro?.addEventListener('click', (e) => { e.preventDefault(); if (loginCard) loginCard.style.display = 'none'; if (registerCard) registerCard.style.display = 'block'; if (setupCard) setupCard.style.display = 'none'; });
-linkLogin?.addEventListener('click', (e) => { e.preventDefault(); if (registerCard) registerCard.style.display = 'none'; if (loginCard) loginCard.style.display = 'block'; if (setupCard) setupCard.style.display = 'none'; });
-linkSetup?.addEventListener('click', (e) => { e.preventDefault(); if (loginCard) loginCard.style.display = 'none'; if (registerCard) registerCard.style.display = 'none'; if (setupCard) setupCard.style.display = 'block'; });
-linkSetupVoltar?.addEventListener('click', (e) => { e.preventDefault(); if (setupCard) setupCard.style.display = 'none'; if (loginCard) loginCard.style.display = 'block'; });
+linkRegistro?.addEventListener('click', (e) => { e.preventDefault(); showAuthCard(registerCard); });
+linkLogin?.addEventListener('click', (e) => { e.preventDefault(); showAuthCard(loginCard); });
+linkSetup?.addEventListener('click', (e) => { e.preventDefault(); showAuthCard(setupCard); });
+linkSetupVoltar?.addEventListener('click', (e) => { e.preventDefault(); showAuthCard(loginCard); });
+linkEsqueciSenha?.addEventListener('click', (e) => { e.preventDefault(); showAuthCard(forgotPasswordCard); });
+document.getElementById('linkForgotVoltar')?.addEventListener('click', (e) => { e.preventDefault(); showAuthCard(loginCard); });
+document.getElementById('linkResetVoltar')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  const url = new URL(window.location.href);
+  url.searchParams.delete('reset');
+  window.history.replaceState({}, '', url.pathname + url.search);
+  document.getElementById('resetPasswordForm')?.removeAttribute('data-reset-token');
+  showAuthCard(loginCard);
+});
+
+document.getElementById('forgotPasswordForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('forgotError');
+  const okEl = document.getElementById('forgotSuccess');
+  const btn = document.getElementById('btnForgotSubmit');
+  if (errEl) errEl.textContent = '';
+  if (okEl) { okEl.style.display = 'none'; okEl.textContent = ''; }
+  const email = (document.getElementById('forgotEmail')?.value || '').trim().toLowerCase();
+  if (!email || !email.includes('@')) { if (errEl) errEl.textContent = 'Informe um email válido.'; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+  try {
+    const r = await fetch(`${API_BASE}/api/auth/forgot-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    const data = await r.json().catch(() => ({}));
+    if (okEl) { okEl.textContent = data.message || 'Se o email estiver cadastrado, você receberá um link para redefinir a senha.'; okEl.style.display = 'block'; }
+    if (errEl) errEl.textContent = '';
+  } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Enviar link'; } }
+});
+
+document.getElementById('resetPasswordForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('resetError');
+  const okEl = document.getElementById('resetSuccess');
+  const btn = document.getElementById('btnResetSubmit');
+  const token = document.getElementById('resetPasswordForm')?.getAttribute('data-reset-token') || new URLSearchParams(window.location.search).get('reset');
+  const novaSenha = (document.getElementById('resetNovaSenha')?.value || '').trim();
+  const confirmar = (document.getElementById('resetConfirmarSenha')?.value || '').trim();
+  if (errEl) errEl.textContent = '';
+  if (okEl) { okEl.style.display = 'none'; }
+  if (!token) { if (errEl) errEl.textContent = 'Link inválido ou expirado.'; return; }
+  if (!novaSenha || novaSenha.length < 6) { if (errEl) errEl.textContent = 'A senha deve ter no mínimo 6 caracteres.'; return; }
+  if (novaSenha !== confirmar) { if (errEl) errEl.textContent = 'As senhas não coincidem.'; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+  try {
+    const r = await fetch(`${API_BASE}/api/auth/reset-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, novaSenha }) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao redefinir senha.'; return; }
+    if (okEl) { okEl.textContent = data.message || 'Senha alterada. Faça login com a nova senha.'; okEl.style.display = 'block'; }
+    const url = new URL(window.location.href);
+    url.searchParams.delete('reset');
+    window.history.replaceState({}, '', url.pathname + url.search);
+    document.getElementById('resetPasswordForm')?.removeAttribute('data-reset-token');
+    document.getElementById('resetNovaSenha').value = '';
+    document.getElementById('resetConfirmarSenha').value = '';
+    setTimeout(() => { showAuthCard(loginCard); if (loginError) loginError.textContent = ''; const msg = document.getElementById('resetSuccess')?.textContent; if (loginError && msg) loginError.style.color = 'var(--success)'; loginError.textContent = msg || ''; }, 1200);
+  } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Redefinir senha'; } }
+});
 setupForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (setupError) setupError.textContent = '';

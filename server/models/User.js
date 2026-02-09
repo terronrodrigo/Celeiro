@@ -44,6 +44,8 @@ const userSchema = new mongoose.Schema({
     default: null,
     trim: true,
   },
+  resetToken: { type: String, default: null },
+  resetTokenExpires: { type: Date, default: null },
 });
 
 // Hash da senha antes de salvar
@@ -69,10 +71,12 @@ userSchema.methods.compararSenha = async function(senhaFornecida) {
   }
 };
 
-// Remover senha do JSON quando retornar pelo JSON
+// Remover senha e tokens do JSON quando retornar pelo JSON
 userSchema.methods.toJSON = function() {
   const obj = this.toObject();
   delete obj.senha;
+  delete obj.resetToken;
+  delete obj.resetTokenExpires;
   return obj;
 };
 

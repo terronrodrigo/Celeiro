@@ -1005,10 +1005,13 @@ app.get('/api/me/perfil', requireAuth, async (req, res) => {
   try {
     const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email').lean())?.email);
     if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
-    let perfil = await Voluntario.findOne({ email: email.toLowerCase() }).lean();
-    if (!perfil) return res.json(null);
+    const [perfil, user] = await Promise.all([
+      Voluntario.findOne({ email: email.toLowerCase() }).lean(),
+      req.userId ? User.findById(req.userId).select('fotoUrl').lean() : User.findOne({ email: email.toLowerCase() }).select('fotoUrl').lean(),
+    ]);
+    if (!perfil) return res.json({ fotoUrl: user?.fotoUrl ?? null });
     const areasStr = Array.isArray(perfil.areas) ? perfil.areas.join(', ') : (perfil.areas || '');
-    res.json({ ...perfil, areas: areasStr });
+    res.json({ ...perfil, areas: areasStr, fotoUrl: user?.fotoUrl ?? null });
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao carregar perfil.');
@@ -1130,6 +1133,74 @@ app.post('/api/auth/register', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao registrar usuário.' });
+  }
+});
+
+// POST /api/auth/forgot-password - Solicitar link de redefinição de senha por email
+const RESET_TOKEN_EXPIRES_MS = 60 * 60 * 1000; // 1 hora
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const genericMessage = 'Se o email estiver cadastrado, você receberá um link para redefinir a senha.';
+  try {
+    const email = (req.body?.email || '').toString().trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Informe um email válido.' });
+    }
+    const user = await User.findOne({ email }).select('nome senha googleId resetToken resetTokenExpires').lean();
+    if (!user || !user.senha) {
+      return res.json({ message: genericMessage });
+    }
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    await User.updateOne(
+      { email },
+      { $set: { resetToken, resetTokenExpires: new Date(Date.now() + RESET_TOKEN_EXPIRES_MS) } }
+    );
+    const baseUrl = (process.env.APP_URL || '').trim() || `${req.protocol || 'https'}://${req.get('host') || req.headers.host || ''}`;
+    const resetLink = `${baseUrl.replace(/\/$/, '')}?reset=${resetToken}`;
+    const apiKey = process.env.RESEND_API_KEY;
+    const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <onboarding@resend.dev>';
+    if (apiKey) {
+      const resend = new Resend(apiKey);
+      const nome = (user.nome || '').trim() || 'usuário';
+      await resend.emails.send({
+        from,
+        to: email,
+        subject: 'Redefinição de senha - Celeiro SP',
+        html: `<p>Olá, ${nome}!</p><p>Você solicitou a redefinição de senha. Clique no link abaixo para definir uma nova senha (válido por 1 hora):</p><p><a href="${resetLink}">Redefinir senha</a></p><p>Se você não solicitou isso, ignore este email.</p><p>— Celeiro SP</p>`,
+      });
+    }
+    return res.json({ message: genericMessage });
+  } catch (err) {
+    console.error(err);
+    return res.json({ message: genericMessage });
+  }
+});
+
+// POST /api/auth/reset-password - Redefinir senha com o token do link
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, novaSenha } = req.body || {};
+    const senha = (novaSenha || '').toString();
+    if (!token || typeof token !== 'string' || !token.trim()) {
+      return res.status(400).json({ error: 'Link inválido ou expirado.' });
+    }
+    if (!senha || senha.length < 6) {
+      return res.status(400).json({ error: 'A nova senha deve ter no mínimo 6 caracteres.' });
+    }
+    const user = await User.findOne({
+      resetToken: token.trim(),
+      resetTokenExpires: { $gt: new Date() },
+    });
+    if (!user) {
+      return res.status(400).json({ error: 'Link inválido ou expirado.' });
+    }
+    user.senha = senha;
+    user.resetToken = undefined;
+    user.resetTokenExpires = undefined;
+    await user.save();
+    return res.json({ message: 'Senha alterada. Faça login com a nova senha.' });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || 'Erro ao redefinir senha.' });
   }
 });
 

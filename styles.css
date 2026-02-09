@@ -1075,6 +1075,25 @@ body {
 .perfil-card {
   max-width: 640px;
 }
+.perfil-card.filters-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+.perfil-form-header {
+  margin-bottom: 1.25rem;
+}
+.perfil-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 0.25rem 0;
+  color: var(--text-primary);
+}
+.perfil-form-header .auth-subtitle {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
 
 .perfil-section-card {
   max-width: 640px;

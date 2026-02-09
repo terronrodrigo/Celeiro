@@ -529,8 +529,10 @@
                   <button type="button" class="btn btn-sm btn-ghost" id="btnPerfilFotoExcluir" style="display: none;">Excluir foto</button>
                 </div>
               </div>
-              <h2>Atualizar dados de perfil</h2>
-              <p class="auth-subtitle">Atualize seus dados de cadastro.</p>
+              <div class="perfil-form-header">
+                <h2 class="perfil-title">Atualizar dados de perfil</h2>
+                <p class="auth-subtitle">Atualize seus dados de cadastro.</p>
+              </div>
               <form id="formPerfil" class="auth-form perfil-form">
                 <div class="form-row">
                   <div class="form-group"><label for="perfilNome">Nome completo</label><input type="text" id="perfilNome" placeholder="Nome completo"></div>
@@ -701,8 +703,45 @@
         </div>
         <p id="loginError" class="auth-error"></p>
         <button type="submit" class="btn btn-primary" id="btnLogin">Entrar</button>
+        <p class="auth-footer-link"><a href="#" id="linkEsqueciSenha">Esqueci a senha</a></p>
         <p class="auth-footer-link">Não tem conta? <a href="#" id="linkRegistro">Cadastre-se como voluntário</a></p>
         <p class="auth-footer-link" id="setupLinkWrap" style="display: none;"><a href="#" id="linkSetup">Configurar primeiro admin (deploy)</a></p>
+      </form>
+    </div>
+    <div class="auth-card" id="forgotPasswordCard" style="display: none;">
+      <div class="auth-header">
+        <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
+        <p class="auth-subtitle">Redefinição de senha</p>
+      </div>
+      <form id="forgotPasswordForm" class="auth-form">
+        <div class="form-group">
+          <label for="forgotEmail">Email</label>
+          <input type="email" id="forgotEmail" placeholder="seu@email.com" autocomplete="email">
+        </div>
+        <p id="forgotError" class="auth-error"></p>
+        <p id="forgotSuccess" class="auth-success" style="display: none;"></p>
+        <button type="submit" class="btn btn-primary" id="btnForgotSubmit">Enviar link</button>
+        <p class="auth-footer-link"><a href="#" id="linkForgotVoltar">Voltar ao login</a></p>
+      </form>
+    </div>
+    <div class="auth-card" id="resetPasswordCard" style="display: none;">
+      <div class="auth-header">
+        <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
+        <p class="auth-subtitle">Defina sua nova senha</p>
+      </div>
+      <form id="resetPasswordForm" class="auth-form">
+        <div class="form-group">
+          <label for="resetNovaSenha">Nova senha</label>
+          <input type="password" id="resetNovaSenha" placeholder="Mínimo 6 caracteres" autocomplete="new-password" minlength="6">
+        </div>
+        <div class="form-group">
+          <label for="resetConfirmarSenha">Confirmar nova senha</label>
+          <input type="password" id="resetConfirmarSenha" placeholder="Repita a senha" autocomplete="new-password" minlength="6">
+        </div>
+        <p id="resetError" class="auth-error"></p>
+        <p id="resetSuccess" class="auth-success" style="display: none;"></p>
+        <button type="submit" class="btn btn-primary" id="btnResetSubmit">Redefinir senha</button>
+        <p class="auth-footer-link"><a href="#" id="linkResetVoltar">Voltar ao login</a></p>
       </form>
     </div>
     <div class="auth-card" id="setupCard" style="display: none;">

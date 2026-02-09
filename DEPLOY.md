@@ -110,6 +110,7 @@ Configure estas variáveis no painel da sua cloud (Railway, Render, etc.):
 | **PORT**              | Não        | Geralmente a cloud define (ex.: 3001 ou 8080). |
 | **RESEND_API_KEY**    | Se usar email | Chave da API Resend para envio de emails. |
 | **RESEND_FROM_EMAIL** | Se usar email | Email de remetente verificado no Resend. |
+| **APP_URL**            | Se usar “Esqueci a senha” | URL pública do app (ex.: `https://seu-app.up.railway.app`) para o link de redefinição de senha no email. |
 | **AUTH_TOKEN_TTL_HOURS** | Não | Tempo de vida do token em horas (ex.: 24). |
 
 ### Primeiro acesso (admin) após o deploy
@@ -137,6 +138,7 @@ Você pode criar o admin de duas formas:
 - [ ] Criar o primeiro admin: use a tela de setup (`?setup=1` ou link “Configurar primeiro admin”) com **SETUP_SECRET**, ou rode o script `create-admin.js` com a URI de prod; depois faça login com esse email e senha. (Opcional: definir **ADMIN_USER** e **ADMIN_PASS** no painel para login admin por variável.)
 - [ ] Testar cadastro de voluntário (se usar).
 - [ ] Se usar email: configurar **RESEND_API_KEY** e **RESEND_FROM_EMAIL** e testar envio.
+- [ ] Para "Esqueci a senha": configurar **APP_URL** com a URL pública do app (ex.: `https://seu-app.up.railway.app`) para o link no email funcionar.
 - [ ] Upload de foto: em ambiente efêmero (ex.: Render/Railway sem volume), fotos podem ser perdidas ao reiniciar; para persistência use storage externo (ex.: S3) no futuro.
 
 ---
