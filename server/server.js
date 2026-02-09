@@ -225,6 +225,27 @@ function invalidateCache() {
   cache.checkinsTime = 0;
 }
 
+/** Garante que o email esteja na lista de voluntários (mesmo com dados incompletos). Usado em registro, role voluntário e check-in. */
+async function ensureVoluntarioInList({ email, nome, ministerio }) {
+  const em = (email || '').toString().trim().toLowerCase();
+  if (!em || !em.includes('@')) return null;
+  const setFields = {};
+  const nomeStr = (nome || '').toString().trim();
+  if (nomeStr) setFields.nome = nomeStr;
+  const minStr = (ministerio || '').toString().trim();
+  if (minStr) setFields.ministerio = minStr;
+  const update = {
+    $setOnInsert: { email: em, ativo: true, fonte: 'manual', timestamp: new Date(), timestampMs: Date.now() },
+    ...(Object.keys(setFields).length ? { $set: setFields } : {}),
+  };
+  const doc = await Voluntario.findOneAndUpdate(
+    { email: em },
+    update,
+    { upsert: true, new: true }
+  ).lean();
+  return doc;
+}
+
 function isCacheValid(key) {
   if (!cache[key]) return false;
   return Date.now() - cache[`${key}Time`] < CACHE_TTL;
@@ -643,10 +664,33 @@ app.get('/api/voluntarios', requireAuth, requireAdmin, async (req, res) => {
       voluntarios = await Voluntario.find({ ativo: true }).lean();
     }
 
+    // Incluir na lista toda conta com role voluntário e todo email que fez check-in (mesmo sem cadastro completo)
+    const existingEmails = new Set(voluntarios.map(v => (v.email || '').toLowerCase().trim()).filter(Boolean));
+    try {
+      const usersVoluntarios = await User.find({ role: 'voluntario' }).select('email nome').lean();
+      for (const u of usersVoluntarios || []) {
+        const em = (u.email || '').toLowerCase().trim();
+        if (em && !existingEmails.has(em)) {
+          await ensureVoluntarioInList({ email: u.email, nome: u.nome });
+          existingEmails.add(em);
+        }
+      }
+      const checkinEmails = await Checkin.distinct('email').then(arr => (arr || []).map(e => (e || '').toLowerCase().trim()).filter(Boolean));
+      for (const em of checkinEmails) {
+        if (em && !existingEmails.has(em)) {
+          await ensureVoluntarioInList({ email: em });
+          existingEmails.add(em);
+        }
+      }
+      if (existingEmails.size > voluntarios.length) {
+        voluntarios = await Voluntario.find({ ativo: true }).lean();
+      }
+    } catch (e) { /* não falhar a listagem */ }
+
     if (voluntarios.length === 0) {
-      return sendError(res, 404, 'Nenhum voluntário encontrado no MongoDB.');
+      return res.json({ voluntarios: [], resumo: { total: 0, areas: [], disponibilidade: [] } });
     }
-    
+
     const areasCount = {};
     const dispCount = {};
     const normalized = voluntarios.map(v => ({
@@ -946,6 +990,7 @@ app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
       eventoId,
       userId: req.userId,
     });
+    try { await ensureVoluntarioInList({ email: email.toLowerCase(), nome: nome || '', ministerio: ministerio || '' }); } catch (_) {}
     invalidateCache();
     res.status(201).json(checkin);
   } catch (err) {
@@ -1074,7 +1119,9 @@ app.post('/api/auth/register', async (req, res) => {
     
     const user = new User({ email: email.toLowerCase(), nome, senha, role: 'voluntario' });
     await user.save();
-    
+    try { await ensureVoluntarioInList({ email: user.email, nome: user.nome }); } catch (_) {}
+    invalidateCache();
+
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
     authTokens.set(token, { user: email, userId: user._id, role: user.role, expiresAt });
@@ -1303,6 +1350,10 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
       updates.ministerioIds = (newRole === 'lider' || newRole === 'admin') ? rawIds.filter(Boolean) : [];
     }
     const updated = await User.findByIdAndUpdate(req.params.id, updates, { new: true }).populate('ministerioIds', 'nome');
+    if (newRole === 'voluntario') {
+      try { await ensureVoluntarioInList({ email: updated.email, nome: updated.nome }); } catch (_) {}
+      invalidateCache();
+    }
     if (role !== undefined && role !== fromRole) {
       await RoleHistory.create({
         userId: user._id,

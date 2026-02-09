@@ -2222,28 +2222,6 @@ formNovoEvento?.addEventListener('submit', async (e) => {
 });
 
 document.getElementById('btnNovoMinisterio')?.addEventListener('click', () => { document.getElementById('ministerioNome').value = ''; document.getElementById('modalNovoMinisterio')?.classList.add('open'); });
-document.getElementById('btnCadastrarMinisteriosPadrao')?.addEventListener('click', async () => {
-  const btn = document.getElementById('btnCadastrarMinisteriosPadrao');
-  if (!authToken || !btn) return;
-  btn.disabled = true;
-  try {
-    const r = await authFetch(`${API_BASE}/api/ministros`);
-    const list = (r.ok ? await r.json().catch(() => []) : []) || [];
-    const nomesExistentes = new Set((list || []).map(m => (m.nome || '').trim()));
-    let criados = 0;
-    for (const nome of MINISTERIOS_PADRAO) {
-      if (!nome.trim() || nomesExistentes.has(nome)) continue;
-      const post = await authFetch(`${API_BASE}/api/ministros`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome }) });
-      if (post.ok) { criados++; nomesExistentes.add(nome); }
-    }
-    await fetchMinistros();
-    alert(criados ? `${criados} ministério(s) cadastrado(s).` : 'Todos os ministérios da lista já estavam cadastrados.');
-  } catch (e) {
-    alert(e.message || 'Erro ao cadastrar ministérios.');
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-});
 document.getElementById('formNovoMinisterio')?.addEventListener('submit', createMinisterio);
 document.getElementById('modalNovoMinisterioClose')?.addEventListener('click', () => document.getElementById('modalNovoMinisterio')?.classList.remove('open'));
 document.getElementById('modalNovoMinisterioCancel')?.addEventListener('click', () => document.getElementById('modalNovoMinisterio')?.classList.remove('open'));
