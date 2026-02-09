@@ -37,7 +37,7 @@ const storage = multer.diskStorage({
 });
 const uploadFoto = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 1024 * 1024 }, // 1 MB (foto já vem redimensionada do cliente)
   fileFilter: (_req, file, cb) => {
     if (!/^image\/(jpe?g|png|gif|webp)$/i.test(file.mimetype)) {
       return cb(new Error('Apenas imagens (JPEG, PNG, GIF, WebP) são permitidas.'));
@@ -538,7 +538,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
 app.post('/api/me/foto', requireAuth, (req, res, next) => {
   uploadFoto.single('foto')(req, res, (err) => {
     if (err) {
-      if (err.code === 'LIMIT_FILE_SIZE') return sendError(res, 400, 'Arquivo muito grande. Máximo 5 MB.');
+      if (err.code === 'LIMIT_FILE_SIZE') return sendError(res, 400, 'Arquivo muito grande. Máximo 1 MB.');
       return sendError(res, 400, err.message || 'Erro no upload.');
     }
     next();

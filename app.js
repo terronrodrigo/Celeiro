@@ -5,6 +5,25 @@ const AUTH_STORAGE_KEY = 'celeiro_admin_auth';
 
 const UFS_BR = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
 
+// Ministérios para lives e cadastro (lista revisada – ortografia e gramática)
+const MINISTERIOS_PADRAO = [
+  'Suporte Geral',
+  'Welcome / Recepção',
+  'Experience / Auditório',
+  'Streaming / Ao Vivo',
+  'Produção Ao Vivo',
+  'Lab / Mídia',
+  'Produção',
+  'Intercessão Presencial',
+  'Sala de Voluntários',
+  'Kids / Min. Infantil',
+  'Consolidação',
+  'Care / Saúde',
+  'Parking / Estacionamento',
+  'Segurança',
+  'Intercessão Online',
+];
+
 let voluntarios = [];
 let resumo = {};
 let areasChart = null;
@@ -779,6 +798,9 @@ async function fetchEventosHoje() {
           return `<div class="kpi-card evento-hoje-card" style="margin-bottom:12px"><strong>${escapeHtml(label)}</strong><br><small>${d.toLocaleDateString('pt-BR')}</small></div>`;
         }).join('');
         if (formConfirmarCheckin) formConfirmarCheckin.style.display = 'block';
+        if (confirmarMinisterio && confirmarMinisterio.options.length <= 1) {
+          confirmarMinisterio.innerHTML = '<option value="">Selecione</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('') + '<option value="Outro">Outro</option>';
+        }
       }
     }
   } catch (e) {
@@ -811,12 +833,62 @@ async function confirmarCheckin() {
 
 function formatNascimentoParaInput(val) {
   if (!val) return '';
-  const d = typeof val === 'string' ? new Date(val) : val;
+  const d = typeof val === 'string' ? parseNascimentoStr(val) : val;
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
   const yyyy = d.getFullYear();
-  return `${dd}/${mm}/${yyyy}`;
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+function parseNascimentoStr(s) {
+  if (!s) return null;
+  const t = String(s).trim();
+  const m = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  return new Date(t);
+}
+function nascimentoDateInputToApi(value) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  const [y, m, d] = value.split('-');
+  return `${d}/${m}/${y}`;
+}
+function renderMinisterioSelect(selectId, currentValue) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  const value = (typeof currentValue === 'string' ? currentValue : (sel.dataset.lastValue || sel.value)) || '';
+  const isOutro = value && value !== '__outro__' && !MINISTERIOS_PADRAO.includes(value);
+  sel.innerHTML = '<option value="">Selecione</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('') + '<option value="__outro__">Outro</option>';
+  if (isOutro) {
+    sel.value = '__outro__';
+    const outroInput = document.getElementById(selectId + 'Outro');
+    if (outroInput) { outroInput.value = value; outroInput.style.display = ''; }
+  } else if (value && value !== '__outro__') {
+    sel.value = value;
+  }
+  sel.dataset.lastValue = value;
+}
+
+function getMinisterioValue(selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return '';
+  if (sel.value === '__outro__') {
+    const outro = document.getElementById(selectId + 'Outro');
+    return (outro?.value || '').trim() || '';
+  }
+  return (sel.value || '').trim();
+}
+
+function toggleMinisterioOutroVisibility(selectId) {
+  const sel = document.getElementById(selectId);
+  const outro = document.getElementById(selectId + 'Outro');
+  if (!sel || !outro) return;
+  if (sel.value === '__outro__') {
+    outro.style.display = '';
+    outro.placeholder = 'Especifique o ministério';
+  } else {
+    outro.style.display = 'none';
+    outro.value = '';
+  }
 }
 
 function populatePerfilEstado() {
@@ -868,12 +940,16 @@ async function fetchPerfil() {
       if (perfilIgreja) perfilIgreja.value = perfil.igreja || '';
       if (perfilTempoIgreja) perfilTempoIgreja.value = perfil.tempoIgreja || '';
       if (perfilVoluntarioIgreja) perfilVoluntarioIgreja.value = perfil.voluntarioIgreja || '';
-      if (perfilMinisterio) perfilMinisterio.value = perfil.ministerio || '';
+      renderMinisterioSelect('perfilMinisterio', perfil.ministerio || '');
+      toggleMinisterioOutroVisibility('perfilMinisterio');
       if (perfilDisponibilidade) perfilDisponibilidade.value = perfil.disponibilidade || '';
       if (perfilHorasSemana) perfilHorasSemana.value = perfil.horasSemana || '';
       if (perfilAreas) perfilAreas.value = Array.isArray(perfil.areas) ? perfil.areas.join(', ') : (perfil.areas || '');
     } else {
-      [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilMinisterio, perfilDisponibilidade, perfilHorasSemana, perfilAreas].forEach(el => { if (el) el.value = ''; });
+      [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilDisponibilidade, perfilHorasSemana, perfilAreas].forEach(el => { if (el) el.value = ''; });
+      renderMinisterioSelect('perfilMinisterio', '');
+      const perfilMinisterioOutro = document.getElementById('perfilMinisterioOutro');
+      if (perfilMinisterioOutro) { perfilMinisterioOutro.value = ''; perfilMinisterioOutro.style.display = 'none'; }
       if (perfilEstado) perfilEstado.value = '';
     }
     const rMe = await authFetch(`${API_BASE}/api/me`);
@@ -892,7 +968,7 @@ async function savePerfil(e) {
   const areasStr = perfilAreas?.value?.trim();
   const payload = {
     nome: perfilNome?.value?.trim(),
-    nascimento: perfilNascimento?.value?.trim() || undefined,
+    nascimento: nascimentoDateInputToApi(perfilNascimento?.value) || undefined,
     whatsapp: perfilWhatsapp?.value?.trim(),
     pais: perfilPais?.value?.trim(),
     estado: perfilEstado?.value?.trim(),
@@ -901,7 +977,7 @@ async function savePerfil(e) {
     igreja: perfilIgreja?.value?.trim(),
     tempoIgreja: perfilTempoIgreja?.value?.trim(),
     voluntarioIgreja: perfilVoluntarioIgreja?.value?.trim(),
-    ministerio: perfilMinisterio?.value?.trim(),
+    ministerio: getMinisterioValue('perfilMinisterio') || undefined,
     disponibilidade: perfilDisponibilidade?.value?.trim(),
     horasSemana: perfilHorasSemana?.value?.trim(),
     areas: areasStr ? areasStr.split(',').map(a => a.trim()).filter(Boolean) : [],
@@ -1938,6 +2014,28 @@ formNovoEvento?.addEventListener('submit', async (e) => {
 });
 
 document.getElementById('btnNovoMinisterio')?.addEventListener('click', () => { document.getElementById('ministerioNome').value = ''; document.getElementById('modalNovoMinisterio')?.classList.add('open'); });
+document.getElementById('btnCadastrarMinisteriosPadrao')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btnCadastrarMinisteriosPadrao');
+  if (!authToken || !btn) return;
+  btn.disabled = true;
+  try {
+    const r = await authFetch(`${API_BASE}/api/ministros`);
+    const list = (r.ok ? await r.json().catch(() => []) : []) || [];
+    const nomesExistentes = new Set((list || []).map(m => (m.nome || '').trim()));
+    let criados = 0;
+    for (const nome of MINISTERIOS_PADRAO) {
+      if (!nome.trim() || nomesExistentes.has(nome)) continue;
+      const post = await authFetch(`${API_BASE}/api/ministros`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome }) });
+      if (post.ok) { criados++; nomesExistentes.add(nome); }
+    }
+    await fetchMinistros();
+    alert(criados ? `${criados} ministério(s) cadastrado(s).` : 'Todos os ministérios da lista já estavam cadastrados.');
+  } catch (e) {
+    alert(e.message || 'Erro ao cadastrar ministérios.');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
 document.getElementById('formNovoMinisterio')?.addEventListener('submit', createMinisterio);
 document.getElementById('modalNovoMinisterioClose')?.addEventListener('click', () => document.getElementById('modalNovoMinisterio')?.classList.remove('open'));
 document.getElementById('modalNovoMinisterioCancel')?.addEventListener('click', () => document.getElementById('modalNovoMinisterio')?.classList.remove('open'));
@@ -1974,16 +2072,68 @@ document.getElementById('checkinMinisterioData')?.addEventListener('change', () 
 
 formPerfil?.addEventListener('submit', savePerfil);
 
+/** Reduz imagem para avatar (máx. 512px no lado maior, JPEG ~82%) para não pesar no servidor e no layout. */
+function resizeImageForAvatar(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\/(jpe?g|png|gif|webp)$/i.test(file.type)) {
+      resolve(file);
+      return;
+    }
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const max = 512;
+      let w = img.width;
+      let h = img.height;
+      if (w <= max && h <= max) {
+        resolve(file);
+        return;
+      }
+      if (w > h) {
+        h = Math.round((h * max) / w);
+        w = max;
+      } else {
+        w = Math.round((w * max) / h);
+        h = max;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(file);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        (blob) => {
+          if (blob) resolve(blob);
+          else resolve(file);
+        },
+        'image/jpeg',
+        0.82
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(file);
+    };
+    img.src = url;
+  });
+}
+
 document.getElementById('btnPerfilFotoUpload')?.addEventListener('click', () => document.getElementById('perfilFotoInput')?.click());
 document.getElementById('perfilFotoInput')?.addEventListener('change', async (e) => {
   const file = e.target?.files?.[0];
   e.target.value = '';
   if (!file || !authToken) return;
-  const fd = new FormData();
-  fd.append('foto', file);
   const btn = document.getElementById('btnPerfilFotoUpload');
   if (btn) btn.disabled = true;
   try {
+    const resized = await resizeImageForAvatar(file);
+    const fd = new FormData();
+    fd.append('foto', resized instanceof Blob ? resized : file, 'foto.jpg');
     const r = await authFetch(`${API_BASE}/api/me/foto`, { method: 'POST', body: fd });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || 'Falha no upload');
@@ -2107,6 +2257,8 @@ function showCadastroPublico() {
   if (estadoSelect && estadoSelect.options.length <= 1) {
     estadoSelect.innerHTML = '<option value="">Selecione o estado (UF)</option>' + UFS_BR.map(uf => `<option value="${uf}">${uf}</option>`).join('');
   }
+  renderMinisterioSelect('cadastroMinisterio');
+  toggleMinisterioOutroVisibility('cadastroMinisterio');
 }
 
 function hideCadastroPublico() {
@@ -2131,7 +2283,7 @@ document.getElementById('cadastroPublicoForm')?.addEventListener('submit', async
   const payload = {
     nome: (document.getElementById('cadastroNome')?.value || '').trim(),
     email: (document.getElementById('cadastroEmail')?.value || '').trim().toLowerCase(),
-    nascimento: (document.getElementById('cadastroNascimento')?.value || '').trim() || undefined,
+    nascimento: nascimentoDateInputToApi(document.getElementById('cadastroNascimento')?.value) || undefined,
     whatsapp: (document.getElementById('cadastroWhatsapp')?.value || '').trim() || undefined,
     pais: (document.getElementById('cadastroPais')?.value || '').trim() || undefined,
     estado: (document.getElementById('cadastroEstado')?.value || '').trim() || undefined,
@@ -2140,7 +2292,7 @@ document.getElementById('cadastroPublicoForm')?.addEventListener('submit', async
     igreja: (document.getElementById('cadastroIgreja')?.value || '').trim() || undefined,
     tempoIgreja: (document.getElementById('cadastroTempoIgreja')?.value || '').trim() || undefined,
     voluntarioIgreja: (document.getElementById('cadastroVoluntarioIgreja')?.value || '').trim() || undefined,
-    ministerio: (document.getElementById('cadastroMinisterio')?.value || '').trim() || undefined,
+    ministerio: getMinisterioValue('cadastroMinisterio') || undefined,
     disponibilidade: (document.getElementById('cadastroDisponibilidade')?.value || '').trim() || undefined,
     horasSemana: (document.getElementById('cadastroHorasSemana')?.value || '').trim() || undefined,
     areas: (document.getElementById('cadastroAreas')?.value || '').trim() || undefined,
@@ -2162,6 +2314,9 @@ document.getElementById('cadastroPublicoForm')?.addEventListener('submit', async
     if (errEl) errEl.textContent = '';
     document.getElementById('cadastroPublicoForm')?.reset();
     if (document.getElementById('cadastroEstado')) document.getElementById('cadastroEstado').innerHTML = '<option value="">Selecione o estado (UF)</option>' + UFS_BR.map(uf => `<option value="${uf}">${uf}</option>`).join('');
+    renderMinisterioSelect('cadastroMinisterio');
+    const outro = document.getElementById('cadastroMinisterioOutro');
+    if (outro) { outro.value = ''; outro.style.display = 'none'; }
   } catch (err) {
     if (errEl) errEl.textContent = err.message || 'Erro de rede. Tente novamente.';
   } finally {
@@ -2177,6 +2332,9 @@ document.getElementById('btnCopiarLinkCadastro')?.addEventListener('click', () =
     if (btn) { const t = btn.textContent; btn.textContent = 'Copiado!'; setTimeout(() => { btn.textContent = t; }, 2000); }
   }).catch(() => {});
 });
+
+document.getElementById('cadastroMinisterio')?.addEventListener('change', () => toggleMinisterioOutroVisibility('cadastroMinisterio'));
+document.getElementById('perfilMinisterio')?.addEventListener('change', () => toggleMinisterioOutroVisibility('perfilMinisterio'));
 
 window.addEventListener('hashchange', () => {
   if (window.location.hash === '#cadastro') showCadastroPublico();

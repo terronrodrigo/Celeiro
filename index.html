@@ -305,6 +305,7 @@
           <section class="filters-row">
             <div class="filters-card">
               <button type="button" class="btn btn-primary" id="btnNovoMinisterio">➕ Novo ministério</button>
+              <button type="button" class="btn btn-ghost" id="btnCadastrarMinisteriosPadrao">Cadastrar lista padrão (lives)</button>
             </div>
           </section>
           <div class="table-card">
@@ -517,7 +518,7 @@
                   <div class="form-group"><label for="perfilEmail">Email</label><input type="email" id="perfilEmail" placeholder="seu@email.com" disabled></div>
                 </div>
                 <div class="form-row">
-                  <div class="form-group"><label for="perfilNascimento">Data de nascimento</label><input type="text" id="perfilNascimento" placeholder="DD/MM/AAAA"></div>
+                  <div class="form-group"><label for="perfilNascimento">Data de nascimento</label><input type="date" id="perfilNascimento" max="2015-12-31"></div>
                   <div class="form-group"><label for="perfilWhatsapp">WhatsApp</label><input type="text" id="perfilWhatsapp" placeholder="(11) 99999-9999"></div>
                 </div>
                 <div class="form-row">
@@ -525,13 +526,13 @@
                   <div class="form-group"><label for="perfilEstado">Estado (UF)</label><select id="perfilEstado"><option value="">Selecione</option></select></div>
                   <div class="form-group"><label for="perfilCidade">Cidade</label><input type="text" id="perfilCidade" placeholder="Cidade"></div>
                 </div>
-                <div class="form-group"><label for="perfilEvangelico">É cristão/evangélico?</label><input type="text" id="perfilEvangelico" placeholder="Sim / Não"></div>
+                <div class="form-group"><label for="perfilEvangelico">É cristão/evangélico?</label><select id="perfilEvangelico"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
                 <div class="form-group"><label for="perfilIgreja">Igreja onde congrega</label><input type="text" id="perfilIgreja" placeholder="Nome da igreja"></div>
                 <div class="form-row">
                   <div class="form-group"><label for="perfilTempoIgreja">Tempo que frequenta a igreja</label><input type="text" id="perfilTempoIgreja" placeholder="Ex: 2 anos"></div>
-                  <div class="form-group"><label for="perfilVoluntarioIgreja">Já é voluntário na igreja?</label><input type="text" id="perfilVoluntarioIgreja" placeholder="Sim / Não"></div>
+                  <div class="form-group"><label for="perfilVoluntarioIgreja">Já é voluntário na igreja?</label><select id="perfilVoluntarioIgreja"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
                 </div>
-                <div class="form-group"><label for="perfilMinisterio">Ministério em que serve ou deseja servir</label><input type="text" id="perfilMinisterio" placeholder="Ex: Louvor, Streaming"></div>
+                <div class="form-group"><label for="perfilMinisterio">Ministério em que serve ou deseja servir</label><select id="perfilMinisterio"><option value="">Selecione</option></select><input type="text" id="perfilMinisterioOutro" placeholder="Outro (especifique)" class="ministerio-outro-input" style="display:none"></div>
                 <div class="form-group"><label for="perfilDisponibilidade">Disponibilidade</label><input type="text" id="perfilDisponibilidade" placeholder="Ex: Domingos manhã"></div>
                 <div class="form-group"><label for="perfilHorasSemana">Horas por semana que pode dedicar</label><input type="text" id="perfilHorasSemana" placeholder="Ex: 2 a 4 horas"></div>
                 <div class="form-group"><label for="perfilAreas">Áreas de interesse (separadas por vírgula)</label><input type="text" id="perfilAreas" placeholder="Ex: Mídia, Louvor"></div>
@@ -548,7 +549,7 @@
             <p class="auth-subtitle">Confirme sua presença no culto de hoje. Só é possível confirmar no próprio dia.</p>
             <div id="eventosHojeList"></div>
             <div id="formConfirmarCheckin" style="display: none;">
-              <div class="form-group"><label for="confirmarMinisterio">Ministério em que vai atuar</label><input type="text" id="confirmarMinisterio" placeholder="Ex: Streaming"></div>
+              <div class="form-group"><label for="confirmarMinisterio">Ministério em que vai atuar</label><select id="confirmarMinisterio"><option value="">Selecione</option></select></div>
               <button type="button" class="btn btn-primary" id="btnConfirmarCheckin">Confirmar presença</button>
             </div>
           </div>
@@ -619,7 +620,7 @@
           <div class="form-group"><label for="cadastroEmail">Email</label><input type="email" id="cadastroEmail" placeholder="seu@email.com" required></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label for="cadastroNascimento">Data de nascimento</label><input type="text" id="cadastroNascimento" placeholder="DD/MM/AAAA"></div>
+          <div class="form-group"><label for="cadastroNascimento">Data de nascimento</label><input type="date" id="cadastroNascimento" max="2015-12-31"></div>
           <div class="form-group"><label for="cadastroWhatsapp">WhatsApp</label><input type="text" id="cadastroWhatsapp" placeholder="(11) 99999-9999"></div>
         </div>
         <div class="form-row">
@@ -627,13 +628,13 @@
           <div class="form-group"><label for="cadastroEstado">Estado (UF)</label><select id="cadastroEstado"><option value="">Selecione</option></select></div>
           <div class="form-group"><label for="cadastroCidade">Cidade</label><input type="text" id="cadastroCidade" placeholder="Cidade"></div>
         </div>
-        <div class="form-group"><label for="cadastroEvangelico">É cristão/evangélico?</label><input type="text" id="cadastroEvangelico" placeholder="Sim / Não"></div>
+        <div class="form-group"><label for="cadastroEvangelico">É cristão/evangélico?</label><select id="cadastroEvangelico"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
         <div class="form-group"><label for="cadastroIgreja">Igreja onde congrega</label><input type="text" id="cadastroIgreja" placeholder="Nome da igreja"></div>
         <div class="form-row">
           <div class="form-group"><label for="cadastroTempoIgreja">Tempo que frequenta a igreja</label><input type="text" id="cadastroTempoIgreja" placeholder="Ex: 2 anos"></div>
-          <div class="form-group"><label for="cadastroVoluntarioIgreja">Já é voluntário na igreja?</label><input type="text" id="cadastroVoluntarioIgreja" placeholder="Sim / Não"></div>
+          <div class="form-group"><label for="cadastroVoluntarioIgreja">Já é voluntário na igreja?</label><select id="cadastroVoluntarioIgreja"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
         </div>
-        <div class="form-group"><label for="cadastroMinisterio">Ministério em que serve ou deseja servir</label><input type="text" id="cadastroMinisterio" placeholder="Ex: Louvor, Streaming"></div>
+        <div class="form-group"><label for="cadastroMinisterio">Ministério em que serve ou deseja servir</label><select id="cadastroMinisterio"><option value="">Selecione</option></select><input type="text" id="cadastroMinisterioOutro" placeholder="Outro (especifique)" class="ministerio-outro-input" style="display:none"></div>
         <div class="form-group"><label for="cadastroDisponibilidade">Disponibilidade</label><input type="text" id="cadastroDisponibilidade" placeholder="Ex: Domingos manhã, Sábados"></div>
         <div class="form-group"><label for="cadastroHorasSemana">Horas por semana que pode dedicar</label><input type="text" id="cadastroHorasSemana" placeholder="Ex: 2 a 4 horas"></div>
         <div class="form-group"><label for="cadastroAreas">Áreas de interesse (separadas por vírgula)</label><input type="text" id="cadastroAreas" placeholder="Ex: Mídia, Louvor, Crianças"></div>

@@ -724,6 +724,16 @@ body {
   min-height: 140px;
   resize: vertical;
 }
+.ministerio-outro-input {
+  margin-top: 0.5rem;
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
 .form-hint {
   font-size: 0.85rem;
   color: var(--text-muted);
@@ -1001,6 +1011,8 @@ body {
 .perfil-foto-img {
   width: 120px;
   height: 120px;
+  max-width: 120px;
+  max-height: 120px;
   border-radius: 50%;
   object-fit: cover;
   border: 3px solid var(--border-color);
@@ -1046,6 +1058,10 @@ body {
   border-radius: 50%;
   object-fit: cover;
   background: var(--bg-secondary);
+}
+.avatar-img {
+  max-width: 100%;
+  height: auto;
 }
 .avatar-img.avatar-sm,
 .avatar-initial.avatar-sm {
