@@ -133,6 +133,18 @@ const linkRegistro = document.getElementById('linkRegistro');
 const linkLogin = document.getElementById('linkLogin');
 const registerCard = document.getElementById('registerCard');
 const loginCard = document.getElementById('loginCard');
+const setupCard = document.getElementById('setupCard');
+const setupForm = document.getElementById('setupForm');
+const setupSecret = document.getElementById('setupSecret');
+const setupEmail = document.getElementById('setupEmail');
+const setupNome = document.getElementById('setupNome');
+const setupSenha = document.getElementById('setupSenha');
+const setupError = document.getElementById('setupError');
+const setupSuccess = document.getElementById('setupSuccess');
+const btnSetup = document.getElementById('btnSetup');
+const linkSetup = document.getElementById('linkSetup');
+const linkSetupVoltar = document.getElementById('linkSetupVoltar');
+const setupLinkWrap = document.getElementById('setupLinkWrap');
 
 function updateAuthUi() {
   const isLogged = Boolean(authToken);
@@ -1997,8 +2009,46 @@ document.getElementById('btnPerfilFotoExcluir')?.addEventListener('click', async
 btnConfirmarCheckin?.addEventListener('click', confirmarCheckin);
 document.getElementById('btnPerfilConfirmarCheckin')?.addEventListener('click', confirmarCheckinDesdePerfil);
 
-linkRegistro?.addEventListener('click', (e) => { e.preventDefault(); if (loginCard) loginCard.style.display = 'none'; if (registerCard) registerCard.style.display = 'block'; });
-linkLogin?.addEventListener('click', (e) => { e.preventDefault(); if (registerCard) registerCard.style.display = 'none'; if (loginCard) loginCard.style.display = 'block'; });
+async function fetchSetupStatus() {
+  try {
+    const r = await fetch(`${API_BASE}/api/setup/status`);
+    const data = await r.json().catch(() => ({}));
+    if (data.needsSetup && setupLinkWrap) setupLinkWrap.style.display = 'block';
+    const urlParams = new URLSearchParams(window.location.search);
+    if (data.needsSetup && urlParams.get('setup') === '1' && setupCard && loginCard) {
+      loginCard.style.display = 'none';
+      if (registerCard) registerCard.style.display = 'none';
+      setupCard.style.display = 'block';
+    }
+  } catch (_) {}
+}
+if (!authToken) fetchSetupStatus();
+
+linkRegistro?.addEventListener('click', (e) => { e.preventDefault(); if (loginCard) loginCard.style.display = 'none'; if (registerCard) registerCard.style.display = 'block'; if (setupCard) setupCard.style.display = 'none'; });
+linkLogin?.addEventListener('click', (e) => { e.preventDefault(); if (registerCard) registerCard.style.display = 'none'; if (loginCard) loginCard.style.display = 'block'; if (setupCard) setupCard.style.display = 'none'; });
+linkSetup?.addEventListener('click', (e) => { e.preventDefault(); if (loginCard) loginCard.style.display = 'none'; if (registerCard) registerCard.style.display = 'none'; if (setupCard) setupCard.style.display = 'block'; });
+linkSetupVoltar?.addEventListener('click', (e) => { e.preventDefault(); if (setupCard) setupCard.style.display = 'none'; if (loginCard) loginCard.style.display = 'block'; });
+setupForm?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (setupError) setupError.textContent = '';
+  if (setupSuccess) { setupSuccess.style.display = 'none'; setupSuccess.textContent = ''; }
+  const secret = (setupSecret?.value || '').trim();
+  const email = (setupEmail?.value || '').trim().toLowerCase();
+  const nome = (setupNome?.value || '').trim();
+  const senha = (setupSenha?.value || '').trim();
+  if (!secret || !email || !nome || !senha) { if (setupError) setupError.textContent = 'Preencha todos os campos.'; return; }
+  if (senha.length < 6) { if (setupError) setupError.textContent = 'Senha deve ter no mínimo 6 caracteres.'; return; }
+  if (btnSetup) { btnSetup.disabled = true; btnSetup.textContent = 'Criando...'; }
+  try {
+    const r = await fetch(`${API_BASE}/api/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret, email, nome, senha }) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { if (setupError) setupError.textContent = data.error || 'Falha ao criar admin.'; return; }
+    if (setupSuccess) { setupSuccess.textContent = data.message || 'Admin criado. Faça login com este email e senha.'; setupSuccess.style.display = 'block'; }
+    setTimeout(() => { if (setupCard) setupCard.style.display = 'none'; if (loginCard) loginCard.style.display = 'block'; if (loginError) loginError.textContent = ''; }, 1500);
+  } catch (err) { if (setupError) setupError.textContent = err.message || 'Erro de rede.'; }
+  finally { if (btnSetup) { btnSetup.disabled = false; btnSetup.textContent = 'Criar admin'; } }
+});
+
 registerForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (registerError) registerError.textContent = '';

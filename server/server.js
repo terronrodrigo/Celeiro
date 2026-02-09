@@ -51,6 +51,7 @@ const PORT = process.env.PORT || 3001;
 const AUTH_TOKEN_TTL_HOURS = Number(process.env.AUTH_TOKEN_TTL_HOURS || 24);
 const ADMIN_USER = (process.env.ADMIN_USER || '').trim();
 const ADMIN_PASS = (process.env.ADMIN_PASS || '').trim();
+const SETUP_SECRET = (process.env.SETUP_SECRET || '').trim();
 
 app.use(compression());
 app.use(cors());
@@ -423,6 +424,43 @@ async function syncCheckins() {
   });
   return await syncCheckinsFromText(text);
 }
+
+// Setup inicial: criar primeiro admin (após deploy). Protegido por SETUP_SECRET.
+app.get('/api/setup/status', async (_req, res) => {
+  try {
+    const hasAdmin = await User.exists({ role: 'admin' });
+    res.json({ needsSetup: !!SETUP_SECRET && !hasAdmin });
+  } catch (err) {
+    res.status(500).json({ needsSetup: false, error: err.message });
+  }
+});
+
+app.post('/api/setup', async (req, res) => {
+  try {
+    const { secret, email, nome, senha } = req.body || {};
+    if (!SETUP_SECRET) return res.status(400).json({ error: 'Setup não configurado no servidor.' });
+    if (String(secret).trim() !== SETUP_SECRET) return res.status(403).json({ error: 'Código de setup inválido.' });
+    const emailVal = (email || '').trim().toLowerCase();
+    const nomeVal = (nome || '').trim();
+    const senhaVal = (senha || '').trim();
+    if (!emailVal || !emailVal.includes('@')) return res.status(400).json({ error: 'Email válido é obrigatório.' });
+    if (!nomeVal) return res.status(400).json({ error: 'Nome é obrigatório.' });
+    if (!senhaVal || senhaVal.length < 6) return res.status(400).json({ error: 'Senha deve ter no mínimo 6 caracteres.' });
+
+    const hasAdmin = await User.exists({ role: 'admin' });
+    if (hasAdmin) return res.status(400).json({ error: 'Já existe um admin. Use login normal.' });
+
+    const existing = await User.findOne({ email: emailVal });
+    if (existing) return res.status(400).json({ error: 'Este email já está cadastrado. Use outra conta ou faça login.' });
+
+    const user = new User({ email: emailVal, nome: nomeVal, senha: senhaVal, role: 'admin' });
+    await user.save();
+    res.status(201).json({ ok: true, message: 'Admin criado. Faça login com este email e senha.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Erro ao criar admin.' });
+  }
+});
 
 app.post('/api/login', async (req, res) => {
   try {
@@ -1237,20 +1275,26 @@ app.post('/api/migrate', requireAuth, requireAdmin, async (req, res) => {
 // Servir arquivos estáticos (deve estar APÓS as rotas da API)
 app.use(express.static(join(__dirname, '..')));
 
-// Conectar MongoDB
-if (!process.env.MONGODB_URI) {
-  console.warn('MONGODB_URI não configurado - usando apenas cache em memória');
-} else {
-  mongoose.connect(process.env.MONGODB_URI)
-    .then(() => console.log('✅ MongoDB conectado'))
-    .catch(err => console.error('❌ MongoDB erro:', err));
-}
+// Conectar MongoDB e só então iniciar o servidor (evita "buffering timed out" no login)
+async function start() {
+  if (process.env.MONGODB_URI) {
+    try {
+      await mongoose.connect(process.env.MONGODB_URI);
+      console.log('✅ MongoDB conectado');
+    } catch (err) {
+      console.error('❌ MongoDB erro:', err);
+      process.exit(1);
+    }
+  } else {
+    console.warn('MONGODB_URI não configurado - usando apenas cache em memória');
+  }
 
-// Iniciar servidor (0.0.0.0 para aceitar conexões em container/cloud)
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 API Celeiro rodando na porta ${PORT}`);
-  console.log('POST /api/login - autenticação admin');
-  console.log('GET /api/voluntarios - lista voluntários da planilha');
-  console.log('GET /api/checkins - lista check-ins e resumo');
-  console.log('POST /api/send-email - envia email via Resend (body: { to: string[], subject, html? })');
-});
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 API Celeiro rodando na porta ${PORT}`);
+    console.log('POST /api/login - autenticação admin');
+    console.log('GET /api/voluntarios - lista voluntários da planilha');
+    console.log('GET /api/checkins - lista check-ins e resumo');
+    console.log('POST /api/send-email - envia email via Resend (body: { to: string[], subject, html? })');
+  });
+}
+start();

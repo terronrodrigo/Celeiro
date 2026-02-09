@@ -58,10 +58,14 @@ userSchema.pre('save', async function(next) {
   }
 });
 
-// Método para comparar senhas
+// Método para comparar senhas (nunca lança: hash inválido/migração retorna false)
 userSchema.methods.compararSenha = async function(senhaFornecida) {
   if (!this.senha) return false; // usuários com Google OAuth não podem usar senha
-  return bcryptjs.compare(senhaFornecida, this.senha);
+  try {
+    return await bcryptjs.compare(senhaFornecida, this.senha);
+  } catch (_) {
+    return false; // hash inválido (ex.: senha em texto plano após migração)
+  }
 };
 
 // Remover senha do JSON quando retornar pelo JSON

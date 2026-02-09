@@ -105,12 +105,27 @@ Configure estas variáveis no painel da sua cloud (Railway, Render, etc.):
 | Variável              | Obrigatório | Descrição |
 |-----------------------|------------|-----------|
 | **MONGODB_URI**       | Sim        | Connection string do MongoDB Atlas (ver passo 1). |
-| **ADMIN_USER**        | Sim        | Login do admin. |
-| **ADMIN_PASS**        | Sim        | Senha do admin (use senha forte). |
+| **SETUP_SECRET**      | Recomendado | Código para criar o primeiro admin pela tela (após deploy). Veja “Primeiro acesso”, abaixo. |
+| **ADMIN_USER** / **ADMIN_PASS** | Opcional | Login/senha admin por variável (alternativa ao admin no banco). |
 | **PORT**              | Não        | Geralmente a cloud define (ex.: 3001 ou 8080). |
 | **RESEND_API_KEY**    | Se usar email | Chave da API Resend para envio de emails. |
 | **RESEND_FROM_EMAIL** | Se usar email | Email de remetente verificado no Resend. |
-| **AUTH_TOKEN_TTL_HOURS** | Não     | Tempo de vida do token em horas (ex.: 24). |
+| **AUTH_TOKEN_TTL_HOURS** | Não | Tempo de vida do token em horas (ex.: 24). |
+
+### Primeiro acesso (admin) após o deploy
+
+Você pode criar o admin de duas formas:
+
+1. **Pela tela (recomendado)**  
+   No Railway (ou na cloud), defina a variável **SETUP_SECRET** com um código secreto (ex.: uma senha longa ou um UUID). Depois acesse a URL do app com `?setup=1` (ex.: `https://seu-app.up.railway.app/?setup=1`) ou use o link “Configurar primeiro admin” na tela de login. Informe o **SETUP_SECRET**, email, nome e senha do admin. O admin é criado no MongoDB; a partir daí faça login com esse email e senha. Dentro do app, em Perfil, o admin pode **trocar a senha** quando quiser.
+
+2. **Pelo script (linha de comando)**  
+   Na sua máquina, com a URI do banco de **produção** no `.env` ou na variável de ambiente:
+   ```bash
+   cd server
+   MONGODB_URI="mongodb+srv://..." node scripts/create-admin.js admin@exemplo.com "Seu Nome" "SenhaSegura123"
+   ```
+   Depois faça login no dashboard com esse email e senha; a troca de senha fica disponível em Perfil.
 
 **Importante:** Não commite `.env` nem senhas no repositório. Use apenas as variáveis no painel da cloud.
 
@@ -119,7 +134,7 @@ Configure estas variáveis no painel da sua cloud (Railway, Render, etc.):
 ## Checklist pós-deploy
 
 - [ ] Acessar a URL do app (ex.: `https://seu-app.up.railway.app`).
-- [ ] Fazer login com **ADMIN_USER** e **ADMIN_PASS**.
+- [ ] Criar o primeiro admin: use a tela de setup (`?setup=1` ou link “Configurar primeiro admin”) com **SETUP_SECRET**, ou rode o script `create-admin.js` com a URI de prod; depois faça login com esse email e senha. (Opcional: definir **ADMIN_USER** e **ADMIN_PASS** no painel para login admin por variável.)
 - [ ] Testar cadastro de voluntário (se usar).
 - [ ] Se usar email: configurar **RESEND_API_KEY** e **RESEND_FROM_EMAIL** e testar envio.
 - [ ] Upload de foto: em ambiente efêmero (ex.: Render/Railway sem volume), fotos podem ser perdidas ao reiniciar; para persistência use storage externo (ex.: S3) no futuro.

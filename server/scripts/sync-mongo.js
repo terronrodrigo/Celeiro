@@ -217,11 +217,17 @@ async function syncCheckins() {
   return { inserted: result.upsertedCount || 0, updated: result.modifiedCount || 0 };
 }
 
-async function main() {
-  const mongoUri = process.env.MONGODB_URI;
-  if (!mongoUri) {
-    throw new Error('MONGODB_URI não configurado no .env.');
+function getMongoUri() {
+  let uri = (process.env.MONGODB_URI || '').trim().replace(/^["']|["']$/g, '');
+  if (!uri) throw new Error('MONGODB_URI não configurado no .env.');
+  if (!/^mongodb(\+srv)?:\/\//i.test(uri)) {
+    throw new Error('MONGODB_URI deve começar com mongodb:// ou mongodb+srv:// (valor atual começa com: ' + (uri.slice(0, 20) || '(vazio)') + '...)');
   }
+  return uri;
+}
+
+async function main() {
+  const mongoUri = getMongoUri();
   await mongoose.connect(mongoUri);
   console.log('✅ MongoDB conectado');
 
