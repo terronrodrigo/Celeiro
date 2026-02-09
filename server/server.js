@@ -1082,18 +1082,24 @@ app.post('/api/send-email', requireAuth, requireAdmin, async (req, res) => {
   const baseHtml = html || (text ? `<p>${String(text).replace(/\n/g, '<br>')}</p>` : undefined);
 
   try {
+    const BATCH = 10;
     const results = [];
-    for (const email of validTo) {
-      const htmlFinal = baseHtml ? personalize(baseHtml, email) : undefined;
-      const { data, error } = await resend.emails.send({
-        from,
-        to: email,
-        reply_to: replyTo,
-        subject,
-        html: htmlFinal,
-        text: !html && text ? personalize(text, email) : undefined,
+    for (let i = 0; i < validTo.length; i += BATCH) {
+      const chunk = validTo.slice(i, i + BATCH);
+      const promises = chunk.map(async (email) => {
+        const htmlFinal = baseHtml ? personalize(baseHtml, email) : undefined;
+        const { data, error } = await resend.emails.send({
+          from,
+          to: email,
+          reply_to: replyTo,
+          subject,
+          html: htmlFinal,
+          text: !html && text ? personalize(text, email) : undefined,
+        });
+        return { email, id: data?.id, error: error?.message };
       });
-      results.push({ email, id: data?.id, error: error?.message });
+      const chunkResults = await Promise.all(promises);
+      results.push(...chunkResults);
     }
     const failed = results.filter(r => r.error);
     res.json({

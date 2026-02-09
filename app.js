@@ -2079,12 +2079,21 @@ async function sendEmails() {
     });
     const data = await r.json().catch(() => ({}));
     sendResult.style.display = 'block';
-    if (data.error) {
+    const isError = !r.ok || data.error;
+    if (isError) {
       sendResult.className = 'send-result error';
-      sendResult.innerHTML = `Erro: ${data.error}`;
+      sendResult.innerHTML = `Erro: ${data.error || 'Falha no envio. Tente novamente.'}`;
     } else {
+      const sent = data.sent || 0;
+      const failed = data.failed || 0;
       sendResult.className = 'send-result success';
-      sendResult.innerHTML = `Enviados: ${data.sent || 0}${(data.failed || 0) > 0 ? ` · Falhas: ${data.failed}` : ''}.`;
+      sendResult.innerHTML = sent > 0
+        ? `Enviados: ${sent}${failed > 0 ? ` · Falhas: ${failed}` : ''}.`
+        : (failed > 0 ? `Nenhum enviado. Falhas: ${failed}.` : 'Nenhum destinatário válido.');
+      setTimeout(() => {
+        closeModal();
+        if (sendResult) { sendResult.style.display = 'none'; sendResult.innerHTML = ''; }
+      }, 1800);
     }
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
