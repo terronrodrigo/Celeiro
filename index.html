@@ -25,7 +25,7 @@
         </a>
         <a href="#" class="nav-item" data-view="voluntarios">
           <span class="nav-icon">👥</span>
-          <span>Voluntários e envio de email</span>
+          <span>Voluntários</span>
         </a>
         <a href="#" class="nav-item" data-view="ministros">
           <span class="nav-icon">⛪</span>
@@ -159,7 +159,7 @@
           <section class="cadastro-link-card filters-row">
             <div class="filters-card cadastro-link-box">
               <div class="cadastro-link-content">
-                <span class="cadastro-link-label">Link para novos voluntários se cadastrarem:</span>
+                <span class="cadastro-link-label">Link de cadastro:</span>
                 <input type="text" id="cadastroLinkInput" class="cadastro-link-input" readonly>
                 <button type="button" class="btn btn-primary btn-sm" id="btnCopiarLinkCadastro">Copiar link</button>
               </div>
@@ -207,14 +207,14 @@
             </div>
             <div class="kpi-card">
               <div class="kpi-header">
-                <span class="kpi-label">Só check-in (sem cadastro)</span>
+                <span class="kpi-label">Só check-in</span>
               </div>
               <div class="kpi-value" id="kpiSoCheckin">0</div>
               <div class="kpi-footer">confirmaram mas não estão na lista</div>
             </div>
             <div class="kpi-card">
               <div class="kpi-header">
-                <span class="kpi-label">Total (lista + só check-in)</span>
+                <span class="kpi-label">Total geral</span>
               </div>
               <div class="kpi-value" id="kpiTotalGeral">0</div>
               <div class="kpi-footer">pessoas únicas no sistema</div>
@@ -266,7 +266,7 @@
           <section class="table-section">
             <div class="table-card">
               <div class="chart-header">
-                <h2>Voluntários — <span id="voluntariosCountTop" class="list-count">0</span> na lista</h2>
+                <h2>Voluntários <span id="voluntariosCountTop" class="list-count">(0)</span></h2>
                 <div class="table-actions">
                   <label class="checkbox-label">
                     <input type="checkbox" id="selectAll" title="Selecionar todos na página">
@@ -294,7 +294,9 @@
                 </table>
               </div>
               <div class="table-footer">
-                <span id="tableCount">0</span> voluntários na lista
+                <span id="tableCount">0</span> voluntários
+                <span id="voluntariosRange" class="list-range"></span>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnVerMaisVoluntarios" style="display: none;">Ver mais</button>
               </div>
             </div>
           </section>
@@ -310,7 +312,7 @@
           </section>
           <div class="table-card">
             <div class="chart-header"><h2>Ministérios</h2></div>
-            <p class="auth-subtitle">Crie ministérios e defina um voluntário como líder de cada um. O líder verá os check-ins associados ao ministério.</p>
+            <p class="auth-subtitle">Crie ministérios e defina líderes. <span id="ministrosCount" class="list-count">(0)</span></p>
             <div class="table-wrapper">
               <table class="data-table">
                 <thead><tr><th>Nome</th><th>Líder</th><th>Ação</th></tr></thead>
@@ -356,10 +358,10 @@
         <section class="view" data-view="usuarios">
           <div class="table-card">
             <div class="chart-header"><h2>Usuários e perfis</h2></div>
-            <p class="auth-subtitle">Altere o perfil (voluntário, admin ou líder de ministério). Histórico de alterações é guardado.</p>
+            <p class="auth-subtitle">Perfis e permissões. <span id="usuariosCount" class="list-count">(0)</span></p>
             <div class="table-wrapper">
               <table class="data-table">
-                <thead><tr><th>Nome</th><th>Email</th><th>Perfil</th><th>Ministério (líder)</th><th>Ação</th></tr></thead>
+                <thead><tr><th>Nome</th><th>Email</th><th>Perfil</th><th>Ministério</th><th>Ação</th></tr></thead>
                 <tbody id="usuariosBody"></tbody>
               </table>
             </div>
@@ -392,7 +394,7 @@
           </section>
           <div id="eventosCheckinList" class="table-card">
             <div class="chart-header"><h2>Eventos de check-in</h2></div>
-            <p class="auth-subtitle">Eventos ativos aparecem na tela "Realizar check-in do dia" dos voluntários. Ao desligar, o evento continua listado aqui — use "Ligar" para ativá-lo de novo.</p>
+            <p class="auth-subtitle">Datas de culto para check-in. <span id="eventosCheckinCount" class="list-count">(0)</span></p>
             <div class="table-wrapper">
               <table class="data-table">
                 <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Ação</th></tr></thead>
@@ -500,7 +502,7 @@
                 </table>
               </div>
               <div class="table-footer">
-                <span id="checkinCount">0</span> check-ins na lista
+                <span id="checkinCount">0</span> check-ins <span id="checkinRange" class="list-range"></span>
               </div>
             </div>
           </section>
@@ -522,7 +524,7 @@
                 </div>
               </div>
               <h2>Atualizar dados de perfil</h2>
-              <p class="auth-subtitle">Revise e altere suas informações. Os dados são os mesmos do formulário de cadastro.</p>
+              <p class="auth-subtitle">Atualize seus dados de cadastro.</p>
               <form id="formPerfil" class="auth-form perfil-form">
                 <div class="form-row">
                   <div class="form-group"><label for="perfilNome">Nome completo</label><input type="text" id="perfilNome" placeholder="Nome completo"></div>
@@ -540,13 +542,13 @@
                 <div class="form-group"><label for="perfilEvangelico">É cristão/evangélico?</label><select id="perfilEvangelico"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
                 <div class="form-group"><label for="perfilIgreja">Igreja onde congrega</label><input type="text" id="perfilIgreja" placeholder="Nome da igreja"></div>
                 <div class="form-row">
-                  <div class="form-group"><label for="perfilTempoIgreja">Tempo que frequenta a igreja</label><select id="perfilTempoIgreja"><option value="">Selecione</option><option value="Menos de 1 ano">Menos de 1 ano</option><option value="1 a 3 anos">1 a 3 anos</option><option value="3 a 5 anos">3 a 5 anos</option><option value="5 a 10 anos">5 a 10 anos</option><option value="Mais de 10 anos">Mais de 10 anos</option><option value="Não frequento">Não frequento</option></select></div>
+                  <div class="form-group"><label for="perfilTempoIgreja">Tempo na igreja</label><select id="perfilTempoIgreja"><option value="">Selecione</option><option value="Menos de 1 ano">Menos de 1 ano</option><option value="1 a 3 anos">1 a 3 anos</option><option value="3 a 5 anos">3 a 5 anos</option><option value="5 a 10 anos">5 a 10 anos</option><option value="Mais de 10 anos">Mais de 10 anos</option><option value="Não frequento">Não frequento</option></select></div>
                   <div class="form-group"><label for="perfilVoluntarioIgreja">Já é voluntário na igreja?</label><select id="perfilVoluntarioIgreja"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
                 </div>
-                <div class="form-group"><label for="perfilMinisterio">Ministério em que serve ou deseja servir</label><select id="perfilMinisterio"><option value="">Selecione</option></select><input type="text" id="perfilMinisterioOutro" placeholder="Outro (especifique)" class="ministerio-outro-input" style="display:none"></div>
+                <div class="form-group"><label for="perfilMinisterio">Ministério</label><select id="perfilMinisterio"><option value="">Selecione</option></select><input type="text" id="perfilMinisterioOutro" placeholder="Outro (especifique)" class="ministerio-outro-input" style="display:none"></div>
                 <div class="form-group"><label for="perfilDisponibilidade">Disponibilidade</label><select id="perfilDisponibilidade"><option value="">Selecione</option><option value="Domingos manhã">Domingos manhã</option><option value="Domingos noite">Domingos noite</option><option value="Sábados">Sábados</option><option value="Durante a semana">Durante a semana</option><option value="Finais de semana">Finais de semana</option><option value="Conforme necessidade">Conforme necessidade</option><option value="Outro">Outro</option></select></div>
-                <div class="form-group"><label for="perfilHorasSemana">Horas por semana que pode dedicar</label><select id="perfilHorasSemana"><option value="">Selecione</option><option value="Até 2 horas">Até 2 horas</option><option value="2 a 4 horas">2 a 4 horas</option><option value="4 a 6 horas">4 a 6 horas</option><option value="6 a 10 horas">6 a 10 horas</option><option value="Mais de 10 horas">Mais de 10 horas</option></select></div>
-                <div class="form-group"><label for="perfilAreas">Áreas de interesse (separadas por vírgula)</label><input type="text" id="perfilAreas" placeholder="Ex: Mídia, Louvor"></div>
+                <div class="form-group"><label for="perfilHorasSemana">Horas/semana</label><select id="perfilHorasSemana"><option value="">Selecione</option><option value="Até 2 horas">Até 2 horas</option><option value="2 a 4 horas">2 a 4 horas</option><option value="4 a 6 horas">4 a 6 horas</option><option value="6 a 10 horas">6 a 10 horas</option><option value="Mais de 10 horas">Mais de 10 horas</option></select></div>
+                <div class="form-group"><label for="perfilAreas">Áreas de interesse</label><input type="text" id="perfilAreas" placeholder="Ex: Mídia, Louvor"></div>
                 <button type="submit" class="btn btn-primary">Salvar</button>
               </form>
             </div>
@@ -557,10 +559,10 @@
         <section class="view" data-view="checkin-hoje">
           <div class="filters-card">
             <h2>Realizar check-in do dia</h2>
-            <p class="auth-subtitle">Confirme sua presença no culto de hoje. Só é possível confirmar no próprio dia.</p>
+            <p class="auth-subtitle">Confirme presença no culto de hoje.</p>
             <div id="eventosHojeList"></div>
             <div id="formConfirmarCheckin" style="display: none;">
-              <div class="form-group"><label for="confirmarMinisterio">Ministério em que vai atuar</label><select id="confirmarMinisterio"><option value="">Selecione</option></select></div>
+              <div class="form-group"><label for="confirmarMinisterio">Ministério</label><select id="confirmarMinisterio"><option value="">Selecione</option></select></div>
               <button type="button" class="btn btn-primary" id="btnConfirmarCheckin">Confirmar presença</button>
             </div>
           </div>
@@ -569,7 +571,7 @@
         <!-- Voluntário: Histórico próprio de check-ins -->
         <section class="view" data-view="meus-checkins">
           <div class="table-card">
-            <div class="chart-header"><h2>Visualizar histórico próprio de check-ins</h2></div>
+            <div class="chart-header"><h2>Meus check-ins <span id="meusCheckinsCount" class="list-count">(0)</span></h2></div>
             <div class="table-wrapper">
               <table class="data-table">
                 <thead><tr><th>Data</th><th>Ministério</th><th>Horário</th></tr></thead>
@@ -603,7 +605,7 @@
           </section>
           <section class="charts-row">
             <div class="table-card chart-main">
-              <div class="chart-header"><h2>Pessoas com check-in no ministério</h2></div>
+              <div class="chart-header"><h2>Check-ins do ministério <span id="checkinMinisterioCount" class="list-count">(0)</span></h2></div>
               <div class="table-wrapper">
                 <table class="data-table">
                   <thead><tr><th>Nome</th><th>Email</th><th>Ministério</th><th>Data/Hora</th></tr></thead>
@@ -642,13 +644,13 @@
         <div class="form-group"><label for="cadastroEvangelico">É cristão/evangélico?</label><select id="cadastroEvangelico"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
         <div class="form-group"><label for="cadastroIgreja">Igreja onde congrega</label><input type="text" id="cadastroIgreja" placeholder="Nome da igreja"></div>
         <div class="form-row">
-          <div class="form-group"><label for="cadastroTempoIgreja">Tempo que frequenta a igreja</label><select id="cadastroTempoIgreja"><option value="">Selecione</option><option value="Menos de 1 ano">Menos de 1 ano</option><option value="1 a 3 anos">1 a 3 anos</option><option value="3 a 5 anos">3 a 5 anos</option><option value="5 a 10 anos">5 a 10 anos</option><option value="Mais de 10 anos">Mais de 10 anos</option><option value="Não frequento">Não frequento</option></select></div>
+          <div class="form-group"><label for="cadastroTempoIgreja">Tempo na igreja</label><select id="cadastroTempoIgreja"><option value="">Selecione</option><option value="Menos de 1 ano">Menos de 1 ano</option><option value="1 a 3 anos">1 a 3 anos</option><option value="3 a 5 anos">3 a 5 anos</option><option value="5 a 10 anos">5 a 10 anos</option><option value="Mais de 10 anos">Mais de 10 anos</option><option value="Não frequento">Não frequento</option></select></div>
           <div class="form-group"><label for="cadastroVoluntarioIgreja">Já é voluntário na igreja?</label><select id="cadastroVoluntarioIgreja"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
         </div>
-        <div class="form-group"><label for="cadastroMinisterio">Ministério em que serve ou deseja servir</label><select id="cadastroMinisterio"><option value="">Selecione</option></select><input type="text" id="cadastroMinisterioOutro" placeholder="Outro (especifique)" class="ministerio-outro-input" style="display:none"></div>
+        <div class="form-group"><label for="cadastroMinisterio">Ministério</label><select id="cadastroMinisterio"><option value="">Selecione</option></select><input type="text" id="cadastroMinisterioOutro" placeholder="Outro (especifique)" class="ministerio-outro-input" style="display:none"></div>
         <div class="form-group"><label for="cadastroDisponibilidade">Disponibilidade</label><select id="cadastroDisponibilidade"><option value="">Selecione</option><option value="Domingos manhã">Domingos manhã</option><option value="Domingos noite">Domingos noite</option><option value="Sábados">Sábados</option><option value="Durante a semana">Durante a semana</option><option value="Finais de semana">Finais de semana</option><option value="Conforme necessidade">Conforme necessidade</option><option value="Outro">Outro</option></select></div>
-        <div class="form-group"><label for="cadastroHorasSemana">Horas por semana que pode dedicar</label><select id="cadastroHorasSemana"><option value="">Selecione</option><option value="Até 2 horas">Até 2 horas</option><option value="2 a 4 horas">2 a 4 horas</option><option value="4 a 6 horas">4 a 6 horas</option><option value="6 a 10 horas">6 a 10 horas</option><option value="Mais de 10 horas">Mais de 10 horas</option></select></div>
-        <div class="form-group"><label for="cadastroAreas">Áreas de interesse (separadas por vírgula)</label><input type="text" id="cadastroAreas" placeholder="Ex: Mídia, Louvor, Crianças"></div>
+        <div class="form-group"><label for="cadastroHorasSemana">Horas/semana</label><select id="cadastroHorasSemana"><option value="">Selecione</option><option value="Até 2 horas">Até 2 horas</option><option value="2 a 4 horas">2 a 4 horas</option><option value="4 a 6 horas">4 a 6 horas</option><option value="6 a 10 horas">6 a 10 horas</option><option value="Mais de 10 horas">Mais de 10 horas</option></select></div>
+        <div class="form-group"><label for="cadastroAreas">Áreas de interesse</label><input type="text" id="cadastroAreas" placeholder="Ex: Mídia, Louvor"></div>
         <p id="cadastroPublicoError" class="auth-error"></p>
         <p id="cadastroPublicoSuccess" class="auth-success" style="display: none;"></p>
         <button type="submit" class="btn btn-primary" id="btnCadastroPublico">Enviar inscrição</button>
@@ -665,11 +667,11 @@
           <span class="logo-icon">◇</span>
           <span class="logo-text">Celeiro SP</span>
         </div>
-        <p class="auth-subtitle">Admin: use usuário do sistema. Voluntário: use seu email.</p>
+        <p class="auth-subtitle">Use email ou usuário admin.</p>
       </div>
       <form id="loginForm" class="auth-form">
         <div class="form-group">
-          <label for="loginEmail">Email ou usuário admin</label>
+          <label for="loginEmail">Email ou usuário</label>
           <input type="text" id="loginEmail" autocomplete="username" placeholder="admin ou seu@email.com">
         </div>
         <div class="form-group">
@@ -685,11 +687,11 @@
     <div class="auth-card" id="setupCard" style="display: none;">
       <div class="auth-header">
         <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
-        <p class="auth-subtitle">Setup inicial – criar conta admin (após deploy)</p>
+        <p class="auth-subtitle">Criar primeiro admin (após deploy)</p>
       </div>
       <form id="setupForm" class="auth-form">
         <div class="form-group">
-          <label for="setupSecret">Código de setup (variável SETUP_SECRET)</label>
+          <label for="setupSecret">Código SETUP_SECRET</label>
           <input type="password" id="setupSecret" autocomplete="off" placeholder="Cole o valor de SETUP_SECRET do Railway">
         </div>
         <div class="form-group">

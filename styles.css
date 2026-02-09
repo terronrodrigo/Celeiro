@@ -381,6 +381,15 @@ body {
   color: var(--accent);
   font-weight: 700;
 }
+.list-range {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+.list-more-hint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-style: italic;
+}
 
 .chart-select {
   background: var(--bg-secondary);
@@ -557,6 +566,10 @@ body {
   cursor: pointer;
 }
 .table-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
   padding: 12px 16px;
   font-size: 0.85rem;
   color: var(--text-muted);

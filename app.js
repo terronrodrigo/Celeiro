@@ -341,21 +341,24 @@ function setViewLoading(viewName, loading) {
   if (section) section.classList.toggle('view-loading', loading);
 }
 
+const LIST_PAGE_SIZE = 50;
+let voluntariosPageOffset = 0;
+
 const VIEW_META = {
-  resumo: { title: 'Resumo', subtitle: 'Gerenciador de voluntários da Igreja Celeiro São Paulo — visão geral e disparo de emails.', role: 'admin' },
-  voluntarios: { title: 'Voluntários e envio de email', subtitle: 'Lista de voluntários da Igreja Celeiro São Paulo. Filtre por nome/email e envie emails.', role: 'admin' },
-  ministros: { title: 'Ministérios', subtitle: 'Ministérios da Igreja Celeiro São Paulo. Crie e defina líderes.', role: 'admin' },
-  usuarios: { title: 'Usuários', subtitle: 'Perfis e permissões (voluntário, líder, admin). Histórico de alterações.', role: 'admin' },
-  'eventos-checkin': { title: 'Eventos de check-in', subtitle: 'Eventos para confirmação de presença (cultos, reuniões).', role: 'admin' },
-  checkin: { title: 'Check-in', subtitle: 'Registros de presença por ministério e data. Filtre por data e evento.', role: 'admin' },
-  'checkin-ministerio': { title: 'Check-ins do ministério', subtitle: 'Pessoas que confirmaram presença no seu ministério.', role: 'lider' },
-  perfil: { title: 'Meu perfil', subtitle: 'Revise e atualize seus dados de cadastro na Igreja Celeiro São Paulo.', role: 'voluntario' },
-  'checkin-hoje': { title: 'Check-in do dia', subtitle: 'Confirme sua presença no culto ou evento de hoje.', role: 'voluntario' },
-  'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico das suas confirmações de presença.', role: 'voluntario' },
+  resumo: { title: 'Resumo', subtitle: 'Visão geral e indicadores.', role: 'admin' },
+  voluntarios: { title: 'Voluntários', subtitle: 'Lista, filtros e envio de email.', role: 'admin' },
+  ministros: { title: 'Ministérios', subtitle: 'Crie ministérios e defina líderes.', role: 'admin' },
+  usuarios: { title: 'Usuários', subtitle: 'Perfis e permissões.', role: 'admin' },
+  'eventos-checkin': { title: 'Eventos check-in', subtitle: 'Datas de culto para confirmação de presença.', role: 'admin' },
+  checkin: { title: 'Check-in', subtitle: 'Registros por data e ministério.', role: 'admin' },
+  'checkin-ministerio': { title: 'Check-ins do ministério', subtitle: 'Quem confirmou no seu ministério.', role: 'lider' },
+  perfil: { title: 'Meu perfil', subtitle: 'Seus dados de cadastro.', role: 'voluntario' },
+  'checkin-hoje': { title: 'Check-in do dia', subtitle: 'Confirme presença no culto de hoje.', role: 'voluntario' },
+  'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico de presenças.', role: 'voluntario' },
 };
 
 function setView(view) {
-  if (view === 'emails') view = 'voluntarios';
+  if (view === 'emails') view = 'voluntarios'; // legado: links antigos
   const isVol = String(authRole || '').toLowerCase() === 'voluntario';
   const isLider = String(authRole || '').toLowerCase() === 'lider';
   const isAdmin = !isVol && !isLider;
@@ -383,6 +386,7 @@ function setView(view) {
   if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Celeiro SP';
   if (pageSubtitle) pageSubtitle.textContent = (meta && meta.subtitle) || '';
   if (searchBox) searchBox.style.display = isAdmin && view === 'voluntarios' ? 'flex' : 'none';
+  if (view === 'voluntarios') voluntariosPageOffset = 0;
   const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio'];
   viewsWithFetch.forEach(v => setViewLoading(v, v === view));
   if (view === 'eventos-checkin') fetchEventosCheckin();
@@ -499,12 +503,15 @@ async function fetchMinistros() {
 
 function renderMinistros() {
   const tbody = document.getElementById('ministrosBody');
+  const countEl = document.getElementById('ministrosCount');
+  if (countEl) countEl.textContent = `(${(ministrosList || []).length})`;
   if (!tbody) return;
   if (!ministrosList.length) {
     tbody.innerHTML = '<tr><td colspan="3">Nenhum ministério. Clique em "Novo ministério" para criar.</td></tr>';
     return;
   }
-  tbody.innerHTML = ministrosList.map(m => {
+  const list = ministrosList.slice(0, LIST_PAGE_SIZE);
+  tbody.innerHTML = list.map(m => {
     const liderNome = (m.lider && m.lider.nome) ? escapeHtml(m.lider.nome) : '—';
     return `<tr data-ministerio-id="${escapeAttr(m._id)}">
       <td>${escapeHtml(m.nome || '—')}</td>
@@ -516,6 +523,9 @@ function renderMinistros() {
       </td>
     </tr>`;
   }).join('');
+  if (ministrosList.length > LIST_PAGE_SIZE) {
+    tbody.innerHTML += `<tr><td colspan="3" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${ministrosList.length} ministérios.</td></tr>`;
+  }
   tbody.querySelectorAll('[data-assign-lider]').forEach(btn => {
     btn.addEventListener('click', () => openAssignLider(btn.getAttribute('data-assign-lider'), btn.getAttribute('data-ministerio-nome')));
   });
@@ -633,13 +643,16 @@ async function fetchUsers() {
 
 function renderUsers() {
   const tbody = document.getElementById('usuariosBody');
+  const countEl = document.getElementById('usuariosCount');
+  if (countEl) countEl.textContent = `(${(usersList || []).length})`;
   if (!tbody) return;
   if (!usersList.length) {
     tbody.innerHTML = '<tr><td colspan="5">Nenhum usuário.</td></tr>';
     return;
   }
   const roleLabel = r => ({ admin: 'Admin', voluntario: 'Voluntário', lider: 'Líder' }[r] || r);
-  tbody.innerHTML = usersList.map(u => {
+  const list = usersList.slice(0, LIST_PAGE_SIZE);
+  tbody.innerHTML = list.map(u => {
     const minNome = (u.ministerioId && u.ministerioId.nome) ? u.ministerioId.nome : (u.role === 'lider' ? '—' : '');
     return `<tr>
       <td>${escapeHtml(u.nome || '—')}</td>
@@ -649,6 +662,9 @@ function renderUsers() {
       <td><button type="button" class="btn btn-sm btn-primary" data-user-role="${escapeAttr(u._id)}" data-user-email="${escapeAttr(u.email)}">Alterar perfil</button> <button type="button" class="btn btn-sm btn-ghost" data-user-history="${escapeAttr(u._id)}">Histórico</button></td>
     </tr>`;
   }).join('');
+  if (usersList.length > LIST_PAGE_SIZE) {
+    tbody.innerHTML += `<tr><td colspan="5" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${usersList.length} usuários.</td></tr>`;
+  }
   tbody.querySelectorAll('[data-user-role]').forEach(btn => {
     btn.addEventListener('click', () => openModalUserRole(btn.getAttribute('data-user-role'), btn.getAttribute('data-user-email')));
   });
@@ -763,15 +779,19 @@ async function fetchCheckinsMinisterio() {
 }
 
 function renderCheckinsMinisterio() {
+  const total = (checkinsMinisterio || []).length;
   const totalEl = document.getElementById('checkinMinisterioTotal');
+  const countEl = document.getElementById('checkinMinisterioCount');
   const bodyEl = document.getElementById('checkinMinisterioBody');
-  if (totalEl) totalEl.textContent = checkinsMinisterio.length;
+  if (totalEl) totalEl.textContent = total;
+  if (countEl) countEl.textContent = `(${total})`;
   if (!bodyEl) return;
   if (!checkinsMinisterio.length) {
     bodyEl.innerHTML = '<tr><td colspan="4">Nenhum check-in no ministério para o filtro selecionado.</td></tr>';
     return;
   }
-  bodyEl.innerHTML = checkinsMinisterio.map(c => {
+  const list = checkinsMinisterio.slice(0, LIST_PAGE_SIZE);
+  bodyEl.innerHTML = list.map(c => {
     const email = (c.email || '').toLowerCase().trim();
     return `<tr>
       <td class="cell-with-avatar"><span class="cell-avatar">${avatarHtml(c.fotoUrl, c.nome)}</span><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(c.nome || '—')}</button></td>
@@ -780,6 +800,9 @@ function renderCheckinsMinisterio() {
       <td>${escapeHtml(c.timestamp || '—')}</td>
     </tr>`;
   }).join('');
+  if (checkinsMinisterio.length > LIST_PAGE_SIZE) {
+    bodyEl.innerHTML += `<tr><td colspan="4" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${checkinsMinisterio.length}.</td></tr>`;
+  }
   bodyEl.querySelectorAll('.link-voluntario').forEach(btn => {
     btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email'), { checkinsList: checkinsMinisterio }));
   });
@@ -793,11 +816,14 @@ async function fetchEventosCheckin() {
     const list = await r.json();
     if (currentView !== 'eventos-checkin') return;
     eventosCheckin = list || [];
+    const countEl = document.getElementById('eventosCheckinCount');
+    if (countEl) countEl.textContent = `(${eventosCheckin.length})`;
     if (eventosCheckinBody) {
       if (!eventosCheckin.length) {
         eventosCheckinBody.innerHTML = '<tr><td colspan="4">Nenhum evento. Clique em "Novo evento de check-in" para criar.</td></tr>';
       } else {
-        eventosCheckinBody.innerHTML = eventosCheckin.map(e => {
+        const displayList = eventosCheckin.slice(0, LIST_PAGE_SIZE);
+        eventosCheckinBody.innerHTML = displayList.map(e => {
           const d = new Date(e.data);
           const label = e.label || d.toLocaleDateString('pt-BR');
           const ativo = e.ativo !== false;
@@ -810,6 +836,9 @@ async function fetchEventosCheckin() {
             <td><button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-event-toggle="${escapeAttr(e._id || '')}">${btnLabel}</button></td>
           </tr>`;
         }).join('');
+        if (eventosCheckin.length > LIST_PAGE_SIZE) {
+          eventosCheckinBody.innerHTML += `<tr><td colspan="4" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${eventosCheckin.length} eventos.</td></tr>`;
+        }
         eventosCheckinBody.querySelectorAll('[data-event-toggle]').forEach(btn => {
           btn.addEventListener('click', () => toggleEventoAtivo(btn.getAttribute('data-event-toggle')));
         });
@@ -1163,12 +1192,22 @@ async function fetchMeusCheckins() {
     const data = await r.json();
     if (currentView !== 'meus-checkins') return;
     const list = data.checkins || [];
+    const countEl = document.getElementById('meusCheckinsCount');
+    if (countEl) countEl.textContent = `(${list.length})`;
     if (meusCheckinsBody) {
-      meusCheckinsBody.innerHTML = list.length ? list.map(c => {
-        const dataStr = c.timestamp ? new Date(c.timestampMs || c.timestamp).toLocaleDateString('pt-BR') : '—';
-        const horaStr = c.timestamp ? new Date(c.timestampMs || c.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—';
-        return `<tr><td>${dataStr}</td><td>${escapeHtml(c.ministerio || '—')}</td><td>${horaStr}</td></tr>`;
-      }).join('') : '<tr><td colspan="3">Nenhum check-in registrado.</td></tr>';
+      if (!list.length) {
+        meusCheckinsBody.innerHTML = '<tr><td colspan="3">Nenhum check-in registrado.</td></tr>';
+      } else {
+        const slice = list.slice(0, LIST_PAGE_SIZE);
+        meusCheckinsBody.innerHTML = slice.map(c => {
+          const dataStr = c.timestamp ? new Date(c.timestampMs || c.timestamp).toLocaleDateString('pt-BR') : '—';
+          const horaStr = c.timestamp ? new Date(c.timestampMs || c.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—';
+          return `<tr><td>${dataStr}</td><td>${escapeHtml(c.ministerio || '—')}</td><td>${horaStr}</td></tr>`;
+        }).join('');
+        if (list.length > LIST_PAGE_SIZE) {
+          meusCheckinsBody.innerHTML += `<tr><td colspan="3" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${list.length}.</td></tr>`;
+        }
+      }
     }
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
   finally { setViewLoading('meus-checkins', false); }
@@ -1227,6 +1266,7 @@ function updateKpis() {
   const voluntariosCountTop = document.getElementById('voluntariosCountTop');
   if (tableCount) tableCount.textContent = total;
   if (voluntariosCountTop) voluntariosCountTop.textContent = total;
+  updateVoluntariosRangeAndMore(total);
 }
 
 function renderCharts() {
@@ -1475,11 +1515,30 @@ function getFilteredVoluntarios() {
   });
 }
 
+function updateVoluntariosRangeAndMore(total) {
+  const rangeEl = document.getElementById('voluntariosRange');
+  const btnMore = document.getElementById('btnVerMaisVoluntarios');
+  if (!rangeEl) return;
+  const showing = Math.min(voluntariosPageOffset + LIST_PAGE_SIZE, total);
+  if (total <= LIST_PAGE_SIZE) {
+    rangeEl.textContent = '';
+    if (btnMore) btnMore.style.display = 'none';
+    return;
+  }
+  const from = voluntariosPageOffset + 1;
+  rangeEl.textContent = ` — exibindo ${from}–${showing} de ${total}`;
+  if (btnMore) {
+    btnMore.style.display = showing < total ? 'inline-block' : 'none';
+  }
+}
+
 function renderTable(list) {
   if (!voluntariosBody) return;
   voluntariosBody.innerHTML = '';
   const arr = Array.isArray(list) ? list : [];
-  arr.forEach(v => {
+  const total = arr.length;
+  const slice = arr.slice(voluntariosPageOffset, voluntariosPageOffset + LIST_PAGE_SIZE);
+  slice.forEach(v => {
     const tr = document.createElement('tr');
     const email = (v.email || '').toLowerCase();
     const checked = selectedEmails.has(email);
@@ -1507,6 +1566,7 @@ function renderTable(list) {
   });
   syncSelectAll();
   updateKpis();
+  updateVoluntariosRangeAndMore(total);
 }
 
 function escapeHtml(s) {
@@ -1624,7 +1684,8 @@ function closeModalPerfilVoluntario() {
 
 function syncSelectAll() {
   const filtered = getFilteredVoluntarios();
-  const emailsInPage = new Set(filtered.map(v => (v.email || '').toLowerCase()));
+  const page = filtered.slice(voluntariosPageOffset, voluntariosPageOffset + LIST_PAGE_SIZE);
+  const emailsInPage = new Set(page.map(v => (v.email || '').toLowerCase()));
   const allSelected = emailsInPage.size > 0 && [...emailsInPage].every(e => selectedEmails.has(e));
   const someSelected = [...emailsInPage].some(e => selectedEmails.has(e));
   if (selectAll) selectAll.checked = allSelected;
@@ -1641,7 +1702,8 @@ function updateSelectedCount() {
 
 function toggleSelectAll(checked) {
   const filtered = getFilteredVoluntarios();
-  filtered.forEach(v => {
+  const page = filtered.slice(voluntariosPageOffset, voluntariosPageOffset + LIST_PAGE_SIZE);
+  page.forEach(v => {
     const e = (v.email || '').toLowerCase();
     if (e) (checked ? selectedEmails.add(e) : selectedEmails.delete(e));
   });
@@ -1752,6 +1814,7 @@ function updateFilterUi() {
 
 function setFilter(key, value) {
   filters[key] = value || '';
+  voluntariosPageOffset = 0;
   const filtered = getFilteredVoluntarios();
   updateKpis();
   renderCharts();
@@ -1771,6 +1834,7 @@ function clearFilters() {
   filters.estado = '';
   filters.cidade = '';
   filters.comCheckin = '';
+  voluntariosPageOffset = 0;
   updateKpis();
   renderCharts();
   renderTable(getFilteredVoluntarios());
@@ -1864,7 +1928,9 @@ function renderCheckinChart() {
 function renderCheckinTable(list) {
   if (!checkinBody) return;
   checkinBody.innerHTML = '';
-  list.forEach(c => {
+  const total = list.length;
+  const slice = list.slice(0, LIST_PAGE_SIZE);
+  slice.forEach(c => {
     const tr = document.createElement('tr');
     const email = (c.email || '').toLowerCase();
     tr.innerHTML = `
@@ -1875,10 +1941,17 @@ function renderCheckinTable(list) {
     `;
     checkinBody.appendChild(tr);
   });
+  if (total > LIST_PAGE_SIZE) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="4" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${total} check-ins.</td>`;
+    checkinBody.appendChild(tr);
+  }
   checkinBody.querySelectorAll('.link-voluntario').forEach(btn => {
     btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email')));
   });
-  if (checkinCount) checkinCount.textContent = list.length;
+  if (checkinCount) checkinCount.textContent = total;
+  const rangeEl = document.getElementById('checkinRange');
+  if (rangeEl) rangeEl.textContent = total > LIST_PAGE_SIZE ? ` — exibindo 1–${LIST_PAGE_SIZE} de ${total}` : '';
 }
 
 function renderCheckins() {
@@ -2060,6 +2133,10 @@ filterEstado?.addEventListener('change', () => setFilter('estado', filterEstado.
 filterCidade?.addEventListener('change', () => setFilter('cidade', filterCidade.value));
 filterComCheckin?.addEventListener('change', () => setFilter('comCheckin', filterComCheckin.value));
 btnClearFilters?.addEventListener('click', clearFilters);
+document.getElementById('btnVerMaisVoluntarios')?.addEventListener('click', () => {
+  voluntariosPageOffset += LIST_PAGE_SIZE;
+  renderTable(getFilteredVoluntarios());
+});
 checkinMinisterio?.addEventListener('change', () => { checkinFilters.ministerio = checkinMinisterio?.value || ''; fetchCheckinsWithFilters(); });
 checkinSearch?.addEventListener('input', () => renderCheckins());
 btnClearCheckinFilters?.addEventListener('click', () => { if (checkinData) checkinData.value = ''; if (checkinEvento) checkinEvento.value = ''; if (checkinMinisterio) checkinMinisterio.value = ''; checkinFilters.ministerio = ''; fetchCheckinsWithFilters(); });
