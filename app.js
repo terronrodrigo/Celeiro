@@ -865,7 +865,7 @@ async function fetchEventosCheckin() {
             <td>${d.toLocaleDateString('pt-BR')}</td>
             <td>${escapeHtml(label)}</td>
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
-            <td><button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-event-toggle="${escapeAttr(e._id || '')}">${btnLabel}</button></td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-event-link="${escapeAttr(e._id || '')}" title="Copiar link de check-in (público)">Link</button> <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-event-toggle="${escapeAttr(e._id || '')}">${btnLabel}</button></td>
           </tr>`;
         }).join('');
         if (eventosCheckin.length > LIST_PAGE_SIZE) {
@@ -873,6 +873,13 @@ async function fetchEventosCheckin() {
         }
         eventosCheckinBody.querySelectorAll('[data-event-toggle]').forEach(btn => {
           btn.addEventListener('click', () => toggleEventoAtivo(btn.getAttribute('data-event-toggle')));
+        });
+        eventosCheckinBody.querySelectorAll('[data-event-link]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-event-link');
+            const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}?checkin=${encodeURIComponent(id)}`;
+            navigator.clipboard.writeText(url).then(() => alert('Link copiado! Compartilhe para as pessoas fazerem check-in (email + ministério).')).catch(() => prompt('Copie o link:', url));
+          });
         });
       }
     }
@@ -2636,7 +2643,98 @@ window.addEventListener('hashchange', () => {
   else hideCadastroPublico();
 });
 
+let checkinPublicEventoId = null;
+
+function showCheckinPublicOverlay() {
+  const overlay = document.getElementById('checkinPublicOverlay');
+  const auth = document.getElementById('authOverlay');
+  const content = document.getElementById('content');
+  if (overlay) overlay.style.display = 'flex';
+  if (auth) auth.style.display = 'none';
+  if (content) content.style.display = 'none';
+}
+
+function hideCheckinPublicOverlay() {
+  const overlay = document.getElementById('checkinPublicOverlay');
+  if (overlay) overlay.style.display = 'none';
+  checkinPublicEventoId = null;
+  updateAuthUi();
+  if (authToken && contentEl) contentEl.style.display = 'block';
+}
+
+async function loadCheckinPublic(eventoId) {
+  const errEl = document.getElementById('checkinPublicError');
+  const successEl = document.getElementById('checkinPublicSuccess');
+  const eventLabel = document.getElementById('checkinPublicEventLabel');
+  const select = document.getElementById('checkinPublicMinisterio');
+  if (errEl) errEl.textContent = '';
+  if (successEl) successEl.style.display = 'none';
+  if (eventLabel) eventLabel.textContent = 'Carregando...';
+  if (select) select.innerHTML = '<option value="">Selecione</option>';
+  try {
+    const r = await fetch(`${API_BASE}/api/checkin-public/${encodeURIComponent(eventoId)}`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (eventLabel) eventLabel.textContent = data.error || 'Evento não encontrado ou check-in encerrado.';
+      return;
+    }
+    checkinPublicEventoId = data.evento?._id || eventoId;
+    if (eventLabel) {
+      const d = data.evento?.data ? new Date(data.evento.data).toLocaleDateString('pt-BR') : '';
+      eventLabel.textContent = (data.evento?.label || d) ? `Evento: ${data.evento?.label || d}${d ? ` (${d})` : ''}` : '';
+    }
+    if (select && Array.isArray(data.ministerios)) {
+      select.innerHTML = '<option value="">Selecione o ministério</option>' + data.ministerios.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+    }
+  } catch (e) {
+    if (eventLabel) eventLabel.textContent = 'Erro ao carregar. Tente novamente.';
+  }
+}
+
+document.getElementById('checkinPublicForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('checkinPublicError');
+  const successEl = document.getElementById('checkinPublicSuccess');
+  const btn = document.getElementById('btnCheckinPublicSubmit');
+  if (errEl) errEl.textContent = '';
+  if (successEl) successEl.style.display = 'none';
+  const email = (document.getElementById('checkinPublicEmail')?.value || '').trim().toLowerCase();
+  const nome = (document.getElementById('checkinPublicNome')?.value || '').trim();
+  const ministerio = (document.getElementById('checkinPublicMinisterio')?.value || '').trim();
+  if (!email || !email.includes('@')) { if (errEl) errEl.textContent = 'Informe um email válido.'; return; }
+  if (!ministerio) { if (errEl) errEl.textContent = 'Selecione o ministério.'; return; }
+  if (!checkinPublicEventoId) { if (errEl) errEl.textContent = 'Sessão expirada. Abra o link novamente.'; return; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+  try {
+    const r = await fetch(`${API_BASE}/api/checkin-public`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventoId: checkinPublicEventoId, email, ministerio, nome: nome || undefined }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (errEl) errEl.textContent = data.error || 'Não foi possível registrar o check-in.';
+      return;
+    }
+    if (successEl) { successEl.textContent = data.message || 'Check-in realizado!'; successEl.style.display = 'block'; }
+    if (errEl) errEl.textContent = '';
+    document.getElementById('checkinPublicEmail').value = '';
+    document.getElementById('checkinPublicNome').value = '';
+    document.getElementById('checkinPublicMinisterio').value = '';
+  } catch (err) {
+    if (errEl) errEl.textContent = err.message || 'Erro de rede. Tente novamente.';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirmar check-in'; }
+  }
+});
+
 (() => {
+  const checkinParam = new URLSearchParams(window.location.search).get('checkin');
+  if (checkinParam) {
+    showCheckinPublicOverlay();
+    loadCheckinPublic(checkinParam);
+    return;
+  }
   if (window.location.hash === '#cadastro') {
     showCadastroPublico();
     return;

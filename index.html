@@ -407,6 +407,7 @@
                 <tbody id="eventosCheckinBody"></tbody>
               </table>
             </div>
+            <p class="form-hint" style="margin-top:8px">Use o botão "Link" para compartilhar: qualquer pessoa pode abrir o link, informar email e ministério e fazer o check-in (sem precisar de conta).</p>
           </div>
           <div id="modalNovoEvento" class="modal" aria-hidden="true">
             <div class="modal-backdrop"></div>
@@ -640,6 +641,34 @@
 
       </div>
     </main>
+  </div>
+
+  <!-- Check-in público por link (sem login) -->
+  <div id="checkinPublicOverlay" class="auth-overlay" style="display: none;">
+    <div class="auth-card checkin-public-card">
+      <div class="auth-header">
+        <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
+        <p class="auth-subtitle" id="checkinPublicSubtitle">Check-in de presença</p>
+      </div>
+      <form id="checkinPublicForm" class="auth-form">
+        <p class="form-hint" id="checkinPublicEventLabel" style="margin-bottom:12px"></p>
+        <div class="form-group">
+          <label for="checkinPublicEmail">Email</label>
+          <input type="email" id="checkinPublicEmail" placeholder="seu@email.com" required autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label for="checkinPublicNome">Nome (opcional)</label>
+          <input type="text" id="checkinPublicNome" placeholder="Seu nome">
+        </div>
+        <div class="form-group">
+          <label for="checkinPublicMinisterio">Ministério</label>
+          <select id="checkinPublicMinisterio"><option value="">Selecione</option></select>
+        </div>
+        <p id="checkinPublicError" class="auth-error"></p>
+        <p id="checkinPublicSuccess" class="auth-success" style="display: none;"></p>
+        <button type="submit" class="btn btn-primary" id="btnCheckinPublicSubmit">Confirmar check-in</button>
+      </form>
+    </div>
   </div>
 
   <!-- Cadastro público de voluntários (link compartilhável) -->

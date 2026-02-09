@@ -999,6 +999,63 @@ app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
   }
 });
 
+// Check-in público por link (sem login): dados do evento + lista de ministérios
+const MINISTERIOS_PADRAO_PUBLIC = ['Suporte Geral', 'Welcome / Recepção', 'Streaming / Ao Vivo', 'Produção', 'Kids / Min. Infantil', 'Intercessão', 'Parking / Estacionamento', 'Segurança', 'Outro'];
+app.get('/api/checkin-public/:eventoId', async (req, res) => {
+  try {
+    const mongoReady = mongoose.connection.readyState === 1;
+    if (!mongoReady) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    const evento = await EventoCheckin.findById(req.params.eventoId).lean();
+    if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+    if (evento.ativo !== true) return sendError(res, 404, 'Check-in não está aberto para este evento.');
+    const ministerios = await Ministerio.find({}).sort({ nome: 1 }).select('nome').lean();
+    const ministeriosList = ministerios.length > 0 ? ministerios.map(m => m.nome).filter(Boolean) : MINISTERIOS_PADRAO_PUBLIC;
+    res.json({
+      evento: { _id: evento._id, label: evento.label || new Date(evento.data).toLocaleDateString('pt-BR'), data: evento.data },
+      ministerios: ministeriosList,
+    });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao carregar dados.');
+  }
+});
+
+// Check-in público por link (sem login): envia email + ministério
+app.post('/api/checkin-public', async (req, res) => {
+  try {
+    const mongoReady = mongoose.connection.readyState === 1;
+    if (!mongoReady) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    const { eventoId, email, ministerio, nome } = req.body || {};
+    const em = (email || '').toString().trim().toLowerCase();
+    if (!em || !em.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
+    if (!eventoId) return sendError(res, 400, 'Evento é obrigatório.');
+    const evento = await EventoCheckin.findById(eventoId);
+    if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
+    const hojeStr = getHojeDateString();
+    const eventDateStr = evento.data.toISOString ? evento.data.toISOString().slice(0, 10) : '';
+    if (eventDateStr !== hojeStr) return sendError(res, 400, 'Só é possível fazer check-in no dia do evento.');
+    const dataCheckin = getDayRangeUTC(eventDateStr).start;
+    const existing = await Checkin.findOne({ eventoId, email: em, dataCheckin });
+    if (existing) return res.status(200).json({ message: 'Check-in já realizado.', checkin: existing });
+    const checkin = await Checkin.create({
+      email: em,
+      nome: (nome || '').toString().trim() || '',
+      ministerio: (ministerio || '').toString().trim() || '',
+      timestamp: new Date(),
+      timestampMs: Date.now(),
+      dataCheckin,
+      presente: true,
+      eventoId: evento._id,
+    });
+    try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim() }); } catch (_) {}
+    invalidateCache();
+    res.status(201).json({ message: 'Check-in realizado!', checkin });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao registrar check-in.');
+  }
+});
+
 // Perfil do voluntário/líder (dados no cadastro Voluntario)
 app.get('/api/me/perfil', requireAuth, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
