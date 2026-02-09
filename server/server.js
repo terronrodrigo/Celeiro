@@ -1056,10 +1056,11 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
 app.post('/api/send-email', requireAuth, requireAdmin, async (req, res) => {
   const { to, subject, html, text, voluntarios: voluntariosMap } = req.body;
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <onboarding@resend.dev>';
+  const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+  const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
 
   if (!apiKey) {
-    return res.status(500).json({ error: 'RESEND_API_KEY não configurada. Configure no .env do servidor.' });
+    return res.status(500).json({ error: 'RESEND_API_KEY não configurada. Em produção, adicione a variável RESEND_API_KEY no painel da sua cloud (ex.: Railway → Variables).' });
   }
   if (!Array.isArray(to) || !to.length) {
     return res.status(400).json({ error: 'Envie um array "to" com pelo menos um email.' });
@@ -1087,6 +1088,7 @@ app.post('/api/send-email', requireAuth, requireAdmin, async (req, res) => {
       const { data, error } = await resend.emails.send({
         from,
         to: email,
+        reply_to: replyTo,
         subject,
         html: htmlFinal,
         text: !html && text ? personalize(text, email) : undefined,
@@ -1157,13 +1159,15 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const baseUrl = (process.env.APP_URL || '').trim() || `${req.protocol || 'https'}://${req.get('host') || req.headers.host || ''}`;
     const resetLink = `${baseUrl.replace(/\/$/, '')}?reset=${resetToken}`;
     const apiKey = process.env.RESEND_API_KEY;
-    const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <onboarding@resend.dev>';
+    const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+    const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
     if (apiKey) {
       const resend = new Resend(apiKey);
       const nome = (user.nome || '').trim() || 'usuário';
       await resend.emails.send({
         from,
         to: email,
+        reply_to: replyTo,
         subject: 'Redefinição de senha - Celeiro SP',
         html: `<p>Olá, ${nome}!</p><p>Você solicitou a redefinição de senha. Clique no link abaixo para definir uma nova senha (válido por 1 hora):</p><p><a href="${resetLink}">Redefinir senha</a></p><p>Se você não solicitou isso, ignore este email.</p><p>— Celeiro SP</p>`,
       });
