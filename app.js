@@ -161,8 +161,10 @@ function updateAuthUi() {
   }
   if (btnLogout) btnLogout.disabled = !isLogged;
   const defaultName = isVoluntario ? 'Voluntário' : (isLider ? 'Líder' : 'Admin');
-  if (authUserName) authUserName.textContent = authUser || defaultName;
-  if (authUserInitial) authUserInitial.textContent = (authUser || defaultName).slice(0, 1).toUpperCase();
+  const displayName = (authUser || defaultName).trim();
+  const displayNameFormatted = displayName ? displayName.replace(/\b\w/g, (c) => c.toUpperCase()) : defaultName;
+  if (authUserName) authUserName.textContent = displayNameFormatted;
+  if (authUserInitial) authUserInitial.textContent = (displayNameFormatted || defaultName).slice(0, 1).toUpperCase();
   const roleEl = document.getElementById('authUserRole');
   if (roleEl) roleEl.textContent = isVoluntario ? 'Voluntário' : (isLider ? (authMinisterioNome ? `Líder · ${authMinisterioNome}` : 'Líder') : 'Admin');
   if (navAdmin) navAdmin.style.display = isLogged && isAdmin ? 'flex' : 'none';
@@ -170,7 +172,7 @@ function updateAuthUi() {
   if (navVoluntario) navVoluntario.style.display = isLogged && isVoluntario ? 'flex' : 'none';
   if (searchBox) searchBox.style.display = isLogged && isAdmin ? 'flex' : 'none';
   const btnRefresh = document.getElementById('btnRefresh');
-  const filtersSection = document.querySelector('.view[data-view="resumo voluntarios emails"]');
+  const filtersSection = document.querySelector('.view[data-view="resumo voluntarios"]');
   if (btnRefresh && filtersSection) btnRefresh.style.display = isLogged && isAdmin ? '' : 'none';
 }
 
@@ -289,7 +291,7 @@ function showError(msg) {
   }
 }
 
-const ADMIN_ONLY_VIEWS = ['resumo', 'voluntarios', 'emails', 'ministros', 'usuarios', 'eventos-checkin', 'checkin'];
+const ADMIN_ONLY_VIEWS = ['resumo', 'voluntarios', 'ministros', 'usuarios', 'eventos-checkin', 'checkin'];
 const LIDER_VIEWS = ['checkin-ministerio', 'perfil', 'meus-checkins'];
 
 let currentView = '';
@@ -305,8 +307,7 @@ function setViewLoading(viewName, loading) {
 
 const VIEW_META = {
   resumo: { title: 'Resumo', subtitle: 'Gerenciador de voluntários da Igreja Celeiro São Paulo — visão geral e disparo de emails.', role: 'admin' },
-  voluntarios: { title: 'Voluntários', subtitle: 'Lista de voluntários da Igreja Celeiro São Paulo. Selecione para envio de emails.', role: 'admin' },
-  emails: { title: 'Enviar email', subtitle: 'Selecione voluntários e envie emails pelo disparador da plataforma.', role: 'admin' },
+  voluntarios: { title: 'Voluntários e envio de email', subtitle: 'Lista de voluntários da Igreja Celeiro São Paulo. Filtre por nome/email e envie emails.', role: 'admin' },
   ministros: { title: 'Ministérios', subtitle: 'Ministérios da Igreja Celeiro São Paulo. Crie e defina líderes.', role: 'admin' },
   usuarios: { title: 'Usuários', subtitle: 'Perfis e permissões (voluntário, líder, admin). Histórico de alterações.', role: 'admin' },
   'eventos-checkin': { title: 'Eventos de check-in', subtitle: 'Eventos para confirmação de presença (cultos, reuniões).', role: 'admin' },
@@ -318,6 +319,7 @@ const VIEW_META = {
 };
 
 function setView(view) {
+  if (view === 'emails') view = 'voluntarios';
   const isVol = String(authRole || '').toLowerCase() === 'voluntario';
   const isLider = String(authRole || '').toLowerCase() === 'lider';
   const isAdmin = !isVol && !isLider;
@@ -344,7 +346,7 @@ function setView(view) {
   });
   if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Celeiro SP';
   if (pageSubtitle) pageSubtitle.textContent = (meta && meta.subtitle) || '';
-  if (searchBox) searchBox.style.display = isAdmin && view !== 'checkin' && view !== 'eventos-checkin' && view !== 'ministros' && view !== 'usuarios' ? 'flex' : 'none';
+  if (searchBox) searchBox.style.display = isAdmin && view === 'voluntarios' ? 'flex' : 'none';
   const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio'];
   viewsWithFetch.forEach(v => setViewLoading(v, v === view));
   if (view === 'eventos-checkin') fetchEventosCheckin();

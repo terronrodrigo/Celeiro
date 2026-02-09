@@ -511,15 +511,26 @@ app.post('/api/login', async (req, res) => {
 
 app.get('/api/me', requireAuth, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-  const payload = { user: req.user, role: req.userRole, email: req.userEmail };
+  let displayName = req.user;
+  let fotoUrl = null;
+  try {
+    if (req.userId) {
+      const user = await User.findById(req.userId).select('nome fotoUrl').lean();
+      if (user && user.nome) displayName = user.nome;
+      if (user && user.fotoUrl) fotoUrl = user.fotoUrl;
+    }
+    const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email').lean())?.email);
+    if (email) {
+      const vol = await Voluntario.findOne({ email: email.toLowerCase() }).select('nome').lean();
+      if (vol && vol.nome && String(vol.nome).trim()) displayName = vol.nome.trim();
+    }
+  } catch (_) {}
+  const payload = { user: displayName, role: req.userRole, email: req.userEmail };
+  if (fotoUrl) payload.fotoUrl = fotoUrl;
   if (req.userRole === 'lider' && req.userMinisterioId) {
     payload.ministerioId = req.userMinisterioId;
     payload.ministerioNome = req.userMinisterioNome;
   }
-  try {
-    const user = await User.findById(req.userId).select('fotoUrl').lean();
-    if (user && user.fotoUrl) payload.fotoUrl = user.fotoUrl;
-  } catch (_) {}
   res.json(payload);
 });
 
