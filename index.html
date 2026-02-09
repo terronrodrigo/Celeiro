@@ -126,9 +126,12 @@
           <section class="filters-row">
             <div class="filters-card">
               <div class="filters-left">
-                <div class="form-group compact filter-areas-wrap">
-                  <label class="block-label">Área (pode escolher várias)</label>
-                  <div id="filterAreaCheckboxes" class="filter-area-checkboxes"></div>
+                <div class="form-group compact">
+                  <label for="filterArea">Área</label>
+                  <select id="filterArea" multiple size="4" title="Segure Ctrl/Cmd para escolher várias">
+                    <option value="" disabled>Carregando…</option>
+                  </select>
+                  <p class="form-hint" style="margin-top:4px">Segure Ctrl (ou Cmd no Mac) para selecionar várias áreas.</p>
                 </div>
                 <div class="form-group compact">
                   <label for="filterDisponibilidade">Disponibilidade</label>
@@ -953,7 +956,7 @@
           <label for="emailBodyBase">Rascunho (base do email)</label>
           <textarea id="emailBodyBase" rows="6" placeholder="Digite aqui o rascunho do email. Depois clique em Revisar com IA para melhorar o texto (links em botões, títulos em negrito, tom profissional)."></textarea>
           <button type="button" class="btn btn-ghost btn-sm" id="btnReviewLLM" style="margin-top:6px">✨ Revisar com IA</button>
-          <p id="emailReviewError" class="auth-error" style="margin-top:6px;display:none"></p>
+          <p id="emailReviewError" class="auth-error" role="alert" style="margin-top:6px;min-height:1.5em"></p>
         </div>
         <div class="form-group">
           <label>Mensagem para envio (edite abaixo)</label>

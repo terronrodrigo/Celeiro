@@ -111,7 +111,7 @@ const btnLogin = document.getElementById('btnLogin');
 const btnLogout = document.getElementById('btnLogoutSidebar');
 const authUserName = document.getElementById('authUserName');
 const authUserInitial = document.getElementById('authUserInitial');
-const filterAreaCheckboxes = document.getElementById('filterAreaCheckboxes');
+const filterArea = document.getElementById('filterArea');
 const filterDisp = document.getElementById('filterDisponibilidade');
 const filterEstado = document.getElementById('filterEstado');
 const filterCidade = document.getElementById('filterCidade');
@@ -1911,12 +1911,37 @@ function updateSelectedCount() {
   if (btnOpenSend) btnOpenSend.disabled = n === 0;
 }
 
-function toggleSelectAll(checked) {
-  const filtered = getFilteredVoluntarios();
-  filtered.forEach(v => {
-    const e = (v.email || '').toLowerCase().trim();
-    if (e) (checked ? selectedEmails.add(e) : selectedEmails.delete(e));
-  });
+async function toggleSelectAll(checked) {
+  if (checked) {
+    const params = new URLSearchParams();
+    const q = (searchInput?.value || '').trim();
+    if (q) params.set('q', q);
+    if (filters.areas?.length) params.set('areas', filters.areas.join(','));
+    if (filters.disponibilidade) params.set('disponibilidade', filters.disponibilidade);
+    if (filters.estado) params.set('estado', filters.estado);
+    if (filters.cidade) params.set('cidade', filters.cidade);
+    if (filters.comCheckin) params.set('comCheckin', filters.comCheckin);
+    try {
+      const r = await authFetch(`${API_BASE}/api/voluntarios/emails?${params.toString()}`);
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && Array.isArray(data.emails)) {
+        selectedEmails.clear();
+        data.emails.forEach(e => selectedEmails.add(e));
+      } else {
+        const filtered = getFilteredVoluntarios();
+        filtered.forEach(v => { const e = (v.email || '').toLowerCase().trim(); if (e) selectedEmails.add(e); });
+      }
+    } catch (_) {
+      const filtered = getFilteredVoluntarios();
+      filtered.forEach(v => { const e = (v.email || '').toLowerCase().trim(); if (e) selectedEmails.add(e); });
+    }
+  } else {
+    const filtered = getFilteredVoluntarios();
+    filtered.forEach(v => {
+      const e = (v.email || '').toLowerCase().trim();
+      if (e) selectedEmails.delete(e);
+    });
+  }
   renderTable(getFilteredVoluntarios());
   updateSelectedCount();
   syncSelectAll();
@@ -1984,31 +2009,17 @@ function updateFilters() {
     return (a || '').localeCompare(b || '');
   });
   const cidades = countByField(vol, 'cidade').map(([label]) => label).sort((a, b) => (a || '').localeCompare(b || ''));
-  if (filterAreaCheckboxes) {
+  if (filterArea) {
     const selectedSet = new Set(filters.areas || []);
-    filterAreaCheckboxes.innerHTML = areas.map(area => {
-      const checked = selectedSet.has(area) ? ' checked' : '';
-      return `<label class="checkbox-label filter-area-chip"><input type="checkbox" data-filter-area="${escapeAttr(area)}"${checked}> ${escapeHtml(area)}</label>`;
-    }).join('');
-    filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => {
-      cb.addEventListener('change', () => applyAreaFilter());
-    });
+    filterArea.innerHTML = areas.length ? areas.map(area => {
+      const sel = selectedSet.has(area) ? ' selected' : '';
+      return `<option value="${escapeAttr(area)}"${sel}>${escapeHtml(area)}</option>`;
+    }).join('') : '<option value="">Nenhuma área</option>';
+    filterArea.size = Math.min(8, Math.max(4, areas.length || 1));
   }
   populateSelect(filterDisp, disp, 'Todas as disponibilidades');
   populateSelect(filterEstado, estados, 'Todos os estados');
   populateSelect(filterCidade, cidades, 'Todas as cidades');
-  updateFilterUi();
-}
-
-function applyAreaFilter() {
-  if (!filterAreaCheckboxes) return;
-  filters.areas = Array.from(filterAreaCheckboxes.querySelectorAll('input[data-filter-area]:checked')).map(cb => cb.getAttribute('data-filter-area')).filter(Boolean);
-  voluntariosPageOffset = 0;
-  updateKpis();
-  renderCharts();
-  renderTable(getFilteredVoluntarios());
-  updateSelectedCount();
-  syncSelectAll();
   updateFilterUi();
 }
 
@@ -2017,11 +2028,9 @@ function updateFilterUi() {
   if (filterEstado) filterEstado.value = filters.estado || '';
   if (filterCidade) filterCidade.value = filters.cidade || '';
   if (filterComCheckin) filterComCheckin.value = filters.comCheckin || '';
-  if (filterAreaCheckboxes) {
+  if (filterArea && filterArea.options.length) {
     const selectedSet = new Set(filters.areas || []);
-    filterAreaCheckboxes.querySelectorAll('input[data-filter-area]').forEach(cb => {
-      cb.checked = selectedSet.has(cb.getAttribute('data-filter-area'));
-    });
+    Array.from(filterArea.options).forEach(opt => { opt.selected = selectedSet.has(opt.value); });
   }
   if (!activeFilters) return;
   const comCheckinLabel = { com: 'Com check-in', sem: 'Sem check-in', 'so-checkin': 'Só check-in (sem cadastro)' }[filters.comCheckin] || '';
@@ -2046,6 +2055,7 @@ function updateFilterUi() {
     btn.addEventListener('click', () => {
       if (key === 'areas') {
         filters.areas = [];
+        if (filterArea) Array.from(filterArea.options).forEach(opt => { opt.selected = false; });
         voluntariosPageOffset = 0;
         updateKpis();
         renderCharts();
@@ -2095,7 +2105,7 @@ function clearFilters() {
   filters.cidade = '';
   filters.comCheckin = '';
   voluntariosPageOffset = 0;
-  if (filterAreaCheckboxes) filterAreaCheckboxes.querySelectorAll('input[data-filter-area]').forEach(cb => { cb.checked = false; });
+  if (filterArea) Array.from(filterArea.options).forEach(opt => { opt.selected = false; });
   updateKpis();
   renderCharts();
   renderTable(getFilteredVoluntarios());
@@ -2250,18 +2260,30 @@ function closeModal() {
 }
 
 async function sendEmails() {
-  const subject = (emailSubject?.value || '').trim();
-  const editorHtml = (emailBodyEditor?.innerHTML || '').trim();
-  const baseText = (emailBodyBase?.value || '').trim();
-  const body = editorHtml || (baseText ? baseText.replace(/\n/g, '<br>') : '');
-  if (!subject || !body) {
-    alert('Preencha assunto e a mensagem (rascunho ou use Revisar com IA e preencha o campo de mensagem).');
+  const subject = (emailSubject?.value ?? '').toString().trim();
+  const baseText = (emailBodyBase?.value ?? '').toString().trim();
+  const editorRaw = (emailBodyEditor?.innerHTML ?? '').toString().trim();
+  const editorText = (emailBodyEditor?.innerText ?? emailBodyEditor?.textContent ?? '').toString().trim();
+  const hasSubject = subject.length > 0;
+  const hasBase = baseText.length > 0;
+  const hasEditorContent = editorText.length > 0;
+  const hasMessage = hasBase || hasEditorContent;
+
+  if (!hasSubject) {
+    alert('Preencha o assunto.');
     return;
   }
+  if (!hasMessage) {
+    alert('Preencha a mensagem: use o campo "Rascunho" ou o campo "Mensagem para envio".');
+    return;
+  }
+
   const to = [...selectedEmails];
   btnSendEmail.disabled = true;
   btnSendEmail.textContent = 'Enviando...';
   sendResult.style.display = 'none';
+
+  const html = hasEditorContent && editorRaw ? editorRaw : `<p>${baseText.replace(/\n/g, '<br>')}</p>`;
 
   try {
     const volList = Array.isArray(voluntarios) ? voluntarios : [];
@@ -2271,7 +2293,6 @@ async function sendEmails() {
       const v = voluntariosByEmail.get(email);
       if (v?.nome) voluntariosMap[email] = v.nome;
     });
-    const html = editorHtml ? editorHtml : `<p>${baseText.replace(/\n/g, '<br>')}</p>`;
     const r = await authFetch(`${API_BASE}/api/send-email`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2409,10 +2430,10 @@ btnSendEmail?.addEventListener('click', sendEmails);
 btnReviewLLM?.addEventListener('click', async () => {
   const text = (emailBodyBase?.value || '').trim() || (emailBodyEditor?.innerText || emailBodyEditor?.textContent || '').trim();
   if (!text) {
-    if (emailReviewError) { emailReviewError.textContent = 'Digite o rascunho do email no campo acima.'; emailReviewError.style.display = 'block'; }
+    if (emailReviewError) { emailReviewError.textContent = 'Digite o rascunho do email no campo acima.'; emailReviewError.style.visibility = 'visible'; }
     return;
   }
-  if (emailReviewError) { emailReviewError.style.display = 'none'; emailReviewError.textContent = ''; }
+  if (emailReviewError) { emailReviewError.textContent = ''; emailReviewError.style.visibility = 'hidden'; }
   btnReviewLLM.disabled = true;
   btnReviewLLM.textContent = 'Revisando...';
   try {
@@ -2421,17 +2442,18 @@ btnReviewLLM?.addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     });
-    const data = await r.json().catch(() => ({}));
+    let data = {};
+    try { data = await r.json(); } catch (_) { data = { error: 'Resposta inválida do servidor.' }; }
     if (!r.ok) {
       const msg = data.error || `Erro ${r.status}. Verifique GROK_API_KEY nas variáveis da cloud.`;
-      if (emailReviewError) { emailReviewError.textContent = msg; emailReviewError.style.display = 'block'; }
+      if (emailReviewError) { emailReviewError.textContent = msg; emailReviewError.style.visibility = 'visible'; }
       return;
     }
     if (emailBodyEditor && data.html) emailBodyEditor.innerHTML = data.html;
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
     const msg = e.message || 'Erro de rede. Tente novamente.';
-    if (emailReviewError) { emailReviewError.textContent = msg; emailReviewError.style.display = 'block'; }
+    if (emailReviewError) { emailReviewError.textContent = msg; emailReviewError.style.visibility = 'visible'; }
   } finally {
     btnReviewLLM.disabled = false;
     btnReviewLLM.textContent = '✨ Revisar com IA';
@@ -2443,6 +2465,16 @@ filterDisp?.addEventListener('change', () => setFilter('disponibilidade', filter
 filterEstado?.addEventListener('change', () => setFilter('estado', filterEstado.value));
 filterCidade?.addEventListener('change', () => setFilter('cidade', filterCidade.value));
 filterComCheckin?.addEventListener('change', () => setFilter('comCheckin', filterComCheckin.value));
+filterArea?.addEventListener('change', () => {
+  filters.areas = Array.from(filterArea.selectedOptions).map(opt => opt.value).filter(Boolean);
+  voluntariosPageOffset = 0;
+  updateKpis();
+  renderCharts();
+  renderTable(getFilteredVoluntarios());
+  updateSelectedCount();
+  syncSelectAll();
+  updateFilterUi();
+});
 document.getElementById('usuariosSearch')?.addEventListener('input', () => { if (currentView === 'usuarios') fetchUsers(); });
 document.getElementById('usuariosSearch')?.addEventListener('change', () => { if (currentView === 'usuarios') fetchUsers(); });
 document.getElementById('usuariosFilterAtivo')?.addEventListener('change', () => { if (currentView === 'usuarios') fetchUsers(); });

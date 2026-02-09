@@ -738,6 +738,61 @@ app.get('/api/voluntarios', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+// Lista só os emails (para "selecionar todos" no front, com os mesmos filtros)
+app.get('/api/voluntarios/emails', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    let list = [];
+    if (isCacheValid('voluntarios') && cache.voluntarios && Array.isArray(cache.voluntarios.voluntarios)) {
+      list = cache.voluntarios.voluntarios;
+    } else {
+      const raw = await Voluntario.find({ ativo: true }).lean();
+      list = raw.map(v => ({
+        ...v,
+        areas: Array.isArray(v.areas) ? v.areas.join(', ') : (v.areas || ''),
+        disponibilidade: Array.isArray(v.disponibilidade) ? v.disponibilidade.join(', ') : (v.disponibilidade || ''),
+      }));
+    }
+    const { areas: areasParam, disponibilidade, estado, cidade, comCheckin, q } = req.query || {};
+    const areasFilter = areasParam ? (typeof areasParam === 'string' ? areasParam.split(',').map(s => s.trim()).filter(Boolean) : []) : [];
+    const qLower = (q && typeof q === 'string') ? q.trim().toLowerCase() : '';
+    let checkinEmails = new Set();
+    if (comCheckin) {
+      checkinEmails = new Set(await Checkin.distinct('email').then(arr => (arr || []).map(e => (e || '').toLowerCase().trim()).filter(Boolean)));
+    }
+    const filtered = list.filter(v => {
+      if (qLower) {
+        const nome = (v.nome || '').toLowerCase();
+        const email = (v.email || '').toLowerCase();
+        const cidadeStr = (v.cidade || '').toLowerCase();
+        const areasStr = (v.areas || '').toLowerCase();
+        if (!nome.includes(qLower) && !email.includes(qLower) && !cidadeStr.includes(qLower) && !areasStr.includes(qLower)) return false;
+      }
+      if (areasFilter.length > 0) {
+        const volAreas = (v.areas || '').split(',').map(a => a.trim()).filter(Boolean);
+        if (!areasFilter.some(fa => volAreas.includes(fa))) return false;
+      }
+      if (disponibilidade) {
+        const disp = (v.disponibilidade || '').split(',').map(d => d.trim());
+        if (!disp.includes(disponibilidade)) return false;
+      }
+      if (estado && String(v.estado || '').trim() !== estado) return false;
+      if (cidade && String(v.cidade || '').trim() !== cidade) return false;
+      if (comCheckin) {
+        const em = (v.email || '').toLowerCase().trim();
+        const tem = checkinEmails.has(em);
+        if (comCheckin === 'com' && !tem) return false;
+        if (comCheckin === 'sem' && tem) return false;
+      }
+      return true;
+    });
+    const emails = [...new Set(filtered.map(v => (v.email || '').toLowerCase().trim()).filter(Boolean))];
+    res.json({ emails });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao listar emails');
+  }
+});
+
 app.get('/api/checkins', requireAuth, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
