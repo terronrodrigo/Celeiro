@@ -57,6 +57,8 @@ let authRole = 'admin';
 let authEmail = null;
 let authMinisterioId = null;
 let authMinisterioNome = null;
+let authMinisterioIds = [];
+let authMinisterioNomes = [];
 let authFotoUrl = null;
 let eventosCheckin = [];
 let eventoSelecionadoHoje = null;
@@ -185,8 +187,9 @@ const setupLinkWrap = document.getElementById('setupLinkWrap');
 function updateAuthUi() {
   const isLogged = Boolean(authToken);
   const isVoluntario = String(authRole || '').toLowerCase() === 'voluntario';
-  const isLider = String(authRole || '').toLowerCase() === 'lider';
-  const isAdmin = !isVoluntario && !isLider;
+  const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
+  const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
+  const isAdmin = authRole === 'admin';
   if (authOverlay) authOverlay.style.display = isLogged ? 'none' : 'flex';
   if (!isLogged) {
     if (contentEl) contentEl.style.display = 'none';
@@ -202,10 +205,13 @@ function updateAuthUi() {
   if (authUserName) authUserName.textContent = displayNameFormatted;
   if (authUserInitial) authUserInitial.textContent = (displayNameFormatted || defaultName).slice(0, 1).toUpperCase();
   const roleEl = document.getElementById('authUserRole');
-  if (roleEl) roleEl.textContent = isVoluntario ? 'Voluntário' : (isLider ? (authMinisterioNome ? `Líder · ${authMinisterioNome}` : 'Líder') : 'Admin');
+  const liderLabel = authMinisterioNomes?.length ? authMinisterioNomes.join(', ') : (authMinisterioNome || '');
+  if (roleEl) roleEl.textContent = isVoluntario ? 'Voluntário' : (isLider ? (liderLabel ? `Líder · ${liderLabel}` : 'Líder') : 'Admin');
   if (navAdmin) navAdmin.style.display = isLogged && isAdmin ? 'flex' : 'none';
-  if (navLider) navLider.style.display = isLogged && isLider ? 'flex' : 'none';
+  if (navLider) navLider.style.display = isLogged && isLider && !isAdmin ? 'flex' : 'none';
   if (navVoluntario) navVoluntario.style.display = isLogged && isVoluntario ? 'flex' : 'none';
+  const navAdminCheckinMin = document.getElementById('navAdminCheckinMinisterio');
+  if (navAdminCheckinMin) navAdminCheckinMin.style.display = isLogged && isAdmin && hasMinisterios ? '' : 'none';
   if (searchBox) searchBox.style.display = isLogged && isAdmin ? 'flex' : 'none';
   const btnRefresh = document.getElementById('btnRefresh');
   const filtersSection = document.querySelector('.view[data-view="resumo voluntarios"]');
@@ -243,9 +249,11 @@ function setAuthSession(data) {
   authEmail = (user && user.email) ? user.email : (data?.email != null ? data.email : null);
   authMinisterioId = (user && user.ministerioId) ? user.ministerioId : (data?.ministerioId != null ? data.ministerioId : null);
   authMinisterioNome = (user && user.ministerioNome) ? user.ministerioNome : (data?.ministerioNome != null ? data.ministerioNome : null);
+  authMinisterioIds = Array.isArray(user?.ministerioIds) ? user.ministerioIds : (Array.isArray(data?.ministerioIds) ? data.ministerioIds : []);
+  authMinisterioNomes = Array.isArray(user?.ministerioNomes) ? user.ministerioNomes : (Array.isArray(data?.ministerioNomes) ? data.ministerioNomes : []);
   authFotoUrl = (user && user.fotoUrl) ? user.fotoUrl : (data?.fotoUrl != null ? data.fotoUrl : null);
   if (authToken) {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: authToken, user: authUser, role: authRole, email: authEmail, ministerioId: authMinisterioId, ministerioNome: authMinisterioNome, fotoUrl: authFotoUrl }));
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: authToken, user: authUser, role: authRole, email: authEmail, ministerioId: authMinisterioId, ministerioNome: authMinisterioNome, ministerioIds: authMinisterioIds, ministerioNomes: authMinisterioNomes, fotoUrl: authFotoUrl }));
   }
   updateAuthUi();
 }
@@ -257,6 +265,8 @@ function clearAuthSession() {
   authEmail = null;
   authMinisterioId = null;
   authMinisterioNome = null;
+  authMinisterioIds = [];
+  authMinisterioNomes = [];
   authFotoUrl = null;
   localStorage.removeItem(AUTH_STORAGE_KEY);
   clearUserContent();
@@ -290,6 +300,8 @@ async function verifyAuth() {
     authEmail = data.email || authEmail;
     authMinisterioId = data.ministerioId != null ? data.ministerioId : authMinisterioId;
     authMinisterioNome = data.ministerioNome != null ? data.ministerioNome : authMinisterioNome;
+    authMinisterioIds = Array.isArray(data.ministerioIds) ? data.ministerioIds : authMinisterioIds;
+    authMinisterioNomes = Array.isArray(data.ministerioNomes) ? data.ministerioNomes : authMinisterioNomes;
     authFotoUrl = data.fotoUrl != null ? data.fotoUrl : authFotoUrl;
     const stored = localStorage.getItem(AUTH_STORAGE_KEY);
     if (stored && authToken) {
@@ -300,6 +312,8 @@ async function verifyAuth() {
         parsed.email = authEmail;
         parsed.ministerioId = authMinisterioId;
         parsed.ministerioNome = authMinisterioNome;
+        parsed.ministerioIds = authMinisterioIds;
+        parsed.ministerioNomes = authMinisterioNomes;
         parsed.fotoUrl = authFotoUrl;
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
       } catch (_) {}
@@ -360,10 +374,11 @@ const VIEW_META = {
 function setView(view) {
   if (view === 'emails') view = 'voluntarios'; // legado: links antigos
   const isVol = String(authRole || '').toLowerCase() === 'voluntario';
-  const isLider = String(authRole || '').toLowerCase() === 'lider';
-  const isAdmin = !isVol && !isLider;
+  const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
+  const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
+  const isAdmin = authRole === 'admin';
   if (isVol && ADMIN_ONLY_VIEWS.includes(view)) view = 'perfil';
-  if (isLider && !LIDER_VIEWS.includes(view)) view = 'checkin-ministerio';
+  if (isLider && !isAdmin && !LIDER_VIEWS.includes(view)) view = 'checkin-ministerio';
   currentView = view;
   const meta = VIEW_META[view];
   const role = meta ? meta.role : 'admin';
@@ -512,12 +527,13 @@ function renderMinistros() {
   }
   const list = ministrosList.slice(0, LIST_PAGE_SIZE);
   tbody.innerHTML = list.map(m => {
-    const liderNome = (m.lider && m.lider.nome) ? escapeHtml(m.lider.nome) : '—';
+    const lideres = m.lideres || [];
+    const liderNomes = lideres.length ? lideres.map(l => escapeHtml(l.nome || l.email || '—')).join(', ') : '—';
     return `<tr data-ministerio-id="${escapeAttr(m._id)}">
       <td>${escapeHtml(m.nome || '—')}</td>
-      <td>${liderNome}</td>
+      <td>${liderNomes}</td>
       <td>
-        <button type="button" class="btn btn-sm btn-primary" data-assign-lider="${escapeAttr(m._id)}" data-ministerio-nome="${escapeAttr(m.nome || '')}">Definir líder</button>
+        <button type="button" class="btn btn-sm btn-primary" data-assign-lider="${escapeAttr(m._id)}" data-ministerio-nome="${escapeAttr(m.nome || '')}">Definir líderes</button>
         <button type="button" class="btn btn-sm btn-ghost" data-edit-ministerio="${escapeAttr(m._id)}" data-edit-nome="${escapeAttr(m.nome || '')}">Editar</button>
         <button type="button" class="btn btn-sm btn-ghost" data-delete-ministerio="${escapeAttr(m._id)}" data-delete-nome="${escapeAttr(m.nome || '')}">Excluir</button>
       </td>
@@ -561,11 +577,15 @@ async function openAssignLider(ministerioId, ministerioNome) {
       if (r.ok) usersList = await r.json();
     } catch (_) {}
   }
-  const sel = document.getElementById('assignLiderSelect');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">Selecione um usuário</option>' + (usersList || []).map(u => {
+  const ministerio = (ministrosList || []).find(m => String(m._id) === String(ministerioId));
+  const liderIds = new Set((ministerio?.lideres || []).map(l => String(l._id)));
+  const container = document.getElementById('assignLiderCheckboxes');
+  if (!container) return;
+  container.innerHTML = (usersList || []).map(u => {
+    const id = u._id;
     const label = `${u.nome || u.email} (${u.role || 'voluntario'})`;
-    return `<option value="${escapeAttr(u._id)}">${escapeHtml(label)}</option>`;
+    const checked = liderIds.has(String(id)) ? ' checked' : '';
+    return `<label class="checkbox-label" style="display:block; margin-bottom:6px;"><input type="checkbox" data-user-id="${escapeAttr(id)}"${checked}> ${escapeHtml(label)}</label>`;
   }).join('');
   document.getElementById('modalAssignLider')?.classList.add('open');
 }
@@ -611,22 +631,20 @@ async function excluirMinisterio(id, nome) {
 
 async function assignLider() {
   if (!assignLiderMinisterioId) return;
-  const userId = document.getElementById('assignLiderSelect')?.value;
-  if (!userId) { alert('Selecione um usuário.'); return; }
+  const container = document.getElementById('assignLiderCheckboxes');
+  const checked = container ? Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.getAttribute('data-user-id')).filter(Boolean) : [];
   try {
     const r = await authFetch(`${API_BASE}/api/ministros/${assignLiderMinisterioId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ liderId: userId }),
+      body: JSON.stringify({ liderIds: checked }),
     });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
     document.getElementById('modalAssignLider')?.classList.remove('open');
-    const assignSel = document.getElementById('assignLiderSelect');
-    if (assignSel) assignSel.value = '';
     assignLiderMinisterioId = null;
     fetchMinistros();
     fetchUsers();
-  } catch (err) { alert(err.message || 'Erro ao definir líder.'); }
+  } catch (err) { alert(err.message || 'Erro ao salvar líderes.'); }
 }
 
 async function fetchUsers() {
@@ -653,12 +671,13 @@ function renderUsers() {
   const roleLabel = r => ({ admin: 'Admin', voluntario: 'Voluntário', lider: 'Líder' }[r] || r);
   const list = usersList.slice(0, LIST_PAGE_SIZE);
   tbody.innerHTML = list.map(u => {
-    const minNome = (u.ministerioId && u.ministerioId.nome) ? u.ministerioId.nome : (u.role === 'lider' ? '—' : '');
+    const mins = u.ministerioIds || [];
+    const minNomes = mins.length ? mins.map(m => (m && m.nome) ? m.nome : '').filter(Boolean).join(', ') || '—' : (u.role === 'lider' || (u.role === 'admin' && mins.length) ? '—' : '');
     return `<tr>
       <td>${escapeHtml(u.nome || '—')}</td>
       <td>${escapeHtml(u.email || '—')}</td>
       <td>${escapeHtml(roleLabel(u.role))}</td>
-      <td>${escapeHtml(minNome)}</td>
+      <td>${escapeHtml(minNomes)}</td>
       <td><button type="button" class="btn btn-sm btn-primary" data-user-role="${escapeAttr(u._id)}" data-user-email="${escapeAttr(u.email)}">Alterar perfil</button> <button type="button" class="btn btn-sm btn-ghost" data-user-history="${escapeAttr(u._id)}">Histórico</button></td>
     </tr>`;
   }).join('');
@@ -686,14 +705,17 @@ async function openModalUserRole(userId, email) {
   document.getElementById('modalUserRoleEmail').textContent = email || userId;
   const roleSel = document.getElementById('userRoleSelect');
   const minGrp = document.getElementById('userMinisterioGroup');
-  const minSel = document.getElementById('userMinisterioSelect');
+  const minContainer = document.getElementById('userMinisterioCheckboxes');
   if (roleSel) roleSel.value = u?.role || 'voluntario';
-  if (minSel) {
-    minSel.innerHTML = '<option value="">Selecione o ministério</option>' + (ministrosList || []).map(m => `<option value="${escapeAttr(m._id)}">${escapeHtml(m.nome)}</option>`).join('');
-    if (u?.ministerioId && u.ministerioId._id) minSel.value = u.ministerioId._id;
-    else if (u?.ministerioId) minSel.value = u.ministerioId;
+  const showMin = roleSel?.value === 'lider' || roleSel?.value === 'admin';
+  if (minGrp) minGrp.style.display = showMin ? 'block' : 'none';
+  if (minContainer) {
+    const userMinIds = new Set((u?.ministerioIds || []).map(m => String(m._id || m)));
+    minContainer.innerHTML = (ministrosList || []).map(m => {
+      const checked = userMinIds.has(String(m._id)) ? ' checked' : '';
+      return `<label class="checkbox-label" style="display:block; margin-bottom:6px;"><input type="checkbox" data-ministerio-id="${escapeAttr(m._id)}"${checked}> ${escapeHtml(m.nome || '')}</label>`;
+    }).join('');
   }
-  minGrp.style.display = (roleSel?.value === 'lider') ? 'block' : 'none';
   const formBody = document.getElementById('modalUserRoleFormBody');
   const historyBody = document.getElementById('modalUserHistoryBody');
   if (formBody) formBody.style.display = 'block';
@@ -704,12 +726,15 @@ async function openModalUserRole(userId, email) {
 async function saveUserRole() {
   if (!modalUserRoleUserId) return;
   const role = document.getElementById('userRoleSelect')?.value;
-  const ministerioId = document.getElementById('userMinisterioSelect')?.value || null;
+  const minContainer = document.getElementById('userMinisterioCheckboxes');
+  const ministerioIds = (role === 'lider' || role === 'admin') && minContainer
+    ? Array.from(minContainer.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.getAttribute('data-ministerio-id')).filter(Boolean)
+    : [];
   try {
     const r = await authFetch(`${API_BASE}/api/users/${modalUserRoleUserId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role, ministerioId: role === 'lider' ? ministerioId : undefined }),
+      body: JSON.stringify({ role, ministerioIds: (role === 'lider' || role === 'admin') ? ministerioIds : undefined }),
     });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
     closeModalUserRole();
@@ -2062,7 +2087,8 @@ async function handleLogin(e) {
     setAuthSession(data);
     if (authOverlay) authOverlay.style.display = 'none';
     const isVol = String(authRole || '').toLowerCase() === 'voluntario';
-    const isLider = String(authRole || '').toLowerCase() === 'lider';
+    const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
+    const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
     const defaultView = isVol ? 'perfil' : (isLider ? 'checkin-ministerio' : 'resumo');
     setView(defaultView);
     if (authRole === 'admin') await fetchAllData();
@@ -2217,7 +2243,8 @@ document.getElementById('modalUserRole')?.querySelector('.modal-backdrop')?.addE
 document.getElementById('btnSaveUserRole')?.addEventListener('click', saveUserRole);
 document.getElementById('userRoleSelect')?.addEventListener('change', () => {
   const g = document.getElementById('userMinisterioGroup');
-  if (g) g.style.display = document.getElementById('userRoleSelect')?.value === 'lider' ? 'block' : 'none';
+  const v = document.getElementById('userRoleSelect')?.value;
+  if (g) g.style.display = (v === 'lider' || v === 'admin') ? 'block' : 'none';
 });
 document.getElementById('btnUserRoleBack')?.addEventListener('click', () => {
   document.getElementById('modalUserRoleFormBody').style.display = 'block';
@@ -2537,16 +2564,19 @@ window.addEventListener('hashchange', () => {
       authEmail = parsed.email || null;
       authMinisterioId = parsed.ministerioId != null ? parsed.ministerioId : null;
       authMinisterioNome = parsed.ministerioNome != null ? parsed.ministerioNome : null;
+      authMinisterioIds = Array.isArray(parsed.ministerioIds) ? parsed.ministerioIds : [];
+      authMinisterioNomes = Array.isArray(parsed.ministerioNomes) ? parsed.ministerioNomes : [];
       authFotoUrl = parsed.fotoUrl != null ? parsed.fotoUrl : null;
     } catch (_) {
-      authToken = ''; authUser = ''; authRole = 'admin'; authEmail = null; authMinisterioId = null; authMinisterioNome = null; authFotoUrl = null;
+      authToken = ''; authUser = ''; authRole = 'admin'; authEmail = null; authMinisterioId = null; authMinisterioNome = null; authMinisterioIds = []; authMinisterioNomes = []; authFotoUrl = null;
     }
   }
   updateAuthUi();
   verifyAuth().then(ok => {
     if (ok) {
       const isVol = authRole === 'voluntario';
-      const isLider = authRole === 'lider';
+      const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
+      const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
       const defaultView = isVol ? 'perfil' : (isLider ? 'checkin-ministerio' : 'resumo');
       setView(defaultView);
       if (authRole === 'admin') fetchAllData();
@@ -2554,7 +2584,8 @@ window.addEventListener('hashchange', () => {
       else { fetchEventosHoje(); fetchMeusCheckins(); fetchPerfil(); }
     } else {
       const isVol = authRole === 'voluntario';
-      const isLider = authRole === 'lider';
+      const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
+      const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
       setView(isVol ? 'perfil' : (isLider ? 'checkin-ministerio' : 'resumo'));
     }
   });

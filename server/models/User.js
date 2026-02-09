@@ -25,7 +25,8 @@ const userSchema = new mongoose.Schema({
     enum: ['admin', 'voluntario', 'lider'],
     default: 'voluntario',
   },
-  ministerioId: { type: mongoose.Schema.Types.ObjectId, ref: 'Ministerio', default: null },
+  ministerioId: { type: mongoose.Schema.Types.ObjectId, ref: 'Ministerio', default: null }, // legado; preferir ministerioIds
+  ministerioIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Ministerio' }],
   ativo: {
     type: Boolean,
     default: true,

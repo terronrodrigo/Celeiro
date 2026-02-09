@@ -204,6 +204,8 @@ function requireAuth(req, res, next) {
   req.userEmail = data.email || null;
   req.userMinisterioId = data.ministerioId || null;
   req.userMinisterioNome = data.ministerioNome || null;
+  req.userMinisterioIds = Array.isArray(data.ministerioIds) ? data.ministerioIds : [];
+  req.userMinisterioNomes = Array.isArray(data.ministerioNomes) ? data.ministerioNomes : (data.ministerioNome ? [data.ministerioNome] : []);
   req.token = token;
   next();
 }
@@ -514,16 +516,24 @@ app.post('/api/login', async (req, res) => {
     user.ultimoAcesso = new Date();
     await user.save();
 
+    let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
+    if (ministerioIds.length === 0 && user.ministerioId) {
+      ministerioIds = [user.ministerioId];
+      user.ministerioIds = ministerioIds;
+      await user.save();
+    }
+    const ministerioNomes = [];
+    if (ministerioIds.length > 0) {
+      const mins = await Ministerio.find({ _id: { $in: ministerioIds } }).select('nome').lean();
+      mins.forEach(m => { if (m && m.nome) ministerioNomes.push(m.nome); });
+    }
+    const ministerioId = ministerioIds[0] || null;
+    const ministerioNome = ministerioNomes[0] || null;
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
-    let ministerioNome = null;
-    if (user.role === 'lider' && user.ministerioId) {
-      const min = await Ministerio.findById(user.ministerioId).select('nome').lean();
-      ministerioNome = min?.nome || null;
-    }
-    authTokens.set(token, { user: user.nome, userId: user._id, role: user.role, email: user.email, ministerioId: user.ministerioId, ministerioNome, expiresAt });
+    authTokens.set(token, { user: user.nome, userId: user._id, role: user.role, email: user.email, ministerioId, ministerioNome, ministerioIds, ministerioNomes, expiresAt });
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    return res.json({ token, user: { nome: user.nome, email: user.email, role: user.role, ministerioId: user.ministerioId, ministerioNome, fotoUrl: user.fotoUrl || null }, expiresAt });
+    return res.json({ token, user: { nome: user.nome, email: user.email, role: user.role, ministerioId, ministerioNome, ministerioIds, ministerioNomes, fotoUrl: user.fotoUrl || null }, expiresAt });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao fazer login.' });
@@ -548,9 +558,11 @@ app.get('/api/me', requireAuth, async (req, res) => {
   } catch (_) {}
   const payload = { user: displayName, role: req.userRole, email: req.userEmail };
   if (fotoUrl) payload.fotoUrl = fotoUrl;
-  if (req.userRole === 'lider' && req.userMinisterioId) {
+  if ((req.userMinisterioIds && req.userMinisterioIds.length) || req.userMinisterioId) {
     payload.ministerioId = req.userMinisterioId;
     payload.ministerioNome = req.userMinisterioNome;
+    payload.ministerioIds = req.userMinisterioIds || [];
+    payload.ministerioNomes = req.userMinisterioNomes || [];
   }
   res.json(payload);
 });
@@ -751,17 +763,17 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
   }
 });
 
-// Líder: check-ins do seu ministério (ministerio string = nome do ministério do líder)
+// Líder ou admin com ministérios: check-ins dos ministérios que lidera
 app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
   try {
-    if (String(req.userRole || '').toLowerCase() !== 'lider' || !req.userMinisterioNome) {
+    const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length ? req.userMinisterioNomes.map(String).map(s => s.trim()).filter(Boolean) : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
+    if (nomes.length === 0) {
       return res.status(403).json({ error: 'Acesso apenas para líderes de ministério.' });
     }
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
-    const ministerioNome = String(req.userMinisterioNome).trim();
     const { data: dataFiltro } = req.query;
-    const query = { ministerio: ministerioNome };
+    const query = { ministerio: { $in: nomes } };
     if (dataFiltro) {
       const dateStr = String(dataFiltro).trim().slice(0, 10);
       if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
@@ -1148,8 +1160,8 @@ app.get('/api/ministros', requireAuth, requireAdmin, async (req, res) => {
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
     const list = await Ministerio.find({}).sort({ nome: 1 }).lean();
     const withLeaders = await Promise.all(list.map(async (m) => {
-      const leader = await User.findOne({ ministerioId: m._id, role: 'lider', ativo: true }).select('nome email').lean();
-      return { ...m, lider: leader };
+      const leaders = await User.find({ ministerioIds: m._id, ativo: true }).select('nome email role').lean();
+      return { ...m, lideres: leaders };
     }));
     res.json(withLeaders);
   } catch (err) {
@@ -1176,24 +1188,32 @@ app.post('/api/ministros', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// PUT /api/ministros/:id - Atualizar ministério ou atribuir líder (admin)
+// PUT /api/ministros/:id - Atualizar ministério ou atribuir líderes (admin). liderIds = array de userId.
 app.put('/api/ministros/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { nome, ativo, liderId } = req.body;
+    const { nome, ativo, liderId, liderIds } = req.body;
     const minist = await Ministerio.findById(req.params.id);
     if (!minist) return sendError(res, 404, 'Ministério não encontrado.');
     if (nome != null) minist.nome = String(nome).trim();
     if (ativo !== undefined) minist.ativo = !!ativo;
     await minist.save();
-    if (liderId !== undefined) {
-      const exLideres = await User.find({ ministerioId: minist._id }).select('_id role').lean();
+    const newLiderIds = Array.isArray(liderIds) ? liderIds.filter(Boolean) : (liderId ? [liderId] : undefined);
+    if (newLiderIds !== undefined) {
+      const exLideres = await User.find({ ministerioIds: minist._id }).select('_id role ministerioIds').lean();
       for (const u of exLideres) {
-        await RoleHistory.create({ userId: u._id, fromRole: u.role || 'lider', toRole: 'voluntario', ministerioId: minist._id, changedBy: req.userId });
+        const newIds = (u.ministerioIds || []).filter(id => String(id) !== String(minist._id));
+        await User.findByIdAndUpdate(u._id, { ministerioIds: newIds, ...(newIds.length === 0 && u.role !== 'admin' ? { role: 'voluntario' } : {}) });
+        await RoleHistory.create({ userId: u._id, fromRole: u.role || 'lider', toRole: newIds.length === 0 && u.role !== 'admin' ? 'voluntario' : (u.role || 'lider'), ministerioId: minist._id, changedBy: req.userId });
       }
-      await User.updateMany({ ministerioId: minist._id }, { $unset: { ministerioId: 1 }, role: 'voluntario' });
-      if (liderId) {
-        await User.findByIdAndUpdate(liderId, { ministerioId: minist._id, role: 'lider' });
-        await RoleHistory.create({ userId: liderId, fromRole: 'voluntario', toRole: 'lider', ministerioId: minist._id, changedBy: req.userId });
+      for (const uid of newLiderIds) {
+        const u = await User.findById(uid).select('ministerioIds role').lean();
+        if (!u) continue;
+        const ids = [...(u.ministerioIds || []).map(id => id)];
+        if (ids.some(id => String(id) === String(minist._id))) continue;
+        ids.push(minist._id);
+        const newRole = u.role === 'admin' ? 'admin' : 'lider';
+        await User.findByIdAndUpdate(uid, { ministerioIds: ids, role: newRole });
+        await RoleHistory.create({ userId: uid, fromRole: u.role || 'voluntario', toRole: newRole, ministerioId: minist._id, changedBy: req.userId });
       }
     }
     res.json(minist);
@@ -1208,11 +1228,12 @@ app.delete('/api/ministros/:id', requireAuth, requireAdmin, async (req, res) => 
   try {
     const minist = await Ministerio.findById(req.params.id);
     if (!minist) return sendError(res, 404, 'Ministério não encontrado.');
-    const exLideres = await User.find({ ministerioId: minist._id }).select('_id role').lean();
+    const exLideres = await User.find({ ministerioIds: minist._id }).select('_id role ministerioIds').lean();
     for (const u of exLideres) {
-      await RoleHistory.create({ userId: u._id, fromRole: u.role || 'lider', toRole: 'voluntario', ministerioId: minist._id, changedBy: req.userId });
+      const newIds = (u.ministerioIds || []).filter(id => String(id) !== String(minist._id));
+      await User.findByIdAndUpdate(u._id, { ministerioIds: newIds, ...(newIds.length === 0 && u.role !== 'admin' ? { role: 'voluntario' } : {}) });
+      await RoleHistory.create({ userId: u._id, fromRole: u.role || 'lider', toRole: newIds.length === 0 && u.role !== 'admin' ? 'voluntario' : (u.role || 'lider'), ministerioId: minist._id, changedBy: req.userId });
     }
-    await User.updateMany({ ministerioId: minist._id }, { $unset: { ministerioId: 1 }, role: 'voluntario' });
     await Ministerio.findByIdAndDelete(minist._id);
     res.json({ ok: true, message: 'Ministério excluído.' });
   } catch (err) {
@@ -1241,7 +1262,7 @@ app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
-    const users = await User.find({}, '-senha').populate('ministerioId', 'nome').lean();
+    const users = await User.find({}, '-senha').populate('ministerioIds', 'nome').lean();
     res.json(users);
   } catch (err) {
     console.error(err);
@@ -1260,14 +1281,13 @@ app.get('/api/users/:id/history', requireAuth, requireAdmin, async (req, res) =>
   }
 });
 
-// PUT /api/users/:id - Editar usuário e role (admin); registra histórico
+// PUT /api/users/:id - Editar usuário e role (admin); registra histórico. ministerioIds = array (líder pode ter vários; admin também pode ter).
 app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { nome, role, ativo, ministerioId } = req.body;
+    const { nome, role, ativo, ministerioId, ministerioIds } = req.body;
     const user = await User.findById(req.params.id);
     if (!user) return sendError(res, 404, 'Usuário não encontrado.');
     const fromRole = user.role;
-    const fromMinisterioId = user.ministerioId;
     const updates = {};
     if (nome !== undefined) updates.nome = nome;
     if (ativo !== undefined) updates.ativo = ativo;
@@ -1276,22 +1296,25 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
       updates.role = role;
     }
     const newRole = role !== undefined ? role : user.role;
-    if (ministerioId !== undefined) updates.ministerioId = newRole === 'lider' ? ministerioId || null : null;
-    const updated = await User.findByIdAndUpdate(req.params.id, updates, { new: true }).populate('ministerioId', 'nome');
+    const rawIds = Array.isArray(ministerioIds) ? ministerioIds : (ministerioId != null ? [ministerioId] : undefined);
+    if (rawIds !== undefined) {
+      updates.ministerioIds = (newRole === 'lider' || newRole === 'admin') ? rawIds.filter(Boolean) : [];
+    }
+    const updated = await User.findByIdAndUpdate(req.params.id, updates, { new: true }).populate('ministerioIds', 'nome');
     if (role !== undefined && role !== fromRole) {
       await RoleHistory.create({
         userId: user._id,
         fromRole,
         toRole: role,
-        ministerioId: role === 'lider' ? (ministerioId || updated.ministerioId) : fromMinisterioId,
+        ministerioId: (updates.ministerioIds && updates.ministerioIds[0]) || null,
         changedBy: req.userId,
       });
-    } else if (newRole === 'lider' && ministerioId !== undefined && String(ministerioId || '') !== String(fromMinisterioId || '')) {
+    } else if (rawIds !== undefined && (newRole === 'lider' || newRole === 'admin')) {
       await RoleHistory.create({
         userId: user._id,
-        fromRole: 'lider',
-        toRole: 'lider',
-        ministerioId: ministerioId || updated.ministerioId,
+        fromRole: newRole,
+        toRole: newRole,
+        ministerioId: (updates.ministerioIds && updates.ministerioIds[0]) || null,
         changedBy: req.userId,
       });
     }

@@ -43,6 +43,10 @@
           <span class="nav-icon">✅</span>
           <span>Check-in</span>
         </a>
+        <a href="#" class="nav-item" data-view="checkin-ministerio" id="navAdminCheckinMinisterio" style="display: none;">
+          <span class="nav-icon">✅</span>
+          <span>Check-ins dos meus ministérios</span>
+        </a>
         <a href="#" class="nav-item" data-view="perfil">
           <span class="nav-icon">👤</span>
           <span>Perfil</span>
@@ -344,11 +348,14 @@
           <div id="modalAssignLider" class="modal" aria-hidden="true">
             <div class="modal-backdrop"></div>
             <div class="modal-box">
-              <div class="modal-header"><h2>Definir líder do ministério</h2><button type="button" class="modal-close" id="modalAssignLiderClose">&times;</button></div>
+              <div class="modal-header"><h2>Definir líderes do ministério</h2><button type="button" class="modal-close" id="modalAssignLiderClose">&times;</button></div>
               <div class="modal-body">
                 <p class="auth-subtitle" id="assignLiderMinisterioNome"></p>
-                <div class="form-group"><label for="assignLiderSelect">Voluntário (ou usuário) como líder</label><select id="assignLiderSelect"></select></div>
-                <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalAssignLiderCancel">Cancelar</button><button type="button" class="btn btn-primary" id="btnAssignLider">Definir como líder</button></div>
+                <div class="form-group" id="assignLiderCheckboxesWrap">
+                  <label class="block-label">Selecione um ou mais líderes</label>
+                  <div id="assignLiderCheckboxes"></div>
+                </div>
+                <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalAssignLiderCancel">Cancelar</button><button type="button" class="btn btn-primary" id="btnAssignLider">Salvar líderes</button></div>
               </div>
             </div>
           </div>
@@ -373,7 +380,7 @@
               <div class="modal-body" id="modalUserRoleFormBody">
                 <p class="auth-subtitle" id="modalUserRoleEmail"></p>
                 <div class="form-group"><label for="userRoleSelect">Perfil</label><select id="userRoleSelect"><option value="voluntario">Voluntário</option><option value="admin">Admin</option><option value="lider">Líder de ministério</option></select></div>
-                <div class="form-group" id="userMinisterioGroup" style="display: none;"><label for="userMinisterioSelect">Ministério</label><select id="userMinisterioSelect"></select></div>
+                <div class="form-group" id="userMinisterioGroup" style="display: none;"><label class="block-label">Ministérios (líder pode ter vários; admin também)</label><div id="userMinisterioCheckboxes"></div></div>
                 <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalUserRoleCancel">Cancelar</button><button type="button" class="btn btn-primary" id="btnSaveUserRole">Salvar</button></div>
               </div>
               <div class="modal-body" id="modalUserHistoryBody" style="display: none;">
