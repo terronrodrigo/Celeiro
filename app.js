@@ -509,11 +509,21 @@ function renderMinistros() {
     return `<tr data-ministerio-id="${escapeAttr(m._id)}">
       <td>${escapeHtml(m.nome || '—')}</td>
       <td>${liderNome}</td>
-      <td><button type="button" class="btn btn-sm btn-primary" data-assign-lider="${escapeAttr(m._id)}" data-ministerio-nome="${escapeAttr(m.nome || '')}">Definir líder</button></td>
+      <td>
+        <button type="button" class="btn btn-sm btn-primary" data-assign-lider="${escapeAttr(m._id)}" data-ministerio-nome="${escapeAttr(m.nome || '')}">Definir líder</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-edit-ministerio="${escapeAttr(m._id)}" data-edit-nome="${escapeAttr(m.nome || '')}">Editar</button>
+        <button type="button" class="btn btn-sm btn-ghost" data-delete-ministerio="${escapeAttr(m._id)}" data-delete-nome="${escapeAttr(m.nome || '')}">Excluir</button>
+      </td>
     </tr>`;
   }).join('');
   tbody.querySelectorAll('[data-assign-lider]').forEach(btn => {
     btn.addEventListener('click', () => openAssignLider(btn.getAttribute('data-assign-lider'), btn.getAttribute('data-ministerio-nome')));
+  });
+  tbody.querySelectorAll('[data-edit-ministerio]').forEach(btn => {
+    btn.addEventListener('click', () => openEditarMinisterio(btn.getAttribute('data-edit-ministerio'), btn.getAttribute('data-edit-nome')));
+  });
+  tbody.querySelectorAll('[data-delete-ministerio]').forEach(btn => {
+    btn.addEventListener('click', () => excluirMinisterio(btn.getAttribute('data-delete-ministerio'), btn.getAttribute('data-delete-nome')));
   });
 }
 
@@ -550,6 +560,45 @@ async function openAssignLider(ministerioId, ministerioNome) {
   document.getElementById('modalAssignLider')?.classList.add('open');
 }
 
+function openEditarMinisterio(id, nome) {
+  const idEl = document.getElementById('editarMinisterioId');
+  const nomeEl = document.getElementById('editarMinisterioNome');
+  if (idEl) idEl.value = id || '';
+  if (nomeEl) nomeEl.value = (nome || '').trim();
+  document.getElementById('modalEditarMinisterio')?.classList.add('open');
+}
+
+async function saveEditarMinisterio(e) {
+  e.preventDefault();
+  const id = document.getElementById('editarMinisterioId')?.value?.trim();
+  const nome = document.getElementById('editarMinisterioNome')?.value?.trim();
+  if (!id || !nome) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/ministros/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nome }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    document.getElementById('modalEditarMinisterio')?.classList.remove('open');
+    document.getElementById('editarMinisterioId').value = '';
+    document.getElementById('editarMinisterioNome').value = '';
+    fetchMinistros();
+  } catch (err) { alert(err.message || 'Erro ao salvar ministério.'); }
+}
+
+async function excluirMinisterio(id, nome) {
+  if (!id) return;
+  const msg = nome ? `Excluir o ministério "${nome.replace(/"/g, '')}"? Os líderes vinculados passarão a voluntários.` : 'Excluir este ministério?';
+  if (!confirm(msg)) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/ministros/${id}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    fetchMinistros();
+    fetchUsers();
+  } catch (err) { alert(err.message || 'Erro ao excluir ministério.'); }
+}
+
 async function assignLider() {
   if (!assignLiderMinisterioId) return;
   const userId = document.getElementById('assignLiderSelect')?.value;
@@ -562,6 +611,8 @@ async function assignLider() {
     });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
     document.getElementById('modalAssignLider')?.classList.remove('open');
+    const assignSel = document.getElementById('assignLiderSelect');
+    if (assignSel) assignSel.value = '';
     assignLiderMinisterioId = null;
     fetchMinistros();
     fetchUsers();
@@ -1947,6 +1998,7 @@ async function handleLogin(e) {
   } catch (err) {
     if (loginError) loginError.textContent = err.message || 'Erro de rede.';
   } finally {
+    if (loginPass) loginPass.value = '';
     if (btnLogin) {
       btnLogin.disabled = false;
       btnLogin.textContent = 'Entrar';
@@ -2031,6 +2083,9 @@ formNovoEvento?.addEventListener('submit', async (e) => {
     const r = await authFetch(`${API_BASE}/api/eventos-checkin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data, label, ativo }) });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
     modalNovoEvento?.classList.remove('open');
+    if (formNovoEvento) formNovoEvento.reset();
+    if (eventoData) eventoData.value = new Date().toISOString().slice(0, 10);
+    if (eventoAtivo) eventoAtivo.checked = true;
     fetchEventosCheckin();
   } catch (err) { alert(err.message || 'Erro ao criar evento.'); }
 });
@@ -2062,7 +2117,10 @@ document.getElementById('formNovoMinisterio')?.addEventListener('submit', create
 document.getElementById('modalNovoMinisterioClose')?.addEventListener('click', () => document.getElementById('modalNovoMinisterio')?.classList.remove('open'));
 document.getElementById('modalNovoMinisterioCancel')?.addEventListener('click', () => document.getElementById('modalNovoMinisterio')?.classList.remove('open'));
 document.getElementById('modalNovoMinisterio')?.querySelector('.modal-backdrop')?.addEventListener('click', () => document.getElementById('modalNovoMinisterio')?.classList.remove('open'));
-
+document.getElementById('formEditarMinisterio')?.addEventListener('submit', saveEditarMinisterio);
+document.getElementById('modalEditarMinisterioClose')?.addEventListener('click', () => document.getElementById('modalEditarMinisterio')?.classList.remove('open'));
+document.getElementById('modalEditarMinisterioCancel')?.addEventListener('click', () => document.getElementById('modalEditarMinisterio')?.classList.remove('open'));
+document.getElementById('modalEditarMinisterio')?.querySelector('.modal-backdrop')?.addEventListener('click', () => document.getElementById('modalEditarMinisterio')?.classList.remove('open'));
 document.getElementById('modalAssignLiderClose')?.addEventListener('click', () => document.getElementById('modalAssignLider')?.classList.remove('open'));
 document.getElementById('modalAssignLiderCancel')?.addEventListener('click', () => document.getElementById('modalAssignLider')?.classList.remove('open'));
 document.getElementById('modalAssignLider')?.querySelector('.modal-backdrop')?.addEventListener('click', () => document.getElementById('modalAssignLider')?.classList.remove('open'));
@@ -2227,6 +2285,10 @@ setupForm?.addEventListener('submit', async (e) => {
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { if (setupError) setupError.textContent = data.error || 'Falha ao criar admin.'; return; }
     if (setupSuccess) { setupSuccess.textContent = data.message || 'Admin criado. Faça login com este email e senha.'; setupSuccess.style.display = 'block'; }
+    if (setupSecret) setupSecret.value = '';
+    if (setupEmail) setupEmail.value = '';
+    if (setupNome) setupNome.value = '';
+    if (setupSenha) setupSenha.value = '';
     setTimeout(() => { if (setupCard) setupCard.style.display = 'none'; if (loginCard) loginCard.style.display = 'block'; if (loginError) loginError.textContent = ''; }, 1500);
   } catch (err) { if (setupError) setupError.textContent = err.message || 'Erro de rede.'; }
   finally { if (btnSetup) { btnSetup.disabled = false; btnSetup.textContent = 'Criar admin'; } }
@@ -2241,6 +2303,9 @@ registerForm?.addEventListener('submit', async (e) => {
     const r = await fetch(`${API_BASE}/api/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome, email, senha }) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { if (registerError) registerError.textContent = data.error || 'Falha ao cadastrar.'; return; }
+    if (registerNome) registerNome.value = '';
+    if (registerEmail) registerEmail.value = '';
+    if (registerPass) registerPass.value = '';
     setAuthSession(data);
     if (authOverlay) authOverlay.style.display = 'none';
     if (registerCard) registerCard.style.display = 'none'; if (loginCard) loginCard.style.display = 'block';

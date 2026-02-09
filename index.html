@@ -328,6 +328,17 @@
               </form>
             </div>
           </div>
+          <div id="modalEditarMinisterio" class="modal" aria-hidden="true">
+            <div class="modal-backdrop"></div>
+            <div class="modal-box">
+              <div class="modal-header"><h2>Editar ministério</h2><button type="button" class="modal-close" id="modalEditarMinisterioClose">&times;</button></div>
+              <form id="formEditarMinisterio" class="modal-body">
+                <input type="hidden" id="editarMinisterioId" value="">
+                <div class="form-group"><label for="editarMinisterioNome">Nome</label><input type="text" id="editarMinisterioNome" placeholder="Ex: Louvor" required></div>
+                <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalEditarMinisterioCancel">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div>
+              </form>
+            </div>
+          </div>
           <div id="modalAssignLider" class="modal" aria-hidden="true">
             <div class="modal-backdrop"></div>
             <div class="modal-box">

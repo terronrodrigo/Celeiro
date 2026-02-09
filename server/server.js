@@ -1203,6 +1203,24 @@ app.put('/api/ministros/:id', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+// DELETE /api/ministros/:id - Excluir ministério (admin)
+app.delete('/api/ministros/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const minist = await Ministerio.findById(req.params.id);
+    if (!minist) return sendError(res, 404, 'Ministério não encontrado.');
+    const exLideres = await User.find({ ministerioId: minist._id }).select('_id role').lean();
+    for (const u of exLideres) {
+      await RoleHistory.create({ userId: u._id, fromRole: u.role || 'lider', toRole: 'voluntario', ministerioId: minist._id, changedBy: req.userId });
+    }
+    await User.updateMany({ ministerioId: minist._id }, { $unset: { ministerioId: 1 }, role: 'voluntario' });
+    await Ministerio.findByIdAndDelete(minist._id);
+    res.json({ ok: true, message: 'Ministério excluído.' });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao excluir ministério.');
+  }
+});
+
 // GET /api/users/foto - Foto de um usuário por email (admin ou líder, para exibir no perfil)
 app.get('/api/users/foto', requireAuth, async (req, res) => {
   try {
