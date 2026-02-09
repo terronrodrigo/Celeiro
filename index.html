@@ -350,6 +350,14 @@
               <div class="modal-header"><h2>Definir líderes do ministério</h2><button type="button" class="modal-close" id="modalAssignLiderClose">&times;</button></div>
               <div class="modal-body">
                 <p class="auth-subtitle" id="assignLiderMinisterioNome"></p>
+                <div class="form-group">
+                  <label class="block-label">Buscar voluntário por email</label>
+                  <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+                    <input type="email" id="assignLiderSearchEmail" placeholder="email@exemplo.com" style="flex:1;min-width:180px">
+                    <button type="button" class="btn btn-primary" id="btnAssignLiderSearch">Buscar</button>
+                  </div>
+                  <p id="assignLiderSearchMsg" class="form-hint" style="margin-top:6px"></p>
+                </div>
                 <div class="form-group" id="assignLiderCheckboxesWrap">
                   <label class="block-label">Selecione um ou mais líderes</label>
                   <div id="assignLiderCheckboxes"></div>
@@ -364,10 +372,28 @@
         <section class="view" data-view="usuarios">
           <div class="table-card">
             <div class="chart-header"><h2>Usuários e perfis</h2></div>
+            <div class="filters-row" style="margin-bottom:12px">
+              <div class="filters-card">
+                <div class="filters-left">
+                  <div class="form-group compact">
+                    <label for="usuariosSearch">Buscar</label>
+                    <input type="text" id="usuariosSearch" placeholder="Nome ou email">
+                  </div>
+                  <div class="form-group compact">
+                    <label for="usuariosFilterAtivo">Status</label>
+                    <select id="usuariosFilterAtivo">
+                      <option value="">Todos</option>
+                      <option value="true">Ativos</option>
+                      <option value="false">Inativos</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
             <p class="auth-subtitle">Perfis e permissões. <span id="usuariosCount" class="list-count">(0)</span></p>
             <div class="table-wrapper">
               <table class="data-table">
-                <thead><tr><th>Nome</th><th>Email</th><th>Perfil</th><th>Ministério</th><th>Ação</th></tr></thead>
+                <thead><tr><th>Nome</th><th>Email</th><th>Perfil</th><th>Ministério</th><th>Status</th><th>Ação</th></tr></thead>
                 <tbody id="usuariosBody"></tbody>
               </table>
             </div>
@@ -403,11 +429,11 @@
             <p class="auth-subtitle">Datas de culto para check-in. <span id="eventosCheckinCount" class="list-count">(0)</span></p>
             <div class="table-wrapper">
               <table class="data-table">
-                <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Ação</th></tr></thead>
+                <thead><tr><th>Data</th><th>Nome</th><th>Horário (SP)</th><th>Status</th><th>Link público</th><th>Ação</th></tr></thead>
                 <tbody id="eventosCheckinBody"></tbody>
               </table>
             </div>
-            <p class="form-hint" style="margin-top:8px">Use o botão "Link" para compartilhar: qualquer pessoa pode abrir o link, informar email e ministério e fazer o check-in (sem precisar de conta).</p>
+            <p class="form-hint" style="margin-top:8px">Use o botão "Copiar link" na coluna <strong>Link público</strong> para compartilhar: qualquer pessoa pode abrir o link, informar email e ministério e fazer o check-in (sem precisar de conta).</p>
           </div>
           <div id="modalNovoEvento" class="modal" aria-hidden="true">
             <div class="modal-backdrop"></div>
@@ -416,6 +442,11 @@
               <form id="formNovoEvento" class="modal-body">
                 <div class="form-group"><label for="eventoData">Data do culto</label><input type="date" id="eventoData" required></div>
                 <div class="form-group"><label for="eventoLabel">Nome (opcional)</label><input type="text" id="eventoLabel" placeholder="Ex: Culto 09/02"></div>
+                <div class="form-row form-row-2">
+                  <div class="form-group"><label for="eventoHorarioInicio">Início do check-in</label><input type="time" id="eventoHorarioInicio" step="300" placeholder="00:00"></div>
+                  <div class="form-group"><label for="eventoHorarioFim">Fim do check-in</label><input type="time" id="eventoHorarioFim" step="300" placeholder="23:59"></div>
+                </div>
+                <p class="form-hint">Horários em horário de São Paulo. Deixe em branco para permitir check-in o dia todo.</p>
                 <div class="form-group">
                   <label class="checkbox-label">
                     <input type="checkbox" id="eventoAtivo" checked>
@@ -423,6 +454,28 @@
                   </label>
                 </div>
                 <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalNovoEventoCancel">Cancelar</button><button type="submit" class="btn btn-primary">Criar</button></div>
+              </form>
+            </div>
+          </div>
+          <div id="modalEditarEvento" class="modal" aria-hidden="true">
+            <div class="modal-backdrop"></div>
+            <div class="modal-box">
+              <div class="modal-header"><h2>Editar evento de check-in</h2><button type="button" class="modal-close" id="modalEditarEventoClose">&times;</button></div>
+              <form id="formEditarEvento" class="modal-body">
+                <input type="hidden" id="editarEventoId" value="">
+                <div class="form-group"><label for="editarEventoLabel">Nome</label><input type="text" id="editarEventoLabel" placeholder="Ex: Culto 09/02"></div>
+                <div class="form-row form-row-2">
+                  <div class="form-group"><label for="editarEventoHorarioInicio">Início do check-in</label><input type="time" id="editarEventoHorarioInicio" step="300"></div>
+                  <div class="form-group"><label for="editarEventoHorarioFim">Fim do check-in</label><input type="time" id="editarEventoHorarioFim" step="300"></div>
+                </div>
+                <p class="form-hint">Horários em horário de São Paulo. Deixe em branco para permitir check-in o dia todo.</p>
+                <div class="form-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="editarEventoAtivo" checked>
+                    Check-in ativo (ligar/desligar)
+                  </label>
+                </div>
+                <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalEditarEventoCancel">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div>
               </form>
             </div>
           </div>
@@ -651,7 +704,8 @@
         <p class="auth-subtitle" id="checkinPublicSubtitle">Check-in de presença</p>
       </div>
       <form id="checkinPublicForm" class="auth-form">
-        <p class="form-hint" id="checkinPublicEventLabel" style="margin-bottom:12px"></p>
+        <p class="form-hint" id="checkinPublicEventLabel" style="margin-bottom:4px"></p>
+        <p class="form-hint" id="checkinPublicEventHorario" style="margin-bottom:12px;font-size:0.9em"></p>
         <div class="form-group">
           <label for="checkinPublicEmail">Email</label>
           <input type="email" id="checkinPublicEmail" placeholder="seu@email.com" required autocomplete="email">

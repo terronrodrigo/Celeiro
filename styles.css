@@ -1234,6 +1234,17 @@ body {
   }
 }
 
+.form-row.form-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 480px) {
+  .form-row.form-row-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
 .escala-futura-list {
   margin-top: 16px;
 }

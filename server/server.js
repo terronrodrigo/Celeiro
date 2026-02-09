@@ -882,6 +882,38 @@ function getDayRangeUTC(dateStr) {
   return { start, end };
 }
 
+const RE_HHMM = /^([01]?\d|2[0-3]):([0-5]\d)$/;
+function parseHHMM(s) {
+  const t = (s || '').toString().trim();
+  return RE_HHMM.test(t) ? t : null;
+}
+
+/** Retorna o horário atual em São Paulo no formato "HH:mm". */
+function getNowHHMMSaoPaulo() {
+  return new Date().toLocaleTimeString('en-GB', { timeZone: TZ_APP, hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+/** Data do evento no fuso São Paulo (YYYY-MM-DD). */
+function getEventDateStringSaoPaulo(evento) {
+  if (!evento || !evento.data) return '';
+  const d = evento.data instanceof Date ? evento.data : new Date(evento.data);
+  return d.toLocaleDateString('en-CA', { timeZone: TZ_APP });
+}
+
+/** Verifica se o momento atual (em São Paulo) está dentro da janela de check-in do evento (também em São Paulo). */
+function isWithinEventWindow(evento) {
+  const hojeStr = getHojeDateString();
+  const eventDateStr = getEventDateStringSaoPaulo(evento);
+  if (eventDateStr !== hojeStr) return false;
+  const hin = parseHHMM(evento.horarioInicio);
+  const hfi = parseHHMM(evento.horarioFim);
+  if (!hin && !hfi) return true;
+  const now = getNowHHMMSaoPaulo();
+  if (hin && now < hin) return false;
+  if (hfi && now > hfi) return false;
+  return true;
+}
+
 // Eventos de check-in: admin vê TODOS (ativos e inativos); voluntário vê só ativos. /hoje filtra ativo.
 app.get('/api/eventos-checkin', requireAuth, async (req, res) => {
   try {
@@ -921,16 +953,22 @@ app.get('/api/eventos-checkin/hoje', requireAuth, async (req, res) => {
 
 app.post('/api/eventos-checkin', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { data, label, ativo } = req.body || {};
+    const { data, label, ativo, horarioInicio, horarioFim } = req.body || {};
     if (!data) return sendError(res, 400, 'Campo "data" é obrigatório (YYYY-MM-DD ou ISO).');
     const dateStr = typeof data === 'string' ? data.trim().slice(0, 10) : '';
     const dataOnly = parseDateAsUTC(dateStr);
     if (!dataOnly || Number.isNaN(dataOnly.getTime())) return sendError(res, 400, 'Data inválida.');
+    const hin = horarioInicio != null ? parseHHMM(horarioInicio) : null;
+    const hfi = horarioFim != null ? parseHHMM(horarioFim) : null;
+    if (horarioInicio != null && horarioInicio !== '' && !hin) return sendError(res, 400, 'horarioInicio deve ser HH:mm (ex: 19:00).');
+    if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm (ex: 22:00).');
     const evento = await EventoCheckin.create({
       data: dataOnly,
       label: label || `Culto ${dataOnly.toLocaleDateString('pt-BR', { timeZone: TZ_APP })}`,
       criadoPor: req.userId,
       ativo: typeof ativo === 'boolean' ? ativo : true,
+      horarioInicio: hin || '',
+      horarioFim: hfi || '',
     });
     res.status(201).json(evento);
   } catch (err) {
@@ -953,6 +991,40 @@ app.put('/api/eventos-checkin/:id/ativo', requireAuth, requireAdmin, async (req,
   }
 });
 
+app.put('/api/eventos-checkin/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { label, ativo, horarioInicio, horarioFim } = req.body || {};
+    const update = {};
+    if (typeof label === 'string') update.label = label.trim();
+    if (typeof ativo === 'boolean') update.ativo = ativo;
+    const hin = horarioInicio != null ? parseHHMM(horarioInicio) : undefined;
+    const hfi = horarioFim != null ? parseHHMM(horarioFim) : undefined;
+    if (horarioInicio !== undefined) update.horarioInicio = hin || '';
+    if (horarioFim !== undefined) update.horarioFim = hfi || '';
+    if (horarioInicio != null && horarioInicio !== '' && !hin) return sendError(res, 400, 'horarioInicio deve ser HH:mm (ex: 19:00).');
+    if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm (ex: 22:00).');
+    const evento = await EventoCheckin.findByIdAndUpdate(req.params.id, update, { new: true });
+    if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+    invalidateCache();
+    res.json(evento);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao atualizar evento.');
+  }
+});
+
+app.delete('/api/eventos-checkin/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const evento = await EventoCheckin.findByIdAndDelete(req.params.id);
+    if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+    invalidateCache();
+    res.json({ ok: true, message: 'Evento excluído.' });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao excluir evento.');
+  }
+});
+
 // Voluntário confirma presença no dia (check-in)
 app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
   try {
@@ -964,7 +1036,7 @@ app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
     const nome = req.user || (req.userId && (await User.findById(req.userId).select('nome').lean())?.nome) || req.user;
     if (!email) return sendError(res, 403, 'Usuário sem email. Faça login como voluntário.');
 
-    const evento = await EventoCheckin.findById(eventoId);
+    const evento = await EventoCheckin.findById(eventoId).lean();
     if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou inativo.');
     const hoje = new Date();
     const start = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
@@ -973,6 +1045,14 @@ app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
     const eventDate = new Date(evento.data);
     const eventDayStart = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
     if (eventDayStart < start || eventDayStart >= end) return sendError(res, 400, 'Só é possível confirmar check-in no próprio dia do evento.');
+    if (!isWithinEventWindow(evento)) {
+      const hin = (evento.horarioInicio || '').trim();
+      const hfi = (evento.horarioFim || '').trim();
+      const msg = hin || hfi
+        ? `Check-in só é permitido entre ${hin || '00:00'} e ${hfi || '23:59'} (horário de São Paulo).`
+        : 'Check-in não permitido neste momento.';
+      return sendError(res, 400, msg);
+    }
 
     const dataCheckinStr = evento.data.toISOString().slice(0,10);
     const dataCheckin = getDayRangeUTC(dataCheckinStr).start;
@@ -1011,7 +1091,13 @@ app.get('/api/checkin-public/:eventoId', async (req, res) => {
     const ministerios = await Ministerio.find({}).sort({ nome: 1 }).select('nome').lean();
     const ministeriosList = ministerios.length > 0 ? ministerios.map(m => m.nome).filter(Boolean) : MINISTERIOS_PADRAO_PUBLIC;
     res.json({
-      evento: { _id: evento._id, label: evento.label || new Date(evento.data).toLocaleDateString('pt-BR'), data: evento.data },
+      evento: {
+        _id: evento._id,
+        label: evento.label || new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_APP }),
+        data: evento.data,
+        horarioInicio: (evento.horarioInicio || '').trim() || null,
+        horarioFim: (evento.horarioFim || '').trim() || null,
+      },
       ministerios: ministeriosList,
     });
   } catch (err) {
@@ -1029,11 +1115,19 @@ app.post('/api/checkin-public', async (req, res) => {
     const em = (email || '').toString().trim().toLowerCase();
     if (!em || !em.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
     if (!eventoId) return sendError(res, 400, 'Evento é obrigatório.');
-    const evento = await EventoCheckin.findById(eventoId);
+    const evento = await EventoCheckin.findById(eventoId).lean();
     if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
     const hojeStr = getHojeDateString();
-    const eventDateStr = evento.data.toISOString ? evento.data.toISOString().slice(0, 10) : '';
+    const eventDateStr = getEventDateStringSaoPaulo(evento);
     if (eventDateStr !== hojeStr) return sendError(res, 400, 'Só é possível fazer check-in no dia do evento.');
+    if (!isWithinEventWindow(evento)) {
+      const hin = (evento.horarioInicio || '').trim();
+      const hfi = (evento.horarioFim || '').trim();
+      const msg = hin || hfi
+        ? `Check-in só é permitido entre ${hin || '00:00'} e ${hfi || '23:59'} (horário de São Paulo).`
+        : 'Check-in não permitido neste momento.';
+      return sendError(res, 400, msg);
+    }
     const dataCheckin = getDayRangeUTC(eventDateStr).start;
     const existing = await Checkin.findOne({ eventoId, email: em, dataCheckin });
     if (existing) return res.status(200).json({ message: 'Check-in já realizado.', checkin: existing });
@@ -1444,16 +1538,38 @@ app.get('/api/users/foto', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/users - Listar todos os usuários (admin only)
+// GET /api/users - Listar usuários (admin only). Query: search (nome/email), ativo (true|false).
 app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
-    const users = await User.find({}, '-senha').populate('ministerioIds', 'nome').lean();
+    const { search, ativo } = req.query || {};
+    const filter = {};
+    if (ativo === 'true') filter.ativo = true;
+    if (ativo === 'false') filter.ativo = false;
+    if (search && typeof search === 'string' && search.trim()) {
+      const s = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [{ nome: new RegExp(s, 'i') }, { email: new RegExp(s, 'i') }];
+    }
+    const users = await User.find(filter, '-senha -resetToken -resetTokenExpires').populate('ministerioIds', 'nome').sort({ nome: 1 }).lean();
     res.json(users);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao listar usuários.' });
+  }
+});
+
+// GET /api/users/by-email?email=xxx - Buscar usuário por email (admin, para definir líderes)
+app.get('/api/users/by-email', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const email = (req.query.email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) return sendError(res, 400, 'Email inválido.');
+    const user = await User.findOne({ email }, '-senha -resetToken -resetTokenExpires').populate('ministerioIds', 'nome').lean();
+    if (!user) return sendError(res, 404, 'Nenhum usuário encontrado com este email.');
+    res.json(user);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao buscar usuário.');
   }
 });
 
@@ -1517,20 +1633,7 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// DELETE /api/users/:id - Deletar usuário (admin only)
-app.delete('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const user = await User.findByIdAndDelete(req.params.id);
-    if (!user) {
-      return res.status(404).json({ error: 'Usuário não encontrado.' });
-    }
-    
-    res.json({ ok: true, mensagem: 'Usuário deletado.' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message || 'Erro ao deletar usuário.' });
-  }
-});
+// DELETE /api/users/:id - Removido: boa prática é desativar (ativo: false), nunca deletar.
 
 // POST /api/migrate - Migrar dados das CSVs para o MongoDB (admin only)
 app.post('/api/migrate', requireAuth, requireAdmin, async (req, res) => {

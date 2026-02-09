@@ -137,6 +137,8 @@ const modalNovoEvento = document.getElementById('modalNovoEvento');
 const formNovoEvento = document.getElementById('formNovoEvento');
 const eventoData = document.getElementById('eventoData');
 const eventoLabel = document.getElementById('eventoLabel');
+const eventoHorarioInicio = document.getElementById('eventoHorarioInicio');
+const eventoHorarioFim = document.getElementById('eventoHorarioFim');
 const eventoAtivo = document.getElementById('eventoAtivo');
 const modalNovoEventoClose = document.getElementById('modalNovoEventoClose');
 const modalNovoEventoCancel = document.getElementById('modalNovoEventoCancel');
@@ -574,27 +576,73 @@ async function createMinisterio(e) {
 }
 
 let assignLiderMinisterioId = null;
+/** Lista de usuários exibida no modal (pode incluir usuários adicionados pela busca por email). */
+let assignLiderUserList = [];
+
 async function openAssignLider(ministerioId, ministerioNome) {
   assignLiderMinisterioId = ministerioId;
   const nomeEl = document.getElementById('assignLiderMinisterioNome');
   if (nomeEl) nomeEl.textContent = `Ministério: ${ministerioNome || ministerioId}`;
+  const msgEl = document.getElementById('assignLiderSearchMsg');
+  if (msgEl) msgEl.textContent = '';
+  document.getElementById('assignLiderSearchEmail')?.value && (document.getElementById('assignLiderSearchEmail').value = '');
   if (!usersList.length) {
     try {
       const r = await authFetch(`${API_BASE}/api/users`);
       if (r.ok) usersList = await r.json();
     } catch (_) {}
   }
-  const ministerio = (ministrosList || []).find(m => String(m._id) === String(ministerioId));
+  assignLiderUserList = (usersList || []).slice();
+  renderAssignLiderCheckboxes();
+  document.getElementById('modalAssignLider')?.classList.add('open');
+}
+
+function renderAssignLiderCheckboxes() {
+  const ministerio = assignLiderMinisterioId && (ministrosList || []).find(m => String(m._id) === String(assignLiderMinisterioId));
   const liderIds = new Set((ministerio?.lideres || []).map(l => String(l._id)));
   const container = document.getElementById('assignLiderCheckboxes');
   if (!container) return;
-  container.innerHTML = (usersList || []).map(u => {
+  container.innerHTML = assignLiderUserList.map(u => {
     const id = u._id;
     const label = `${u.nome || u.email} (${u.role || 'voluntario'})`;
     const checked = liderIds.has(String(id)) ? ' checked' : '';
     return `<label class="checkbox-label" style="display:block; margin-bottom:6px;"><input type="checkbox" data-user-id="${escapeAttr(id)}"${checked}> ${escapeHtml(label)}</label>`;
   }).join('');
-  document.getElementById('modalAssignLider')?.classList.add('open');
+}
+
+async function assignLiderSearchByEmail() {
+  const input = document.getElementById('assignLiderSearchEmail');
+  const msgEl = document.getElementById('assignLiderSearchMsg');
+  const email = (input?.value || '').trim().toLowerCase();
+  if (!msgEl) return;
+  if (!email || !email.includes('@')) { msgEl.textContent = 'Digite um email válido.'; return; }
+  msgEl.textContent = 'Buscando...';
+  try {
+    const r = await authFetch(`${API_BASE}/api/users/by-email?email=${encodeURIComponent(email)}`);
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      msgEl.textContent = data.error || 'Nenhum usuário com este email. A pessoa precisa ter uma conta (login) no sistema.';
+      return;
+    }
+    const user = await r.json();
+    const already = assignLiderUserList.some(u => String(u._id) === String(user._id));
+    if (!already) {
+      assignLiderUserList.push(user);
+      const container = document.getElementById('assignLiderCheckboxes');
+      if (container) {
+        const label = `${user.nome || user.email} (${user.role || 'voluntario'})`;
+        const div = document.createElement('label');
+        div.className = 'checkbox-label';
+        div.style.cssText = 'display:block; margin-bottom:6px;';
+        div.innerHTML = `<input type="checkbox" data-user-id="${escapeAttr(String(user._id))}" checked> ${escapeHtml(label)}`;
+        container.appendChild(div);
+      }
+    }
+    msgEl.textContent = `Adicionado: ${user.nome || user.email}. Clique em Salvar líderes para confirmar.`;
+    if (input) input.value = '';
+  } catch (e) {
+    msgEl.textContent = e.message === 'AUTH_REQUIRED' ? 'Sessão expirada.' : 'Erro ao buscar. Tente novamente.';
+  }
 }
 
 function openEditarMinisterio(id, nome) {
@@ -656,8 +704,14 @@ async function assignLider() {
 
 async function fetchUsers() {
   if (!authToken) return;
+  const search = document.getElementById('usuariosSearch')?.value?.trim() || '';
+  const ativo = document.getElementById('usuariosFilterAtivo')?.value || '';
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  if (ativo) params.set('ativo', ativo);
+  const qs = params.toString() ? '?' + params.toString() : '';
   try {
-    const r = await authFetch(`${API_BASE}/api/users`);
+    const r = await authFetch(`${API_BASE}/api/users${qs}`);
     if (!r.ok) return;
     usersList = await r.json();
     if (currentView !== 'usuarios') return;
@@ -672,7 +726,7 @@ function renderUsers() {
   if (countEl) countEl.textContent = `(${(usersList || []).length})`;
   if (!tbody) return;
   if (!usersList.length) {
-    tbody.innerHTML = '<tr><td colspan="5">Nenhum usuário.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6">Nenhum usuário encontrado.</td></tr>';
     return;
   }
   const roleLabel = r => ({ admin: 'Admin', voluntario: 'Voluntário', lider: 'Líder' }[r] || r);
@@ -680,23 +734,47 @@ function renderUsers() {
   tbody.innerHTML = list.map(u => {
     const mins = u.ministerioIds || [];
     const minNomes = mins.length ? mins.map(m => (m && m.nome) ? m.nome : '').filter(Boolean).join(', ') || '—' : (u.role === 'lider' || (u.role === 'admin' && mins.length) ? '—' : '');
+    const ativo = u.ativo !== false;
+    const statusText = ativo ? 'Ativo' : 'Inativo';
+    const statusClass = ativo ? 'evento-status-ativo' : 'evento-status-inativo';
+    const btnToggleLabel = ativo ? 'Desativar' : 'Reativar';
     return `<tr>
       <td>${escapeHtml(capitalizeWords(u.nome) || '—')}</td>
       <td>${escapeHtml(u.email || '—')}</td>
       <td>${escapeHtml(roleLabel(u.role))}</td>
       <td>${escapeHtml(minNomes)}</td>
-      <td><button type="button" class="btn btn-sm btn-primary" data-user-role="${escapeAttr(u._id)}" data-user-email="${escapeAttr(u.email)}">Alterar perfil</button> <button type="button" class="btn btn-sm btn-ghost" data-user-history="${escapeAttr(u._id)}">Histórico</button></td>
+      <td><span class="evento-status ${statusClass}">${statusText}</span></td>
+      <td><button type="button" class="btn btn-sm btn-primary" data-user-role="${escapeAttr(u._id)}" data-user-email="${escapeAttr(u.email)}">Alterar perfil</button> <button type="button" class="btn btn-sm btn-ghost" data-user-history="${escapeAttr(u._id)}">Histórico</button> <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-user-toggle-ativo="${escapeAttr(u._id)}" data-user-ativo="${ativo}">${btnToggleLabel}</button></td>
     </tr>`;
   }).join('');
   if (usersList.length > LIST_PAGE_SIZE) {
-    tbody.innerHTML += `<tr><td colspan="5" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${usersList.length} usuários.</td></tr>`;
+    tbody.innerHTML += `<tr><td colspan="6" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${usersList.length} usuários.</td></tr>`;
   }
   tbody.querySelectorAll('[data-user-role]').forEach(btn => {
-    btn.addEventListener('click', () => openModalUserRole(btn.getAttribute('data-user-role'), btn.getAttribute('data-user-email')));
+    if (btn.hasAttribute('data-user-email')) btn.addEventListener('click', () => openModalUserRole(btn.getAttribute('data-user-role'), btn.getAttribute('data-user-email')));
   });
   tbody.querySelectorAll('[data-user-history]').forEach(btn => {
     btn.addEventListener('click', () => fetchUserHistory(btn.getAttribute('data-user-history')));
   });
+  tbody.querySelectorAll('[data-user-toggle-ativo]').forEach(btn => {
+    btn.addEventListener('click', () => toggleUserAtivo(btn.getAttribute('data-user-toggle-ativo'), btn.getAttribute('data-user-ativo') === 'true'));
+  });
+}
+
+async function toggleUserAtivo(userId, currentlyAtivo) {
+  if (!userId || !authToken) return;
+  const novoAtivo = !currentlyAtivo;
+  const msg = novoAtivo ? 'Reativar este usuário? Ele poderá fazer login novamente.' : 'Desativar este usuário? Ele não poderá mais fazer login. Os dados são mantidos (não são excluídos).';
+  if (!confirm(msg)) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/users/${userId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ativo: novoAtivo }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    fetchUsers();
+  } catch (err) { alert(err.message || 'Erro ao atualizar.'); }
 }
 
 let modalUserRoleUserId = null;
@@ -852,25 +930,34 @@ async function fetchEventosCheckin() {
     if (countEl) countEl.textContent = `(${eventosCheckin.length})`;
     if (eventosCheckinBody) {
       if (!eventosCheckin.length) {
-        eventosCheckinBody.innerHTML = '<tr><td colspan="4">Nenhum evento. Clique em "Novo evento de check-in" para criar.</td></tr>';
+        eventosCheckinBody.innerHTML = '<tr><td colspan="6">Nenhum evento. Clique em "Novo evento de check-in" para criar.</td></tr>';
       } else {
         const displayList = eventosCheckin.slice(0, LIST_PAGE_SIZE);
         eventosCheckinBody.innerHTML = displayList.map(e => {
+          const eventId = (e._id != null ? String(e._id) : '');
           const d = new Date(e.data);
-          const label = e.label || d.toLocaleDateString('pt-BR');
+          const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+          const hin = (e.horarioInicio || '').trim();
+          const hfi = (e.horarioFim || '').trim();
+          const horarioText = (hin || hfi) ? `${hin || '—'} – ${hfi || '—'}` : 'Dia inteiro';
           const ativo = e.ativo !== false;
           const statusText = ativo ? 'Ativo' : 'Inativo';
           const btnLabel = ativo ? 'Desligar' : 'Ligar';
-          return `<tr data-event-id="${escapeAttr(e._id || '')}">
-            <td>${d.toLocaleDateString('pt-BR')}</td>
+          return `<tr data-event-id="${escapeAttr(eventId)}">
+            <td>${d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</td>
             <td>${escapeHtml(label)}</td>
+            <td>${escapeHtml(horarioText)}</td>
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
-            <td><button type="button" class="btn btn-sm btn-ghost" data-event-link="${escapeAttr(e._id || '')}" title="Copiar link de check-in (público)">Link</button> <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-event-toggle="${escapeAttr(e._id || '')}">${btnLabel}</button></td>
+            <td><button type="button" class="btn btn-sm btn-primary" data-event-link="${escapeAttr(eventId)}" title="Copiar link para check-in público (qualquer pessoa)">Copiar link</button></td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-event-edit="${escapeAttr(eventId)}" title="Editar horários e status">Editar</button> <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-event-toggle="${escapeAttr(eventId)}">${btnLabel}</button> <button type="button" class="btn btn-sm btn-ghost" data-event-delete="${escapeAttr(eventId)}" title="Excluir evento">Excluir</button></td>
           </tr>`;
         }).join('');
         if (eventosCheckin.length > LIST_PAGE_SIZE) {
-          eventosCheckinBody.innerHTML += `<tr><td colspan="4" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${eventosCheckin.length} eventos.</td></tr>`;
+          eventosCheckinBody.innerHTML += `<tr><td colspan="6" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${eventosCheckin.length} eventos.</td></tr>`;
         }
+        eventosCheckinBody.querySelectorAll('[data-event-edit]').forEach(btn => {
+          btn.addEventListener('click', () => openModalEditarEvento(btn.getAttribute('data-event-edit')));
+        });
         eventosCheckinBody.querySelectorAll('[data-event-toggle]').forEach(btn => {
           btn.addEventListener('click', () => toggleEventoAtivo(btn.getAttribute('data-event-toggle')));
         });
@@ -881,10 +968,42 @@ async function fetchEventosCheckin() {
             navigator.clipboard.writeText(url).then(() => alert('Link copiado! Compartilhe para as pessoas fazerem check-in (email + ministério).')).catch(() => prompt('Copie o link:', url));
           });
         });
+        eventosCheckinBody.querySelectorAll('[data-event-delete]').forEach(btn => {
+          btn.addEventListener('click', () => excluirEventoCheckin(btn.getAttribute('data-event-delete')));
+        });
       }
     }
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
   finally { setViewLoading('eventos-checkin', false); }
+}
+
+async function excluirEventoCheckin(eventoId) {
+  if (!eventoId || !authToken) return;
+  const evento = (eventosCheckin || []).find(e => String(e._id) === String(eventoId));
+  const label = evento?.label || (evento?.data ? new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '');
+  if (!confirm(`Excluir o evento "${(label || '').replace(/"/g, '')}"? Esta ação não pode ser desfeita.`)) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/eventos-checkin/${eventoId}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    fetchEventosCheckin();
+  } catch (err) { alert(err.message || 'Erro ao excluir evento.'); }
+}
+
+function openModalEditarEvento(eventoId) {
+  const evento = (eventosCheckin || []).find(e => String(e._id) === String(eventoId));
+  if (!evento) return;
+  const modal = document.getElementById('modalEditarEvento');
+  const idEl = document.getElementById('editarEventoId');
+  const labelEl = document.getElementById('editarEventoLabel');
+  const hinEl = document.getElementById('editarEventoHorarioInicio');
+  const hfiEl = document.getElementById('editarEventoHorarioFim');
+  const ativoEl = document.getElementById('editarEventoAtivo');
+  if (idEl) idEl.value = String(evento._id || '');
+  if (labelEl) labelEl.value = (evento.label || '').trim();
+  if (hinEl) hinEl.value = (evento.horarioInicio || '').trim();
+  if (hfiEl) hfiEl.value = (evento.horarioFim || '').trim();
+  if (ativoEl) ativoEl.checked = evento.ativo !== false;
+  if (modal) { modal.setAttribute('aria-hidden', 'false'); modal.classList.add('open'); }
 }
 
 async function toggleEventoAtivo(eventoId) {
@@ -2210,6 +2329,9 @@ filterDisp?.addEventListener('change', () => setFilter('disponibilidade', filter
 filterEstado?.addEventListener('change', () => setFilter('estado', filterEstado.value));
 filterCidade?.addEventListener('change', () => setFilter('cidade', filterCidade.value));
 filterComCheckin?.addEventListener('change', () => setFilter('comCheckin', filterComCheckin.value));
+document.getElementById('usuariosSearch')?.addEventListener('input', () => { if (currentView === 'usuarios') fetchUsers(); });
+document.getElementById('usuariosSearch')?.addEventListener('change', () => { if (currentView === 'usuarios') fetchUsers(); });
+document.getElementById('usuariosFilterAtivo')?.addEventListener('change', () => { if (currentView === 'usuarios') fetchUsers(); });
 btnClearFilters?.addEventListener('click', clearFilters);
 document.getElementById('btnVerMaisVoluntarios')?.addEventListener('click', () => {
   voluntariosPageOffset += LIST_PAGE_SIZE;
@@ -2221,10 +2343,30 @@ btnClearCheckinFilters?.addEventListener('click', () => { if (checkinData) check
 checkinData?.addEventListener('change', fetchCheckinsWithFilters);
 checkinEvento?.addEventListener('change', fetchCheckinsWithFilters);
 
-btnNovoEvento?.addEventListener('click', () => { if (modalNovoEvento) { eventoData.value = new Date().toISOString().slice(0, 10); eventoLabel.value = ''; if (eventoAtivo) eventoAtivo.checked = true; modalNovoEvento.setAttribute('aria-hidden', 'false'); modalNovoEvento.classList.add('open'); } });
+btnNovoEvento?.addEventListener('click', () => { if (modalNovoEvento) { eventoData.value = new Date().toISOString().slice(0, 10); eventoLabel.value = ''; if (eventoHorarioInicio) eventoHorarioInicio.value = ''; if (eventoHorarioFim) eventoHorarioFim.value = ''; if (eventoAtivo) eventoAtivo.checked = true; modalNovoEvento.setAttribute('aria-hidden', 'false'); modalNovoEvento.classList.add('open'); } });
 modalNovoEventoClose?.addEventListener('click', () => { modalNovoEvento?.classList.remove('open'); });
 modalNovoEventoCancel?.addEventListener('click', () => { modalNovoEvento?.classList.remove('open'); });
 modalNovoEvento?.querySelector('.modal-backdrop')?.addEventListener('click', () => { modalNovoEvento?.classList.remove('open'); });
+
+const modalEditarEvento = document.getElementById('modalEditarEvento');
+document.getElementById('modalEditarEventoClose')?.addEventListener('click', () => { modalEditarEvento?.classList.remove('open'); });
+document.getElementById('modalEditarEventoCancel')?.addEventListener('click', () => { modalEditarEvento?.classList.remove('open'); });
+modalEditarEvento?.querySelector('.modal-backdrop')?.addEventListener('click', () => { modalEditarEvento?.classList.remove('open'); });
+document.getElementById('formEditarEvento')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = document.getElementById('editarEventoId')?.value?.trim();
+  const label = document.getElementById('editarEventoLabel')?.value?.trim() ?? '';
+  const horarioInicio = (document.getElementById('editarEventoHorarioInicio')?.value || '').trim();
+  const horarioFim = (document.getElementById('editarEventoHorarioFim')?.value || '').trim();
+  const ativo = document.getElementById('editarEventoAtivo')?.checked !== false;
+  if (!id) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/eventos-checkin/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label, ativo, horarioInicio: horarioInicio || '', horarioFim: horarioFim || '' }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    modalEditarEvento?.classList.remove('open');
+    fetchEventosCheckin();
+  } catch (err) { alert(err.message || 'Erro ao salvar.'); }
+});
 
 document.getElementById('modalPerfilVoluntarioClose')?.addEventListener('click', closeModalPerfilVoluntario);
 document.getElementById('modalPerfilVoluntario')?.querySelector('.modal-backdrop')?.addEventListener('click', closeModalPerfilVoluntario);
@@ -2232,14 +2374,18 @@ document.getElementById('modalPerfilVoluntario')?.querySelector('.modal-backdrop
 formNovoEvento?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = eventoData?.value; const label = eventoLabel?.value?.trim();
+  const horarioInicio = (eventoHorarioInicio?.value || '').trim();
+  const horarioFim = (eventoHorarioFim?.value || '').trim();
   const ativo = eventoAtivo ? eventoAtivo.checked : true;
   if (!data) return;
   try {
-    const r = await authFetch(`${API_BASE}/api/eventos-checkin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data, label, ativo }) });
+    const r = await authFetch(`${API_BASE}/api/eventos-checkin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data, label, ativo, horarioInicio: horarioInicio || undefined, horarioFim: horarioFim || undefined }) });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
     modalNovoEvento?.classList.remove('open');
     if (formNovoEvento) formNovoEvento.reset();
     if (eventoData) eventoData.value = new Date().toISOString().slice(0, 10);
+    if (eventoHorarioInicio) eventoHorarioInicio.value = '';
+    if (eventoHorarioFim) eventoHorarioFim.value = '';
     if (eventoAtivo) eventoAtivo.checked = true;
     fetchEventosCheckin();
   } catch (err) { alert(err.message || 'Erro ao criar evento.'); }
@@ -2258,6 +2404,8 @@ document.getElementById('modalAssignLiderClose')?.addEventListener('click', () =
 document.getElementById('modalAssignLiderCancel')?.addEventListener('click', () => document.getElementById('modalAssignLider')?.classList.remove('open'));
 document.getElementById('modalAssignLider')?.querySelector('.modal-backdrop')?.addEventListener('click', () => document.getElementById('modalAssignLider')?.classList.remove('open'));
 document.getElementById('btnAssignLider')?.addEventListener('click', assignLider);
+document.getElementById('btnAssignLiderSearch')?.addEventListener('click', assignLiderSearchByEmail);
+document.getElementById('assignLiderSearchEmail')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); assignLiderSearchByEmail(); } });
 
 function closeModalUserRole() {
   const modal = document.getElementById('modalUserRole');
@@ -2682,6 +2830,12 @@ async function loadCheckinPublic(eventoId) {
     if (eventLabel) {
       const d = data.evento?.data ? new Date(data.evento.data).toLocaleDateString('pt-BR') : '';
       eventLabel.textContent = (data.evento?.label || d) ? `Evento: ${data.evento?.label || d}${d ? ` (${d})` : ''}` : '';
+    }
+    const horarioEl = document.getElementById('checkinPublicEventHorario');
+    if (horarioEl) {
+      const hin = (data.evento?.horarioInicio || '').trim();
+      const hfi = (data.evento?.horarioFim || '').trim();
+      horarioEl.textContent = (hin || hfi) ? `Horário de check-in: das ${hin || '00:00'} às ${hfi || '23:59'} (horário de São Paulo)` : 'Check-in disponível o dia todo (horário de São Paulo).';
     }
     if (select && Array.isArray(data.ministerios)) {
       select.innerHTML = '<option value="">Selecione o ministério</option>' + data.ministerios.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
