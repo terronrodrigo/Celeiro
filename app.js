@@ -2010,17 +2010,24 @@ btnConfirmarCheckin?.addEventListener('click', confirmarCheckin);
 document.getElementById('btnPerfilConfirmarCheckin')?.addEventListener('click', confirmarCheckinDesdePerfil);
 
 async function fetchSetupStatus() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const forceSetup = urlParams.get('setup') === '1';
   try {
     const r = await fetch(`${API_BASE}/api/setup/status`);
     const data = await r.json().catch(() => ({}));
     if (data.needsSetup && setupLinkWrap) setupLinkWrap.style.display = 'block';
-    const urlParams = new URLSearchParams(window.location.search);
-    if (data.needsSetup && urlParams.get('setup') === '1' && setupCard && loginCard) {
+    if ((forceSetup || data.needsSetup) && setupCard && loginCard) {
       loginCard.style.display = 'none';
       if (registerCard) registerCard.style.display = 'none';
       setupCard.style.display = 'block';
     }
-  } catch (_) {}
+  } catch (_) {
+    if (forceSetup && setupCard && loginCard) {
+      loginCard.style.display = 'none';
+      if (registerCard) registerCard.style.display = 'none';
+      setupCard.style.display = 'block';
+    }
+  }
 }
 if (!authToken) fetchSetupStatus();
 
