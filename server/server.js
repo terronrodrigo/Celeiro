@@ -1295,9 +1295,9 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
 // Revisar texto de email com LLM (Grok): devolve HTML profissional (links como botões, títulos em negrito).
 app.post('/api/email/review-llm', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { text } = req.body || {};
-    const raw = (text || '').toString().trim();
-    if (!raw) return sendError(res, 400, 'Envie o texto base em "text".');
+    const body = req.body || {};
+    const raw = (body.text ?? body.content ?? '').toString().trim();
+    if (!raw) return sendError(res, 400, 'Envie o texto base no campo "text" (rascunho do email).');
     const apiKey = (process.env.GROK_API_KEY || process.env.XAI_API_KEY || '').trim();
     if (!apiKey) {
       return res.status(503).json({ error: 'GROK_API_KEY não configurada. Adicione a variável no painel da cloud (ex.: Railway → Variables) e reinicie o app.' });
@@ -1351,9 +1351,13 @@ app.post('/api/email/review-llm', requireAuth, requireAdmin, async (req, res) =>
         }
 
         const data = JSON.parse(lastBody);
-        const content = data?.choices?.[0]?.message?.content?.trim() || '';
+        const msg = data?.choices?.[0]?.message;
+        const content = (msg?.content ?? msg?.text ?? '').toString().trim();
         const html = content.replace(/^```html?\s*|\s*```$/gi, '').trim() || content;
-        return res.json({ html: html || '<p>Nenhum conteúdo retornado.</p>' });
+        if (!html) {
+          console.warn('review-llm: Grok retornou conteúdo vazio. lastBody (trecho):', lastBody.slice(0, 200));
+        }
+        return res.json({ html: html || '<p>Nenhum conteúdo retornado pela IA.</p>' });
       } catch (parseErr) {
         lastError = parseErr.message;
         if (parseErr.message && parseErr.message.includes('fetch')) {
@@ -1362,11 +1366,11 @@ app.post('/api/email/review-llm', requireAuth, requireAdmin, async (req, res) =>
       }
     }
 
-    return res.status(502).json({
-      error: lastError
-        ? `Grok: ${String(lastError).slice(0, 150)}`
-        : `Erro na API Grok (status ${lastStatus}). Verifique GROK_API_KEY em console.x.ai e variáveis da cloud.`,
-    });
+    const errMessage = lastError
+      ? `Grok: ${String(lastError).slice(0, 200)}`
+      : `Erro na API Grok (status ${lastStatus}). Verifique GROK_API_KEY em console.x.ai e variáveis da cloud.`;
+    console.error('review-llm falhou:', errMessage);
+    return res.status(502).json({ error: errMessage });
   } catch (err) {
     console.error('review-llm:', err);
     res.status(500).json({ error: err.message || 'Erro interno ao revisar com IA.' });

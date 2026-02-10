@@ -2300,7 +2300,7 @@ function openModal() {
   if (emailSubject) emailSubject.value = '';
   if (emailBodyBase) emailBodyBase.value = '';
   if (emailBodyEditor) emailBodyEditor.innerHTML = '';
-  if (emailReviewError) { emailReviewError.style.display = 'none'; emailReviewError.textContent = ''; }
+  if (emailReviewError) { emailReviewError.style.display = ''; emailReviewError.style.visibility = 'hidden'; emailReviewError.textContent = ''; }
   if (sendResult) { sendResult.style.display = 'none'; sendResult.innerHTML = ''; }
   modal?.setAttribute('aria-hidden', 'false');
   modal?.classList.add('open');
@@ -2512,11 +2512,20 @@ btnSendEmail?.addEventListener('click', sendEmails);
 
 btnReviewLLM?.addEventListener('click', async () => {
   const text = (emailBodyBase?.value || '').trim() || (emailBodyEditor?.innerText || emailBodyEditor?.textContent || '').trim();
+  const showReviewError = (msg) => {
+    if (!emailReviewError) return;
+    emailReviewError.textContent = msg || '';
+    emailReviewError.style.display = 'block';
+    emailReviewError.style.visibility = 'visible';
+  };
+  const hideReviewError = () => {
+    if (emailReviewError) { emailReviewError.textContent = ''; emailReviewError.style.visibility = 'hidden'; }
+  };
   if (!text) {
-    if (emailReviewError) { emailReviewError.textContent = 'Digite o rascunho do email no campo acima.'; emailReviewError.style.visibility = 'visible'; }
+    showReviewError('Digite o rascunho do email no campo acima.');
     return;
   }
-  if (emailReviewError) { emailReviewError.textContent = ''; emailReviewError.style.visibility = 'hidden'; }
+  hideReviewError();
   btnReviewLLM.disabled = true;
   btnReviewLLM.textContent = 'Revisando...';
   try {
@@ -2528,15 +2537,17 @@ btnReviewLLM?.addEventListener('click', async () => {
     let data = {};
     try { data = await r.json(); } catch (_) { data = { error: 'Resposta inválida do servidor.' }; }
     if (!r.ok) {
-      const msg = data.error || `Erro ${r.status}. Verifique GROK_API_KEY nas variáveis da cloud.`;
-      if (emailReviewError) { emailReviewError.textContent = msg; emailReviewError.style.visibility = 'visible'; }
+      showReviewError(data.error || `Erro ${r.status}. Verifique GROK_API_KEY nas variáveis da cloud.`);
       return;
     }
-    if (emailBodyEditor && data.html) emailBodyEditor.innerHTML = data.html;
+    if (emailBodyEditor && data.html) {
+      emailBodyEditor.innerHTML = data.html;
+    } else if (data.error) {
+      showReviewError(data.error);
+    }
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
-    const msg = e.message || 'Erro de rede. Tente novamente.';
-    if (emailReviewError) { emailReviewError.textContent = msg; emailReviewError.style.visibility = 'visible'; }
+    showReviewError(e.message || 'Erro de rede. Tente novamente.');
   } finally {
     btnReviewLLM.disabled = false;
     btnReviewLLM.textContent = '✨ Revisar com IA';
