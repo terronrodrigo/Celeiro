@@ -552,11 +552,20 @@ app.post('/api/login', async (req, res) => {
 
     // 1) Tentar login admin (username do .env)
     if (ADMIN_USER && ADMIN_PASS && login === ADMIN_USER && senha === ADMIN_PASS) {
+      let adminFotoUrl = null;
+      try {
+        const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
+        if (adminUser && adminUser.fotoUrl) adminFotoUrl = adminUser.fotoUrl;
+      } catch (_) {}
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
       authTokens.set(token, { user: ADMIN_USER, userId: null, role: 'admin', email: null, expiresAt });
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      return res.json({ token, user: { nome: ADMIN_USER, email: null, role: 'admin' }, expiresAt });
+      return res.json({
+        token,
+        user: { nome: ADMIN_USER, email: null, role: 'admin', fotoUrl: adminFotoUrl },
+        expiresAt,
+      });
     }
 
     // 2) Login por email (User/voluntário)
@@ -604,6 +613,9 @@ app.get('/api/me', requireAuth, async (req, res) => {
       if (user && user.nome) displayName = user.nome;
       if (user && user.fotoUrl) fotoUrl = user.fotoUrl;
       if (user && user.mustChangePassword) mustChangePassword = true;
+    } else if (req.userRole === 'admin' && ADMIN_USER) {
+      const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
+      if (adminUser && adminUser.fotoUrl) fotoUrl = adminUser.fotoUrl;
     }
     const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email').lean())?.email);
     if (email) {

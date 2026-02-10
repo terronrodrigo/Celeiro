@@ -111,7 +111,7 @@ const btnLogin = document.getElementById('btnLogin');
 const btnLogout = document.getElementById('btnLogoutSidebar');
 const authUserName = document.getElementById('authUserName');
 const authUserInitial = document.getElementById('authUserInitial');
-const filterAreaCheckboxes = document.getElementById('filterAreaCheckboxes');
+const filterArea = document.getElementById('filterArea');
 const filterDisp = document.getElementById('filterDisponibilidade');
 const filterEstado = document.getElementById('filterEstado');
 const filterCidade = document.getElementById('filterCidade');
@@ -233,7 +233,15 @@ function updateAuthUi() {
   if (authUserInitial) {
     if (authFotoUrl) {
       const url = authFotoUrl.startsWith('http') ? authFotoUrl : `${API_BASE}${authFotoUrl}`;
-      authUserInitial.innerHTML = `<img class="avatar-img" src="${escapeAttr(url)}" alt="">`;
+      const img = document.createElement('img');
+      img.className = 'avatar-img';
+      img.alt = '';
+      img.src = url;
+      img.onerror = function () {
+        authUserInitial.innerHTML = `<span class="avatar-initial">${escapeHtml(initial)}</span>`;
+      };
+      authUserInitial.innerHTML = '';
+      authUserInitial.appendChild(img);
     } else {
       authUserInitial.innerHTML = `<span class="avatar-initial">${escapeHtml(initial)}</span>`;
     }
@@ -1263,6 +1271,7 @@ async function fetchPerfil() {
           if (stored) { const p = JSON.parse(stored); p.fotoUrl = authFotoUrl; localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(p)); }
         } catch (_) {}
       }
+      updateAuthUi();
     }
     updatePerfilFotoUI();
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
@@ -2067,16 +2076,7 @@ function updateFilters() {
     return (a || '').localeCompare(b || '');
   });
   const cidades = countByField(vol, 'cidade').map(([label]) => label).sort((a, b) => (a || '').localeCompare(b || ''));
-  if (filterAreaCheckboxes) {
-    const selectedSet = new Set(filters.areas || []);
-    filterAreaCheckboxes.innerHTML = areas.length ? areas.map(area => {
-      const checked = selectedSet.has(area) ? ' checked' : '';
-      return `<label class="checkbox-label"><input type="checkbox" data-filter-area="${escapeAttr(area)}"${checked}> ${escapeHtml(area)}</label>`;
-    }).join('') : '<span class="form-hint">Nenhuma área cadastrada</span>';
-    filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => {
-      cb.addEventListener('change', () => applyAreaFilter());
-    });
-  }
+  populateSelect(filterArea, areas, 'Todas as áreas');
   populateSelect(filterDisp, disp, 'Todas as disponibilidades');
   populateSelect(filterEstado, estados, 'Todos os estados');
   populateSelect(filterCidade, cidades, 'Todas as cidades');
@@ -2088,12 +2088,7 @@ function updateFilterUi() {
   if (filterEstado) filterEstado.value = filters.estado || '';
   if (filterCidade) filterCidade.value = filters.cidade || '';
   if (filterComCheckin) filterComCheckin.value = filters.comCheckin || '';
-  if (filterAreaCheckboxes) {
-    const selectedSet = new Set(filters.areas || []);
-    filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => {
-      cb.checked = selectedSet.has(cb.getAttribute('data-filter-area'));
-    });
-  }
+  if (filterArea) filterArea.value = (filters.areas && filters.areas[0]) || '';
   if (!activeFilters) return;
   const comCheckinLabel = { com: 'Com check-in', sem: 'Sem check-in', 'so-checkin': 'Só check-in (sem cadastro)' }[filters.comCheckin] || '';
   const chips = [
@@ -2117,7 +2112,7 @@ function updateFilterUi() {
     btn.addEventListener('click', () => {
       if (key === 'areas') {
         filters.areas = [];
-        if (filterAreaCheckboxes) filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => { cb.checked = false; });
+        if (filterArea) filterArea.value = '';
         voluntariosPageOffset = 0;
         refreshVoluntariosView();
       } else {
@@ -2156,14 +2151,7 @@ function clearFilters() {
   filters.cidade = '';
   filters.comCheckin = '';
   voluntariosPageOffset = 0;
-  if (filterAreaCheckboxes) filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => { cb.checked = false; });
-  refreshVoluntariosView();
-}
-
-function applyAreaFilter() {
-  if (!filterAreaCheckboxes) return;
-  filters.areas = Array.from(filterAreaCheckboxes.querySelectorAll('input[data-filter-area]:checked')).map(cb => cb.getAttribute('data-filter-area')).filter(Boolean);
-  voluntariosPageOffset = 0;
+  if (filterArea) filterArea.value = '';
   refreshVoluntariosView();
 }
 
@@ -2554,6 +2542,9 @@ btnReviewLLM?.addEventListener('click', async () => {
 });
 loginForm?.addEventListener('submit', handleLogin);
 btnLogout?.addEventListener('click', handleLogout);
+filterArea?.addEventListener('change', () => {
+  setFilter('areas', filterArea.value ? [filterArea.value] : []);
+});
 filterDisp?.addEventListener('change', () => setFilter('disponibilidade', filterDisp.value));
 filterEstado?.addEventListener('change', () => setFilter('estado', filterEstado.value));
 filterCidade?.addEventListener('change', () => setFilter('cidade', filterCidade.value));
@@ -2809,6 +2800,7 @@ document.getElementById('perfilFotoInput')?.addEventListener('change', async (e)
     if (!r.ok) throw new Error(data.error || 'Falha no upload');
     authFotoUrl = data.fotoUrl || null;
     updatePerfilFotoUI();
+    updateAuthUi();
     const stored = localStorage.getItem(AUTH_STORAGE_KEY);
     if (stored) try { const p = JSON.parse(stored); p.fotoUrl = authFotoUrl; localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(p)); } catch (_) {}
   } catch (err) { alert(err.message || 'Erro ao enviar foto.'); }
@@ -2824,6 +2816,7 @@ document.getElementById('btnPerfilFotoExcluir')?.addEventListener('click', async
     if (!r.ok) throw new Error(data.error || 'Falha ao excluir');
     authFotoUrl = null;
     updatePerfilFotoUI();
+    updateAuthUi();
     const stored = localStorage.getItem(AUTH_STORAGE_KEY);
     if (stored) try { const p = JSON.parse(stored); p.fotoUrl = null; localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(p)); } catch (_) {}
   } catch (err) { alert(err.message || 'Erro ao excluir foto.'); }
