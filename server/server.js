@@ -697,25 +697,43 @@ app.get('/api/voluntarios', requireAuth, requireAdmin, async (req, res) => {
       voluntarios = await Voluntario.find({ ativo: true }).lean();
     }
 
-    // Incluir na lista toda conta com role voluntário e todo email que fez check-in (mesmo sem cadastro completo)
+    // Incluir na lista toda conta com role voluntário e todo email que fez check-in (batch em uma única ida ao DB)
     const existingEmails = new Set(voluntarios.map(v => (v.email || '').toLowerCase().trim()).filter(Boolean));
+    const toInsert = []; // { email, nome? }
     try {
       const usersVoluntarios = await User.find({ role: 'voluntario' }).select('email nome').lean();
-      for (const u of usersVoluntarios || []) {
+      (usersVoluntarios || []).forEach(u => {
         const em = (u.email || '').toLowerCase().trim();
-        if (em && !existingEmails.has(em)) {
-          await ensureVoluntarioInList({ email: u.email, nome: u.nome });
+        if (em && em.includes('@') && !existingEmails.has(em)) {
+          toInsert.push({ email: em, nome: (u.nome || '').toString().trim() });
           existingEmails.add(em);
         }
-      }
+      });
       const checkinEmails = await Checkin.distinct('email').then(arr => (arr || []).map(e => (e || '').toLowerCase().trim()).filter(Boolean));
-      for (const em of checkinEmails) {
-        if (em && !existingEmails.has(em)) {
-          await ensureVoluntarioInList({ email: em });
+      checkinEmails.forEach(em => {
+        if (em && em.includes('@') && !existingEmails.has(em)) {
+          toInsert.push({ email: em });
           existingEmails.add(em);
         }
-      }
-      if (existingEmails.size > voluntarios.length) {
+      });
+      if (toInsert.length > 0) {
+        const ops = toInsert.map(({ email, nome }) => ({
+          updateOne: {
+            filter: { email },
+            update: {
+              $setOnInsert: {
+                email,
+                ativo: true,
+                fonte: 'manual',
+                timestamp: new Date(),
+                timestampMs: Date.now(),
+                ...(nome ? { nome } : {}),
+              },
+            },
+            upsert: true,
+          },
+        }));
+        await Voluntario.bulkWrite(ops, { ordered: false });
         voluntarios = await Voluntario.find({ ativo: true }).lean();
       }
     } catch (e) { /* não falhar a listagem */ }

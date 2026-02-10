@@ -1458,18 +1458,30 @@ async function fetchVersiculoDia() {
   }
 }
 
+/** Uma única chamada a getFilteredVoluntarios e atualiza KPIs, gráficos, tabela e contadores. */
+function refreshVoluntariosView() {
+  const filtered = getFilteredVoluntarios();
+  updateKpis(filtered);
+  renderCharts(filtered);
+  renderTable(filtered);
+  updateSelectedCount();
+  syncSelectAll();
+  updateFilterUi();
+}
+
 function render() {
-  updateKpis();
+  const filtered = getFilteredVoluntarios();
+  updateKpis(filtered);
   updateFilters();
-  renderCharts();
-  renderTable(getFilteredVoluntarios());  // Renderiza a lista filtrada, não a completa
+  renderCharts(filtered);
+  renderTable(filtered);
   updateSelectedCount();
   const cadastroLinkInput = document.getElementById('cadastroLinkInput');
   if (cadastroLinkInput) cadastroLinkInput.value = getCadastroLinkUrl();
 }
 
-function updateKpis() {
-  const filtered = getFilteredVoluntarios();
+function updateKpis(filteredInput) {
+  const filtered = filteredInput !== undefined ? filteredInput : getFilteredVoluntarios();
   const total = filtered.length;
   const emailsComCheckin = getEmailsComCheckin();
   const vol = Array.isArray(voluntarios) ? voluntarios : [];
@@ -1509,10 +1521,8 @@ function updateKpis() {
   updateVoluntariosRangeAndMore(total);
 }
 
-function renderCharts() {
-  const filtered = getFilteredVoluntarios();
-  
-  // Calcular dados baseado na lista FILTRADA
+function renderCharts(filteredInput) {
+  const filtered = filteredInput !== undefined ? filteredInput : getFilteredVoluntarios();
   const areasData = countByMultiValueField(filtered, 'areas');
   const dispData = countByMultiValueField(filtered, 'disponibilidade');
   const estadoData = countByField(filtered, 'estado');
@@ -1674,21 +1684,29 @@ function truncate(s, max) {
   return s.length <= max ? s : s.slice(0, max) + '…';
 }
 
+let _cachedEmailsComCheckin = null;
+let _cachedEmailsComCheckinRef = null;
 /** Set de emails (lowercase) que têm pelo menos um check-in (cruzamento voluntários x check-ins). */
 function getEmailsComCheckin() {
-  const set = new Set();
   const list = Array.isArray(checkins) ? checkins : [];
+  if (_cachedEmailsComCheckinRef === list && _cachedEmailsComCheckin) return _cachedEmailsComCheckin;
+  const set = new Set();
   list.forEach(c => {
     const e = (c.email || '').toLowerCase().trim();
     if (e) set.add(e);
   });
+  _cachedEmailsComCheckinRef = list;
+  _cachedEmailsComCheckin = set;
   return set;
 }
 
+let _cachedSoCheckinList = null;
+let _cachedSoCheckinListRef = [null, null];
 /** Lista de pessoas que têm check-in mas não estão na lista de voluntários (por email). */
 function getSoCheckinList() {
   const vol = Array.isArray(voluntarios) ? voluntarios : [];
   const list = Array.isArray(checkins) ? checkins : [];
+  if (_cachedSoCheckinListRef[0] === vol && _cachedSoCheckinListRef[1] === list && _cachedSoCheckinList) return _cachedSoCheckinList;
   const voluntariosEmails = new Set(vol.map(v => (v.email || '').toLowerCase().trim()).filter(Boolean));
   const byEmail = new Map();
   list.forEach(c => {
@@ -1698,7 +1716,7 @@ function getSoCheckinList() {
     const existing = byEmail.get(e);
     if (!existing || ts > (existing.timestampMs || 0)) byEmail.set(e, { email: c.email || e, nome: c.nome || '', ministerio: c.ministerio || '', timestampMs: ts });
   });
-  return Array.from(byEmail.values()).map(c => ({
+  const result = Array.from(byEmail.values()).map(c => ({
     email: c.email,
     nome: c.nome || '—',
     cidade: '',
@@ -1707,6 +1725,9 @@ function getSoCheckinList() {
     disponibilidade: '',
     _soCheckin: true,
   }));
+  _cachedSoCheckinListRef = [vol, list];
+  _cachedSoCheckinList = result;
+  return result;
 }
 
 function getFilteredVoluntarios() {
@@ -1806,7 +1827,6 @@ function renderTable(list) {
     });
   });
   syncSelectAll();
-  updateKpis();
   updateVoluntariosRangeAndMore(total);
 }
 
@@ -1948,6 +1968,7 @@ function updateSelectedCount() {
 }
 
 async function toggleSelectAll(checked) {
+  let filtered = null;
   if (checked) {
     const params = new URLSearchParams();
     const q = (searchInput?.value || '').trim();
@@ -1964,21 +1985,22 @@ async function toggleSelectAll(checked) {
         selectedEmails.clear();
         data.emails.forEach(e => selectedEmails.add(e));
       } else {
-        const filtered = getFilteredVoluntarios();
+        filtered = getFilteredVoluntarios();
         filtered.forEach(v => { const e = (v.email || '').toLowerCase().trim(); if (e) selectedEmails.add(e); });
       }
     } catch (_) {
-      const filtered = getFilteredVoluntarios();
+      filtered = getFilteredVoluntarios();
       filtered.forEach(v => { const e = (v.email || '').toLowerCase().trim(); if (e) selectedEmails.add(e); });
     }
   } else {
-    const filtered = getFilteredVoluntarios();
+    filtered = getFilteredVoluntarios();
     filtered.forEach(v => {
       const e = (v.email || '').toLowerCase().trim();
       if (e) selectedEmails.delete(e);
     });
   }
-  renderTable(getFilteredVoluntarios());
+  if (filtered === null) filtered = getFilteredVoluntarios();
+  renderTable(filtered);
   updateSelectedCount();
   syncSelectAll();
 }
@@ -2097,12 +2119,7 @@ function updateFilterUi() {
         filters.areas = [];
         if (filterAreaCheckboxes) filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => { cb.checked = false; });
         voluntariosPageOffset = 0;
-        updateKpis();
-        renderCharts();
-        renderTable(getFilteredVoluntarios());
-        updateSelectedCount();
-        syncSelectAll();
-        updateFilterUi();
+        refreshVoluntariosView();
       } else {
         setFilter(key, '');
       }
@@ -2118,13 +2135,7 @@ function setFilter(key, value) {
     filters[key] = value || '';
   }
   voluntariosPageOffset = 0;
-  const filtered = getFilteredVoluntarios();
-  updateKpis();
-  renderCharts();
-  renderTable(filtered);
-  updateSelectedCount();
-  syncSelectAll();
-  updateFilterUi();
+  refreshVoluntariosView();
 }
 
 function toggleFilter(key, value) {
@@ -2146,24 +2157,14 @@ function clearFilters() {
   filters.comCheckin = '';
   voluntariosPageOffset = 0;
   if (filterAreaCheckboxes) filterAreaCheckboxes.querySelectorAll('[data-filter-area]').forEach(cb => { cb.checked = false; });
-  updateKpis();
-  renderCharts();
-  renderTable(getFilteredVoluntarios());
-  updateSelectedCount();
-  syncSelectAll();
-  updateFilterUi();
+  refreshVoluntariosView();
 }
 
 function applyAreaFilter() {
   if (!filterAreaCheckboxes) return;
   filters.areas = Array.from(filterAreaCheckboxes.querySelectorAll('input[data-filter-area]:checked')).map(cb => cb.getAttribute('data-filter-area')).filter(Boolean);
   voluntariosPageOffset = 0;
-  updateKpis();
-  renderCharts();
-  renderTable(getFilteredVoluntarios());
-  updateSelectedCount();
-  syncSelectAll();
-  updateFilterUi();
+  refreshVoluntariosView();
 }
 
 function getTodayPtBr() {
@@ -2466,10 +2467,8 @@ function debounce(fn, ms) {
   };
 }
 const debouncedSearch = debounce(() => {
-  updateKpis();
-  renderCharts();
-  renderTable(getFilteredVoluntarios());
-}, 280);
+  refreshVoluntariosView();
+}, 300);
 searchInput?.addEventListener('input', debouncedSearch);
 
 function toggleSidebar() {
