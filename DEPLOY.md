@@ -132,6 +132,19 @@ Você pode criar o admin de duas formas:
 
 ---
 
+## Atualizar estrutura do banco (índices)
+
+Após deploy ou ao alterar modelos do MongoDB, sincronize os índices:
+
+```bash
+cd server
+MONGODB_URI="sua-uri-de-producao" npm run update-db
+```
+
+Ou com o `.env` já preenchido: `npm run update-db`. O script cria índices que faltam e remove obsoletos.
+
+---
+
 ## Checklist pós-deploy
 
 - [ ] Acessar a URL do app (ex.: `https://seu-app.up.railway.app`).

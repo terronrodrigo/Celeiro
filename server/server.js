@@ -1269,7 +1269,7 @@ app.post('/api/email/review-llm', requireAuth, requireAdmin, async (req, res) =>
     const { text } = req.body || {};
     const raw = (text || '').toString().trim();
     if (!raw) return sendError(res, 400, 'Envie o texto base em "text".');
-    const apiKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY;
+    const apiKey = (process.env.GROK_API_KEY || process.env.XAI_API_KEY || '').trim();
     if (!apiKey) {
       return res.status(503).json({ error: 'GROK_API_KEY não configurada. Adicione a variável no painel da cloud (ex.: Railway → Variables) e reinicie o app.' });
     }
@@ -1347,6 +1347,15 @@ app.post('/api/email/review-llm', requireAuth, requireAdmin, async (req, res) =>
 // Cache do versículo do dia (por data, para não chamar Grok a cada request)
 let versiculoDiaCache = { date: '', text: '', reference: '' };
 
+// GET /api/grok-status - Diagnóstico: indica se GROK_API_KEY está definida (não expõe a chave)
+app.get('/api/grok-status', requireAuth, (req, res) => {
+  const key = (process.env.GROK_API_KEY || process.env.XAI_API_KEY || '').trim();
+  res.json({
+    configured: !!key,
+    hint: key ? 'Chave definida. Se ainda falhar, verifique se é válida em console.x.ai.' : 'Defina GROK_API_KEY no .env (local) ou nas variáveis do Railway/Render (produção) e reinicie o servidor.',
+  });
+});
+
 // GET /api/versiculo-dia - Versículo do dia via Grok (testa a API e enriquece o resumo)
 app.get('/api/versiculo-dia', requireAuth, async (req, res) => {
   try {
@@ -1354,7 +1363,7 @@ app.get('/api/versiculo-dia', requireAuth, async (req, res) => {
     if (versiculoDiaCache.date === today && versiculoDiaCache.text) {
       return res.json({ text: versiculoDiaCache.text, reference: versiculoDiaCache.reference || '' });
     }
-    const apiKey = process.env.GROK_API_KEY || process.env.XAI_API_KEY;
+    const apiKey = (process.env.GROK_API_KEY || process.env.XAI_API_KEY || '').trim();
     if (!apiKey) {
       return res.status(503).json({ error: 'GROK_API_KEY não configurada.' });
     }
@@ -1904,6 +1913,8 @@ async function start() {
     console.log('GET /api/voluntarios - lista voluntários da planilha');
     console.log('GET /api/checkins - lista check-ins e resumo');
     console.log('POST /api/send-email - envia email via Resend (body: { to: string[], subject, html? })');
+    const grokKey = (process.env.GROK_API_KEY || process.env.XAI_API_KEY || '').trim();
+    console.log(grokKey ? '✅ Grok API: configurada (versículo do dia + revisão de email)' : '⚠️ Grok API: não configurada (defina GROK_API_KEY no .env ou nas variáveis da cloud)');
   });
 }
 start();
