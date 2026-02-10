@@ -2,6 +2,8 @@ import 'dotenv/config';
 import express from 'express';
 import compression from 'compression';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import mongoose from 'mongoose';
 import { Resend } from 'resend';
 import { parse } from 'csv-parse/sync';
@@ -73,6 +75,33 @@ const cache = {
 const CACHE_TTL = (Number(process.env.CACHE_TTL_MINUTES) || 30) * 60 * 1000;
 
 const authTokens = new Map();
+
+// Segurança: headers HTTP (Helmet) e rate limiting em rotas sensíveis
+app.use(helmet({ contentSecurityPolicy: false })); // CSP desativado para não quebrar recursos estáticos/APIs
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: 30,
+  message: { error: 'Muitas tentativas. Tente novamente em alguns minutos.' },
+});
+const cadastroLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 h
+  max: 20,
+  message: { error: 'Muitos cadastros. Tente novamente mais tarde.' },
+});
+const publicCheckinLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  message: { error: 'Muitas requisições. Aguarde um pouco.' },
+});
+
+app.use('/api/login', authLimiter);
+app.use('/api/setup', authLimiter);
+app.use('/api/auth/login-email', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);
+app.use('/api/auth/reset-password', authLimiter);
+app.use('/api/cadastro', cadastroLimiter);
+app.use('/api/checkin-public', publicCheckinLimiter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
