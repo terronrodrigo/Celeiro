@@ -461,6 +461,9 @@ function setView(view) {
   if (view === 'usuarios') fetchUsers();
   if (view === 'checkin-ministerio') fetchCheckinsMinisterio();
   if (view === 'resumo') fetchVersiculoDia();
+  if ((view === 'resumo' || view === 'voluntarios') && Array.isArray(voluntarios) && voluntarios.length > 0) {
+    updateFilters();
+  }
   if (view === 'checkin' && isAdmin) {
     authFetch(`${API_BASE}/api/eventos-checkin`).then(r => r.ok ? r.json() : []).then(list => {
       eventosCheckin = list || [];
@@ -2037,35 +2040,33 @@ function countByMultiValueField(list, field) {
 
 function populateSelect(selectEl, items, placeholder) {
   if (!selectEl) return;
-  const currentValue = selectEl.value;  // Salva o valor atual
+  const currentValue = selectEl.value;
+  const list = Array.isArray(items) ? items : [];
   selectEl.innerHTML = '';
-  
-  // Adiciona opção "Todas"
+
   const optAll = document.createElement('option');
   optAll.value = '';
-  optAll.textContent = placeholder;
+  optAll.textContent = placeholder || 'Todos';
   selectEl.appendChild(optAll);
-  
-  // Adiciona as opções
-  items.forEach(item => {
+
+  list.forEach(item => {
     const opt = document.createElement('option');
     opt.value = item;
     opt.textContent = item;
     selectEl.appendChild(opt);
   });
   
-  // Restaura o valor anterior se ainda existir na lista
-  if (items.includes(currentValue)) {
+  if (list.includes(currentValue)) {
     selectEl.value = currentValue;
   } else {
-    selectEl.value = '';  // Se não existir, volta para "Todas"
+    selectEl.value = '';
   }
 }
 
 function updateFilters() {
   const vol = Array.isArray(voluntarios) ? voluntarios : [];
-  const areas = countByMultiValueField(vol, 'areas').map(([label]) => label);
-  const disp = countByMultiValueField(vol, 'disponibilidade').map(([label]) => label);
+  const areas = (countByMultiValueField(vol, 'areas') || []).map(([label]) => label).filter(Boolean);
+  const disp = (countByMultiValueField(vol, 'disponibilidade') || []).map(([label]) => label).filter(Boolean);
   const estados = countByField(vol, 'estado').map(([label]) => label);
   estados.sort((a, b) => {
     const aIsUF = a && a.length === 2;
