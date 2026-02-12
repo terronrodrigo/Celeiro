@@ -395,8 +395,9 @@ function showError(msg) {
   }
 }
 
-const ADMIN_ONLY_VIEWS = ['resumo', 'voluntarios', 'ministros', 'usuarios', 'eventos-checkin', 'checkin'];
+const ADMIN_ONLY_VIEWS = ['ministros', 'usuarios', 'eventos-checkin', 'checkin'];
 const LIDER_VIEWS = ['resumo', 'voluntarios', 'checkin-ministerio', 'perfil', 'meus-checkins'];
+const VOLUNTARIO_VIEWS = ['perfil', 'checkin-hoje', 'meus-checkins'];
 
 let currentView = '';
 let ministrosList = [];
@@ -464,8 +465,9 @@ function setView(view, options) {
   const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
   const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
   const isAdmin = authRole === 'admin';
-  if (isVol && ADMIN_ONLY_VIEWS.includes(view)) view = 'perfil';
-  if (isLider && !isAdmin && !LIDER_VIEWS.includes(view)) view = 'checkin-ministerio';
+  if (isVol && !VOLUNTARIO_VIEWS.includes(view)) view = 'perfil';
+  if ((authRole === 'lider' || isLider) && !isAdmin && !LIDER_VIEWS.includes(view)) view = 'checkin-ministerio';
+  if (!isVol && !isLider && !isAdmin) view = 'perfil';
   currentView = view;
   const meta = VIEW_META[view];
   const role = meta ? meta.role : 'admin';
@@ -521,23 +523,33 @@ function setView(view, options) {
     }).catch(() => fetchCheckinsWithFilters());
   }
   const canSeeResumoVoluntarios = isAdmin || isLider || authRole === 'lider';
-  if ((view === 'resumo' || view === 'voluntarios') && canSeeResumoVoluntarios && (!Array.isArray(voluntarios) || voluntarios.length === 0)) {
-    fetchVoluntarios();
+  if ((view === 'resumo' || view === 'voluntarios') && canSeeResumoVoluntarios) {
+    if (!Array.isArray(voluntarios) || voluntarios.length === 0) {
+      const isLeaderNotAdmin = (authRole === 'lider' || isLider) && !isAdmin;
+      if (isLeaderNotAdmin) render();
+      fetchVoluntarios({ showGlobalLoading: !isLeaderNotAdmin });
+    } else {
+      render();
+    }
   }
 }
 
-async function fetchVoluntarios() {
+async function fetchVoluntarios(opts) {
+  opts = opts || {};
   if (!authToken) {
     updateAuthUi();
     return;
   }
-  showLoading(true);
+  const useGlobalLoading = opts.showGlobalLoading !== false;
+  if (useGlobalLoading) showLoading(true);
   let settled = false;
   const timeoutId = setTimeout(() => {
     if (settled) return;
     settled = true;
-    showLoading(false);
-    showError('A conexão demorou. Tente novamente.');
+    if (useGlobalLoading) {
+      showLoading(false);
+      showError('A conexão demorou. Tente novamente.');
+    }
   }, VIEW_LOAD_TIMEOUT_MS);
   try {
     const r = await authFetch(`${API_BASE}/api/voluntarios`);
@@ -552,16 +564,20 @@ async function fetchVoluntarios() {
     render();
     settled = true;
     clearTimeout(timeoutId);
-    showLoading(false);
+    if (useGlobalLoading) showLoading(false);
   } catch (e) {
     if (settled) return;
     settled = true;
     clearTimeout(timeoutId);
     if (e.message === 'AUTH_REQUIRED') {
-      showLoading(false);
+      if (useGlobalLoading) showLoading(false);
       return;
     }
-    showError(e.message || 'Verifique se o servidor está rodando em ' + API_BASE);
+    if (useGlobalLoading) {
+      showError(e.message || 'Verifique se o servidor está rodando em ' + API_BASE);
+    } else {
+      alert('Erro ao carregar voluntários: ' + (e.message || 'Servidor não respondeu'));
+    }
   }
 }
 
