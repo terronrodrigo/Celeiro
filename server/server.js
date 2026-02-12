@@ -970,6 +970,10 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
 });
 
 // Líder ou admin com ministérios: check-ins dos ministérios que lidera
+// Match exato (ministerio in nomes) OU ministerio contendo o nome do ministério (ex.: "Kids" → "Kids / Min. Infantil")
+function escapeRegex(s) {
+  return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
   try {
     const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length ? req.userMinisterioNomes.map(String).map(s => s.trim()).filter(Boolean) : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
@@ -979,7 +983,11 @@ app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
     const { data: dataFiltro } = req.query;
-    const query = { ministerio: { $in: nomes } };
+    const orConditions = [
+      { ministerio: { $in: nomes } },
+      ...nomes.map((n) => ({ ministerio: new RegExp(escapeRegex(n), 'i') })),
+    ];
+    const query = { $or: orConditions };
     if (dataFiltro) {
       const dateStr = String(dataFiltro).trim().slice(0, 10);
       if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
