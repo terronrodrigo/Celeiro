@@ -257,7 +257,9 @@ function requireMasterAdmin(req, res, next) {
 }
 
 function requireAdminOrLider(req, res, next) {
+  console.log('[requireAdminOrLider]', { userRole: req.userRole, userEmail: req.userEmail });
   if (req.userRole !== 'admin' && req.userRole !== 'lider') {
+    console.error('[requireAdminOrLider] BLOCKED:', req.userRole);
     return res.status(403).json({ error: 'Acesso negado. Apenas administradores ou líderes de ministério.' });
   }
   next();
@@ -713,6 +715,7 @@ app.post('/api/logout', requireAuth, (req, res) => {
 });
 
 app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) => {
+  console.log('[GET /api/voluntarios] START', { userRole: req.userRole, userEmail: req.userEmail, ministerioNomes: req.userMinisterioNomes });
   try {
     const isLider = req.userRole === 'lider';
     const ministerioNomes = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
@@ -835,9 +838,13 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
     cache.voluntarios = fullData;
     cache.voluntariosTime = Date.now();
 
-    if (!isLider) return res.json(fullData);
+    if (!isLider) {
+      console.log('[GET /api/voluntarios] ADMIN response:', { voluntariosCount: fullData.voluntarios.length });
+      return res.json(fullData);
+    }
 
     const filtered = filterByMinisterio(normalizedAll);
+    console.log('[GET /api/voluntarios] LIDER response:', { voluntariosCount: filtered.length, ministerioNomes });
     return res.json({
       voluntarios: filtered,
       resumo: buildResumo(filtered),
