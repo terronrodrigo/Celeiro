@@ -399,7 +399,7 @@ function showError(msg) {
 }
 
 const ADMIN_ONLY_VIEWS = ['ministros', 'usuarios', 'eventos-checkin', 'checkin'];
-const LIDER_VIEWS = ['resumo', 'voluntarios', 'checkin-ministerio', 'perfil', 'meus-checkins'];
+const LIDER_VIEWS = ['checkin-ministerio', 'perfil', 'meus-checkins'];
 const VOLUNTARIO_VIEWS = ['perfil', 'checkin-hoje', 'meus-checkins'];
 
 let currentView = '';
@@ -1066,7 +1066,7 @@ function renderCheckinsMinisterio() {
   bodyEl.innerHTML = list.map(c => {
     const email = (c.email || '').toLowerCase().trim();
     return `<tr>
-      <td class="cell-with-avatar"><span class="cell-avatar">${avatarHtml(c.fotoUrl, c.nome)}</span><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(c.nome || '—')}</button></td>
+      <td><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(c.nome || '—')}</button></td>
       <td><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(c.email || '—')}</button></td>
       <td>${escapeHtml(c.ministerio || '—')}</td>
       <td>${escapeHtml(c.timestamp || '—')}</td>

@@ -20,10 +20,12 @@ const checkinSchema = new mongoose.Schema({
   indexes: [
     { email: 1, ministerio: 1, dataCheckin: 1 },
     { ministerio: 1, dataCheckin: 1 },
+    { ministerio: 1, timestampMs: -1 }, // Para sort rápido na consulta de check-ins do líder
     { email: 1 },
     { eventoId: 1 },
     { userId: 1 },
     { dataCheckin: 1 },
+    { timestampMs: -1 }, // Para sort descendente rápido
   ]
 });
 

@@ -1020,25 +1020,19 @@ app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
         if (start && end) query.dataCheckin = { $gte: start, $lt: end };
       }
     }
-    const checkinsData = await Checkin.find(query).sort({ timestampMs: -1 }).lean();
+    // Limita a 500 check-ins mais recentes para performance
+    const checkinsData = await Checkin.find(query).sort({ timestampMs: -1 }).limit(500).lean();
     const ministeriosCount = {};
     checkinsData.forEach(c => {
       const m = (c.ministerio || '').trim();
       if (m) ministeriosCount[m] = (ministeriosCount[m] || 0) + 1;
     });
-    const emailsMin = [...new Set(checkinsData.map(c => (c.email || '').toLowerCase().trim()).filter(Boolean))];
-    const fotoByEmailMin = {};
-    if (emailsMin.length > 0) {
-      const users = await User.find({ email: { $in: emailsMin } }).select('email fotoUrl').lean();
-      users.forEach(u => { if (u.email) fotoByEmailMin[u.email.toLowerCase()] = u.fotoUrl || null; });
-    }
     const normalized = checkinsData.map(c => {
       const ms = c.timestampMs || (c.timestamp ? new Date(c.timestamp).getTime() : null);
       return {
         ...c,
         timestamp: formatDatePtBr(ms),
         timestampMs: ms,
-        fotoUrl: fotoByEmailMin[(c.email || '').toLowerCase()] || null,
       };
     });
     res.json({
