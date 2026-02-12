@@ -53,6 +53,14 @@
         </a>
       </nav>
       <nav class="sidebar-nav" id="navLider" style="display: none;">
+        <a href="#" class="nav-item" data-view="resumo">
+          <span class="nav-icon">📊</span>
+          <span>Resumo</span>
+        </a>
+        <a href="#" class="nav-item" data-view="voluntarios">
+          <span class="nav-icon">👥</span>
+          <span>Voluntários</span>
+        </a>
         <a href="#" class="nav-item active" data-view="checkin-ministerio">
           <span class="nav-icon">✅</span>
           <span>Check-ins do ministério</span>
@@ -684,7 +692,7 @@
           </div>
         </section>
 
-        <!-- Líder: Check-ins do ministério -->
+        <!-- Líder: Check-ins do ministério (quem confirmou presença no ministério) -->
         <section class="view" data-view="checkin-ministerio">
           <section class="filters-row">
             <div class="filters-card">
@@ -703,12 +711,12 @@
             <div class="kpi-card">
               <div class="kpi-header"><span class="kpi-label">Total</span></div>
               <div class="kpi-value" id="checkinMinisterioTotal">0</div>
-              <div class="kpi-footer">check-ins do ministério</div>
+              <div class="kpi-footer">voluntários que confirmaram presença</div>
             </div>
           </section>
           <section class="charts-row">
             <div class="table-card chart-main">
-              <div class="chart-header"><h2>Check-ins do ministério <span id="checkinMinisterioCount" class="list-count">(0)</span></h2></div>
+              <div class="chart-header"><h2>Quem confirmou presença no seu ministério <span id="checkinMinisterioCount" class="list-count">(0)</span></h2></div>
               <div class="table-wrapper">
                 <table class="data-table">
                   <thead><tr><th>Nome</th><th>Email</th><th>Ministério</th><th>Data/Hora</th></tr></thead>

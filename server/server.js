@@ -246,6 +246,23 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+const MASTER_ADMIN_EMAIL = (process.env.MASTER_ADMIN_EMAIL || '').trim().toLowerCase();
+
+function requireMasterAdmin(req, res, next) {
+  const email = (req.userEmail || '').toString().trim().toLowerCase();
+  if (!MASTER_ADMIN_EMAIL || email !== MASTER_ADMIN_EMAIL) {
+    return res.status(403).json({ error: 'Acesso negado. Apenas o administrador master pode realizar esta ação.' });
+  }
+  next();
+}
+
+function requireAdminOrLider(req, res, next) {
+  if (req.userRole !== 'admin' && req.userRole !== 'lider') {
+    return res.status(403).json({ error: 'Acesso negado. Apenas administradores ou líderes de ministério.' });
+  }
+  next();
+}
+
 // Funções de cache
 function invalidateCache() {
   cache.voluntarios = null;
@@ -595,7 +612,8 @@ app.post('/api/login', async (req, res) => {
     const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
     authTokens.set(token, { user: user.nome, userId: user._id, role: user.role, email: user.email, ministerioId, ministerioNome, ministerioIds, ministerioNomes, expiresAt, mustChangePassword });
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    return res.json({ token, user: { nome: user.nome, email: user.email, role: user.role, ministerioId, ministerioNome, ministerioIds, ministerioNomes, fotoUrl: user.fotoUrl || null, mustChangePassword }, expiresAt });
+    const isMasterAdmin = MASTER_ADMIN_EMAIL && (user.email || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
+    return res.json({ token, user: { nome: user.nome, email: user.email, role: user.role, ministerioId, ministerioNome, ministerioIds, ministerioNomes, fotoUrl: user.fotoUrl || null, mustChangePassword, isMasterAdmin }, expiresAt });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao fazer login.' });
@@ -631,6 +649,9 @@ app.get('/api/me', requireAuth, async (req, res) => {
     payload.ministerioNome = req.userMinisterioNome;
     payload.ministerioIds = req.userMinisterioIds || [];
     payload.ministerioNomes = req.userMinisterioNomes || [];
+  }
+  if (MASTER_ADMIN_EMAIL) {
+    payload.isMasterAdmin = (req.userEmail || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
   }
   res.json(payload);
 });
@@ -691,12 +712,15 @@ app.post('/api/logout', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/voluntarios', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) => {
   try {
-    if (isCacheValid('voluntarios')) {
+    const isLider = req.userRole === 'lider';
+    const ministerioNomes = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
+
+    if (!isLider && isCacheValid('voluntarios')) {
       return res.json(cache.voluntarios);
     }
-    
+
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) {
       return sendError(res, 500, 'MongoDB não conectado. Configure MONGODB_URI no .env.');
@@ -750,6 +774,13 @@ app.get('/api/voluntarios', requireAuth, requireAdmin, async (req, res) => {
       }
     } catch (e) { /* não falhar a listagem */ }
 
+    if (isLider && ministerioNomes.length > 0) {
+      voluntarios = voluntarios.filter((v) => {
+        const m = (v.ministerio || '').toString().trim();
+        return ministerioNomes.some((n) => n === m);
+      });
+    }
+
     if (voluntarios.length === 0) {
       return res.json({ voluntarios: [], resumo: { total: 0, areas: [], disponibilidade: [] } });
     }
@@ -788,8 +819,10 @@ app.get('/api/voluntarios', requireAuth, requireAdmin, async (req, res) => {
         disponibilidade: Object.entries(dispCount).sort((a, b) => b[1] - a[1]),
       },
     };
-    cache.voluntarios = data;
-    cache.voluntariosTime = Date.now();
+    if (!isLider) {
+      cache.voluntarios = data;
+      cache.voluntariosTime = Date.now();
+    }
     res.json(data);
   } catch (err) {
     console.error(err);
@@ -798,13 +831,22 @@ app.get('/api/voluntarios', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // Lista só os emails (para "selecionar todos" no front, com os mesmos filtros)
-app.get('/api/voluntarios/emails', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/voluntarios/emails', requireAuth, requireAdminOrLider, async (req, res) => {
   try {
+    const isLider = req.userRole === 'lider';
+    const ministerioNomes = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
+
     let list = [];
-    if (isCacheValid('voluntarios') && cache.voluntarios && Array.isArray(cache.voluntarios.voluntarios)) {
+    if (!isLider && isCacheValid('voluntarios') && cache.voluntarios && Array.isArray(cache.voluntarios.voluntarios)) {
       list = cache.voluntarios.voluntarios;
     } else {
-      const raw = await Voluntario.find({ ativo: true }).lean();
+      let raw = await Voluntario.find({ ativo: true }).lean();
+      if (isLider && ministerioNomes.length > 0) {
+        raw = raw.filter((v) => {
+          const m = (v.ministerio || '').toString().trim();
+          return ministerioNomes.some((n) => n === m);
+        });
+      }
       list = raw.map(v => ({
         ...v,
         areas: Array.isArray(v.areas) ? v.areas.join(', ') : (v.areas || ''),
@@ -1930,7 +1972,21 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// DELETE /api/users/:id - Removido: boa prática é desativar (ativo: false), nunca deletar.
+// DELETE /api/users/:id - Apenas master admin (MASTER_ADMIN_EMAIL no .env)
+app.delete('/api/users/:id', requireAuth, requireMasterAdmin, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return sendError(res, 404, 'Usuário não encontrado.');
+    const email = (user.email || '').toString().trim().toLowerCase();
+    if (email === MASTER_ADMIN_EMAIL) return sendError(res, 400, 'O administrador master não pode ser excluído.');
+    await User.findByIdAndDelete(req.params.id);
+    invalidateCache();
+    res.json({ ok: true, message: 'Usuário excluído.' });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao excluir usuário.');
+  }
+});
 
 // POST /api/migrate - Migrar dados das CSVs para o MongoDB (admin only)
 app.post('/api/migrate', requireAuth, requireAdmin, async (req, res) => {

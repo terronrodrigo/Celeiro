@@ -61,6 +61,7 @@ let authMinisterioIds = [];
 let authMinisterioNomes = [];
 let authFotoUrl = null;
 let authMustChangePassword = false;
+let authIsMasterAdmin = false;
 let eventosCheckin = [];
 let eventoSelecionadoHoje = null;
 const filters = {
@@ -257,7 +258,7 @@ function updateAuthUi() {
   if (searchBox) searchBox.style.display = isLogged && isAdmin ? 'flex' : 'none';
   const btnRefresh = document.getElementById('btnRefresh');
   const filtersSection = document.querySelector('.view[data-view="resumo voluntarios"]');
-  if (btnRefresh && filtersSection) btnRefresh.style.display = isLogged && isAdmin ? '' : 'none';
+  if (btnRefresh && filtersSection) btnRefresh.style.display = isLogged && (isAdmin || isLider) ? '' : 'none';
 }
 
 /** Limpa dados em memória e DOM de conteúdo por usuário, para não exibir tela do login anterior ao trocar de perfil. */
@@ -298,8 +299,9 @@ function setAuthSession(data) {
   authMinisterioNomes = Array.isArray(user?.ministerioNomes) ? user.ministerioNomes : (Array.isArray(data?.ministerioNomes) ? data.ministerioNomes : []);
   authFotoUrl = (user && user.fotoUrl) ? user.fotoUrl : (data?.fotoUrl != null ? data.fotoUrl : null);
   authMustChangePassword = !!(user?.mustChangePassword || data?.mustChangePassword);
+  authIsMasterAdmin = !!(user?.isMasterAdmin || data?.isMasterAdmin);
   if (authToken) {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: authToken, user: authUser, role: authRole, email: authEmail, ministerioId: authMinisterioId, ministerioNome: authMinisterioNome, ministerioIds: authMinisterioIds, ministerioNomes: authMinisterioNomes, fotoUrl: authFotoUrl, mustChangePassword: authMustChangePassword }));
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: authToken, user: authUser, role: authRole, email: authEmail, ministerioId: authMinisterioId, ministerioNome: authMinisterioNome, ministerioIds: authMinisterioIds, ministerioNomes: authMinisterioNomes, fotoUrl: authFotoUrl, mustChangePassword: authMustChangePassword, isMasterAdmin: authIsMasterAdmin }));
   }
   updateAuthUi();
 }
@@ -315,6 +317,7 @@ function clearAuthSession() {
   authMinisterioNomes = [];
   authFotoUrl = null;
   authMustChangePassword = false;
+  authIsMasterAdmin = false;
   localStorage.removeItem(AUTH_STORAGE_KEY);
   clearUserContent();
   updateAuthUi();
@@ -351,6 +354,7 @@ async function verifyAuth() {
     authMinisterioNomes = Array.isArray(data.ministerioNomes) ? data.ministerioNomes : authMinisterioNomes;
     authFotoUrl = data.fotoUrl != null ? data.fotoUrl : authFotoUrl;
     authMustChangePassword = !!data.mustChangePassword;
+    authIsMasterAdmin = data.isMasterAdmin !== undefined ? !!data.isMasterAdmin : authIsMasterAdmin;
     const stored = localStorage.getItem(AUTH_STORAGE_KEY);
     if (stored && authToken) {
       try {
@@ -364,6 +368,7 @@ async function verifyAuth() {
         parsed.ministerioNomes = authMinisterioNomes;
         parsed.fotoUrl = authFotoUrl;
         parsed.mustChangePassword = authMustChangePassword;
+        parsed.isMasterAdmin = authIsMasterAdmin;
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
       } catch (_) {}
     }
@@ -391,7 +396,7 @@ function showError(msg) {
 }
 
 const ADMIN_ONLY_VIEWS = ['resumo', 'voluntarios', 'ministros', 'usuarios', 'eventos-checkin', 'checkin'];
-const LIDER_VIEWS = ['checkin-ministerio', 'perfil', 'meus-checkins'];
+const LIDER_VIEWS = ['resumo', 'voluntarios', 'checkin-ministerio', 'perfil', 'meus-checkins'];
 
 let currentView = '';
 let ministrosList = [];
@@ -442,7 +447,7 @@ const VIEW_META = {
   usuarios: { title: 'Usuários', subtitle: 'Perfis e permissões.', role: 'admin' },
   'eventos-checkin': { title: 'Eventos check-in', subtitle: 'Datas de culto para confirmação de presença.', role: 'admin' },
   checkin: { title: 'Check-in', subtitle: 'Registros por data e ministério.', role: 'admin' },
-  'checkin-ministerio': { title: 'Check-ins do ministério', subtitle: 'Quem confirmou no seu ministério.', role: 'lider' },
+  'checkin-ministerio': { title: 'Check-ins do ministério', subtitle: 'Acompanhe quem confirmou presença (voluntários) no seu ministério.', role: 'lider' },
   perfil: { title: 'Meu perfil', subtitle: 'Seus dados de cadastro.', role: 'voluntario' },
   'checkin-hoje': { title: 'Check-in do dia', subtitle: 'Confirme presença no culto de hoje.', role: 'voluntario' },
   'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico de presenças.', role: 'voluntario' },
@@ -482,7 +487,7 @@ function setView(view, options) {
   });
   if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Celeiro SP';
   if (pageSubtitle) pageSubtitle.textContent = (meta && meta.subtitle) || '';
-  if (searchBox) searchBox.style.display = isAdmin && view === 'voluntarios' ? 'flex' : 'none';
+  if (searchBox) searchBox.style.display = (isAdmin || isLider) && view === 'voluntarios' ? 'flex' : 'none';
   if (view === 'voluntarios') voluntariosPageOffset = 0;
   if (!options.skipFetch) {
     const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio'];
@@ -511,6 +516,9 @@ function setView(view, options) {
       }
       fetchCheckinsWithFilters();
     }).catch(() => fetchCheckinsWithFilters());
+  }
+  if ((view === 'resumo' || view === 'voluntarios') && (isAdmin || isLider) && (!Array.isArray(voluntarios) || voluntarios.length === 0)) {
+    fetchVoluntarios();
   }
 }
 
@@ -834,13 +842,14 @@ function renderUsers() {
     const statusText = ativo ? 'Ativo' : 'Inativo';
     const statusClass = ativo ? 'evento-status-ativo' : 'evento-status-inativo';
     const btnToggleLabel = ativo ? 'Desativar' : 'Reativar';
+    const btnExcluir = authIsMasterAdmin ? ` <button type="button" class="btn btn-sm btn-ghost" data-user-delete="${escapeAttr(u._id)}" data-user-delete-email="${escapeAttr(u.email)}" data-user-delete-nome="${escapeAttr(u.nome || '')}" title="Excluir usuário (apenas master admin)">Excluir</button>` : '';
     return `<tr>
       <td>${escapeHtml(capitalizeWords(u.nome) || '—')}</td>
       <td>${escapeHtml(u.email || '—')}</td>
       <td>${escapeHtml(roleLabel(u.role))}</td>
       <td>${escapeHtml(minNomes)}</td>
       <td><span class="evento-status ${statusClass}">${statusText}</span></td>
-      <td><button type="button" class="btn btn-sm btn-primary" data-user-role="${escapeAttr(u._id)}" data-user-email="${escapeAttr(u.email)}">Alterar perfil</button> <button type="button" class="btn btn-sm btn-ghost" data-user-history="${escapeAttr(u._id)}">Histórico</button> <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-user-toggle-ativo="${escapeAttr(u._id)}" data-user-ativo="${ativo}">${btnToggleLabel}</button></td>
+      <td><button type="button" class="btn btn-sm btn-primary" data-user-role="${escapeAttr(u._id)}" data-user-email="${escapeAttr(u.email)}">Alterar perfil</button> <button type="button" class="btn btn-sm btn-ghost" data-user-history="${escapeAttr(u._id)}">Histórico</button> <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-user-toggle-ativo="${escapeAttr(u._id)}" data-user-ativo="${ativo}">${btnToggleLabel}</button>${btnExcluir}</td>
     </tr>`;
   }).join('');
   if (usersList.length > LIST_PAGE_SIZE) {
@@ -854,6 +863,9 @@ function renderUsers() {
   });
   tbody.querySelectorAll('[data-user-toggle-ativo]').forEach(btn => {
     btn.addEventListener('click', () => toggleUserAtivo(btn.getAttribute('data-user-toggle-ativo'), btn.getAttribute('data-user-ativo') === 'true'));
+  });
+  tbody.querySelectorAll('[data-user-delete]').forEach(btn => {
+    btn.addEventListener('click', () => deleteUser(btn.getAttribute('data-user-delete'), btn.getAttribute('data-user-delete-email'), btn.getAttribute('data-user-delete-nome')));
   });
 }
 
@@ -871,6 +883,17 @@ async function toggleUserAtivo(userId, currentlyAtivo) {
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
     fetchUsers();
   } catch (err) { alert(err.message || 'Erro ao atualizar.'); }
+}
+
+async function deleteUser(userId, email, nome) {
+  if (!userId || !authToken || !authIsMasterAdmin) return;
+  const msg = `Excluir permanentemente o usuário "${(nome || email || userId).replace(/"/g, '')}"? Esta ação não pode ser desfeita.`;
+  if (!confirm(msg)) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/users/${userId}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha ao excluir');
+    fetchUsers();
+  } catch (err) { alert(err.message || 'Erro ao excluir usuário.'); }
 }
 
 let modalUserRoleUserId = null;
@@ -993,7 +1016,7 @@ function renderCheckinsMinisterio() {
   if (countEl) countEl.textContent = `(${total})`;
   if (!bodyEl) return;
   if (!checkinsMinisterio.length) {
-    bodyEl.innerHTML = '<tr><td colspan="4">Nenhum check-in no ministério para o filtro selecionado.</td></tr>';
+    bodyEl.innerHTML = '<tr><td colspan="4">Nenhum voluntário confirmou presença no seu ministério para o filtro selecionado. Quando fizerem check-in, aparecerão aqui.</td></tr>';
     return;
   }
   const list = checkinsMinisterio.slice(0, LIST_PAGE_SIZE);
@@ -1815,8 +1838,9 @@ function getFilteredVoluntarios() {
       if (!matchText) return false;
     }
     if (filters.areas && filters.areas.length > 0) {
-      const volAreas = (v.areas || '').split(',').map(a => a.trim()).filter(Boolean);
-      const hasMatch = filters.areas.some(fa => volAreas.includes(fa));
+      const volAreas = (v.areas || '').split(',').map(a => String(a).trim()).filter(Boolean);
+      const filterAreasNorm = (filters.areas || []).map(fa => String(fa).trim()).filter(Boolean);
+      const hasMatch = filterAreasNorm.length === 0 || filterAreasNorm.some(fa => volAreas.includes(fa));
       if (!hasMatch) return false;
     }
     if (filters.disponibilidade) {
@@ -2108,8 +2132,9 @@ function populateSelect(selectEl, items, placeholder) {
     selectEl.appendChild(opt);
   });
   
-  if (list.includes(currentValue)) {
-    selectEl.value = currentValue;
+  const cur = (currentValue || '').trim();
+  if (cur && list.some((item) => String(item).trim() === cur)) {
+    selectEl.value = list.find((item) => String(item).trim() === cur) || '';
   } else {
     selectEl.value = '';
   }
@@ -2117,7 +2142,7 @@ function populateSelect(selectEl, items, placeholder) {
 
 function updateFilters() {
   const vol = Array.isArray(voluntarios) ? voluntarios : [];
-  const areas = (countByMultiValueField(vol, 'areas') || []).map(([label]) => label).filter(Boolean);
+  const areas = (countByMultiValueField(vol, 'areas') || []).map(([label]) => (label || '').trim()).filter(Boolean);
   const disp = (countByMultiValueField(vol, 'disponibilidade') || []).map(([label]) => label).filter(Boolean);
   const estados = countByField(vol, 'estado').map(([label]) => label);
   estados.sort((a, b) => {
@@ -2141,7 +2166,7 @@ function updateFilterUi() {
   if (filterEstado) filterEstado.value = filters.estado || '';
   if (filterCidade) filterCidade.value = filters.cidade || '';
   if (filterComCheckin) filterComCheckin.value = filters.comCheckin || '';
-  if (filterArea) filterArea.value = (filters.areas && filters.areas[0]) || '';
+  if (filterArea) filterArea.value = (filters.areas && filters.areas[0] ? String(filters.areas[0]).trim() : '') || '';
   if (!activeFilters) return;
   const comCheckinLabel = { com: 'Com check-in', sem: 'Sem check-in', 'so-checkin': 'Só check-in (sem cadastro)' }[filters.comCheckin] || '';
   const chips = [
@@ -2596,7 +2621,8 @@ btnReviewLLM?.addEventListener('click', async () => {
 loginForm?.addEventListener('submit', handleLogin);
 btnLogout?.addEventListener('click', handleLogout);
 filterArea?.addEventListener('change', () => {
-  setFilter('areas', filterArea.value ? [filterArea.value] : []);
+  const val = (filterArea.value || '').trim();
+  setFilter('areas', val ? [val] : []);
 });
 filterDisp?.addEventListener('change', () => setFilter('disponibilidade', filterDisp.value));
 filterEstado?.addEventListener('change', () => setFilter('estado', filterEstado.value));
@@ -3302,8 +3328,9 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
       authMinisterioNomes = Array.isArray(parsed.ministerioNomes) ? parsed.ministerioNomes : [];
       authFotoUrl = parsed.fotoUrl != null ? parsed.fotoUrl : null;
       authMustChangePassword = !!parsed.mustChangePassword;
+      authIsMasterAdmin = !!parsed.isMasterAdmin;
     } catch (_) {
-      authToken = ''; authUser = ''; authRole = 'admin'; authEmail = null; authMinisterioId = null; authMinisterioNome = null; authMinisterioIds = []; authMinisterioNomes = []; authFotoUrl = null; authMustChangePassword = false;
+      authToken = ''; authUser = ''; authRole = 'admin'; authEmail = null; authMinisterioId = null; authMinisterioNome = null; authMinisterioIds = []; authMinisterioNomes = []; authFotoUrl = null; authMustChangePassword = false; authIsMasterAdmin = false;
     }
   }
   updateAuthUi();
