@@ -717,8 +717,39 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
     const isLider = req.userRole === 'lider';
     const ministerioNomes = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
 
-    if (!isLider && isCacheValid('voluntarios')) {
-      return res.json(cache.voluntarios);
+    const buildResumo = (list) => {
+      const areasCount = {};
+      const dispCount = {};
+      (list || []).forEach(v => {
+        (v.areas || '').split(',').map(a => a.trim()).filter(Boolean).forEach(a => {
+          areasCount[a] = (areasCount[a] || 0) + 1;
+        });
+        (v.disponibilidade || '').split(',').map(d => d.trim()).filter(Boolean).forEach(d => {
+          dispCount[d] = (dispCount[d] || 0) + 1;
+        });
+      });
+      return {
+        total: (list || []).length,
+        areas: Object.entries(areasCount).sort((a, b) => b[1] - a[1]),
+        disponibilidade: Object.entries(dispCount).sort((a, b) => b[1] - a[1]),
+      };
+    };
+
+    const filterByMinisterio = (list) => {
+      if (!isLider || ministerioNomes.length === 0) return list || [];
+      return (list || []).filter((v) => {
+        const m = (v.ministerio || '').toString().trim();
+        return ministerioNomes.some((n) => n === m);
+      });
+    };
+
+    if (isCacheValid('voluntarios') && cache.voluntarios && Array.isArray(cache.voluntarios.voluntarios)) {
+      if (!isLider) return res.json(cache.voluntarios);
+      const filteredCached = filterByMinisterio(cache.voluntarios.voluntarios);
+      return res.json({
+        voluntarios: filteredCached,
+        resumo: buildResumo(filteredCached),
+      });
     }
 
     const mongoReady = mongoose.connection.readyState === 1;
@@ -733,97 +764,84 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
       voluntarios = await Voluntario.find({ ativo: true }).lean();
     }
 
-    // Incluir na lista toda conta com role voluntário e todo email que fez check-in (batch em uma única ida ao DB)
-    const existingEmails = new Set(voluntarios.map(v => (v.email || '').toLowerCase().trim()).filter(Boolean));
-    const toInsert = []; // { email, nome? }
-    try {
-      const usersVoluntarios = await User.find({ role: 'voluntario' }).select('email nome').lean();
-      (usersVoluntarios || []).forEach(u => {
-        const em = (u.email || '').toLowerCase().trim();
-        if (em && em.includes('@') && !existingEmails.has(em)) {
-          toInsert.push({ email: em, nome: (u.nome || '').toString().trim() });
-          existingEmails.add(em);
-        }
-      });
-      const checkinEmails = await Checkin.distinct('email').then(arr => (arr || []).map(e => (e || '').toLowerCase().trim()).filter(Boolean));
-      checkinEmails.forEach(em => {
-        if (em && em.includes('@') && !existingEmails.has(em)) {
-          toInsert.push({ email: em });
-          existingEmails.add(em);
-        }
-      });
-      if (toInsert.length > 0) {
-        const ops = toInsert.map(({ email, nome }) => ({
-          updateOne: {
-            filter: { email },
-            update: {
-              $setOnInsert: {
-                email,
-                ativo: true,
-                fonte: 'manual',
-                timestamp: new Date(),
-                timestampMs: Date.now(),
-                ...(nome ? { nome } : {}),
+    // Para líder, evita o bloco pesado de upsert em toda request (causa lentidão/travamento).
+    if (!isLider) {
+      // Incluir na lista toda conta com role voluntário e todo email que fez check-in (batch em uma única ida ao DB)
+      const existingEmails = new Set(voluntarios.map(v => (v.email || '').toLowerCase().trim()).filter(Boolean));
+      const toInsert = []; // { email, nome? }
+      try {
+        const usersVoluntarios = await User.find({ role: 'voluntario' }).select('email nome').lean();
+        (usersVoluntarios || []).forEach(u => {
+          const em = (u.email || '').toLowerCase().trim();
+          if (em && em.includes('@') && !existingEmails.has(em)) {
+            toInsert.push({ email: em, nome: (u.nome || '').toString().trim() });
+            existingEmails.add(em);
+          }
+        });
+        const checkinEmails = await Checkin.distinct('email').then(arr => (arr || []).map(e => (e || '').toLowerCase().trim()).filter(Boolean));
+        checkinEmails.forEach(em => {
+          if (em && em.includes('@') && !existingEmails.has(em)) {
+            toInsert.push({ email: em });
+            existingEmails.add(em);
+          }
+        });
+        if (toInsert.length > 0) {
+          const ops = toInsert.map(({ email, nome }) => ({
+            updateOne: {
+              filter: { email },
+              update: {
+                $setOnInsert: {
+                  email,
+                  ativo: true,
+                  fonte: 'manual',
+                  timestamp: new Date(),
+                  timestampMs: Date.now(),
+                  ...(nome ? { nome } : {}),
+                },
               },
+              upsert: true,
             },
-            upsert: true,
-          },
-        }));
-        await Voluntario.bulkWrite(ops, { ordered: false });
-        voluntarios = await Voluntario.find({ ativo: true }).lean();
-      }
-    } catch (e) { /* não falhar a listagem */ }
-
-    if (isLider && ministerioNomes.length > 0) {
-      voluntarios = voluntarios.filter((v) => {
-        const m = (v.ministerio || '').toString().trim();
-        return ministerioNomes.some((n) => n === m);
-      });
+          }));
+          await Voluntario.bulkWrite(ops, { ordered: false });
+          voluntarios = await Voluntario.find({ ativo: true }).lean();
+        }
+      } catch (e) { /* não falhar a listagem */ }
     }
 
     if (voluntarios.length === 0) {
       return res.json({ voluntarios: [], resumo: { total: 0, areas: [], disponibilidade: [] } });
     }
 
-    const areasCount = {};
-    const dispCount = {};
-    const normalized = voluntarios.map(v => ({
+    const normalizedAll = voluntarios.map(v => ({
       ...v,
       areas: Array.isArray(v.areas) ? v.areas.join(', ') : (v.areas || ''),
       disponibilidade: Array.isArray(v.disponibilidade) ? v.disponibilidade.join(', ') : (v.disponibilidade || ''),
     }));
 
-    const emails = [...new Set(normalized.map(v => (v.email || '').toLowerCase().trim()).filter(Boolean))];
+    const emails = [...new Set(normalizedAll.map(v => (v.email || '').toLowerCase().trim()).filter(Boolean))];
     const usersByEmail = {};
     if (emails.length > 0) {
       const users = await User.find({ email: { $in: emails } }).select('email fotoUrl').lean();
       users.forEach(u => { if (u.email) usersByEmail[u.email.toLowerCase()] = u.fotoUrl || null; });
     }
-    normalized.forEach(v => {
+    normalizedAll.forEach(v => {
       v.fotoUrl = usersByEmail[(v.email || '').toLowerCase()] || null;
     });
-    normalized.forEach(v => {
-      (v.areas || '').split(',').map(a => a.trim()).filter(Boolean).forEach(a => {
-        areasCount[a] = (areasCount[a] || 0) + 1;
-      });
-      (v.disponibilidade || '').split(',').map(d => d.trim()).filter(Boolean).forEach(d => {
-        dispCount[d] = (dispCount[d] || 0) + 1;
-      });
-    });
-    
-    const data = {
-      voluntarios: normalized,
-      resumo: {
-        total: normalized.length,
-        areas: Object.entries(areasCount).sort((a, b) => b[1] - a[1]),
-        disponibilidade: Object.entries(dispCount).sort((a, b) => b[1] - a[1]),
-      },
+
+    const fullData = {
+      voluntarios: normalizedAll,
+      resumo: buildResumo(normalizedAll),
     };
-    if (!isLider) {
-      cache.voluntarios = data;
-      cache.voluntariosTime = Date.now();
-    }
-    res.json(data);
+    cache.voluntarios = fullData;
+    cache.voluntariosTime = Date.now();
+
+    if (!isLider) return res.json(fullData);
+
+    const filtered = filterByMinisterio(normalizedAll);
+    return res.json({
+      voluntarios: filtered,
+      resumo: buildResumo(filtered),
+    });
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao carregar voluntários');
