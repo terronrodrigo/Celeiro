@@ -493,12 +493,14 @@ function setView(view, options) {
     const liderViewAllowed = (authRole === 'lider' || isLider) && authRole !== 'admin' && LIDER_VIEWS.includes(view);
     const match = allowed.includes(view) && (roleMatch || liderViewAllowed || perfilForLider || perfilForAdmin);
     if ((view === 'resumo' || view === 'voluntarios') && (authRole === 'lider' || isLider)) {
-      console.log('DEBUG setView para líder:', {
+      console.log('DEBUG setView viewItem para líder:', {
         view,
+        dataView: item.dataset.view,
         allowed,
         authRole,
         isLider,
         isAdmin,
+        role,
         roleMatch,
         liderViewAllowed,
         match,
