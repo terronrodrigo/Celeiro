@@ -482,7 +482,8 @@ function setView(view, options) {
     const roleMatch = (role === 'voluntario' ? isVol : (role === 'lider' ? isLider : isAdmin));
     const perfilForLider = (view === 'perfil' && isLider);
     const perfilForAdmin = (view === 'perfil' && isAdmin);
-    const match = allowed.includes(view) && (roleMatch || perfilForLider || perfilForAdmin);
+    const liderViewAllowed = isLider && !isAdmin && LIDER_VIEWS.includes(view);
+    const match = allowed.includes(view) && (roleMatch || liderViewAllowed || perfilForLider || perfilForAdmin);
     item.classList.toggle('active', match);
   });
   if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Celeiro SP';
