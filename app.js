@@ -224,6 +224,7 @@ function updateAuthUi() {
     if (errorEl) errorEl.style.display = 'none';
   } else {
     if (contentEl) contentEl.style.display = authMustChangePassword ? 'none' : 'block';
+    console.log('DEBUG updateAuthUi:', { isLogged, authRole, isLider, isAdmin, isVoluntario, contentDisplay: contentEl?.style.display });
   }
   if (btnLogout) btnLogout.disabled = !isLogged;
   const defaultName = isVoluntario ? 'Voluntário' : (isLider ? 'Líder' : 'Admin');
@@ -259,6 +260,8 @@ function updateAuthUi() {
   const btnRefresh = document.getElementById('btnRefresh');
   const filtersSection = document.querySelector('.view[data-view="resumo voluntarios"]');
   if (btnRefresh && filtersSection) btnRefresh.style.display = isLogged && (isAdmin || isLider || authRole === 'lider') ? '' : 'none';
+  const cadastroLinkSection = document.getElementById('cadastroLinkSection');
+  if (cadastroLinkSection) cadastroLinkSection.style.display = isLogged && isAdmin ? '' : 'none';
 }
 
 /** Limpa dados em memória e DOM de conteúdo por usuário, para não exibir tela do login anterior ao trocar de perfil. */
@@ -465,6 +468,7 @@ function setView(view, options) {
   const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
   const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
   const isAdmin = authRole === 'admin';
+  console.log('DEBUG setView início:', { view, authRole, isVol, hasMinisterios, isLider, isAdmin });
   if (isVol && !VOLUNTARIO_VIEWS.includes(view)) view = 'perfil';
   if ((authRole === 'lider' || isLider) && !isAdmin && !LIDER_VIEWS.includes(view)) view = 'checkin-ministerio';
   if (!isVol && !isLider && !isAdmin) view = 'perfil';
@@ -488,6 +492,19 @@ function setView(view, options) {
     const perfilForAdmin = (view === 'perfil' && isAdmin);
     const liderViewAllowed = (authRole === 'lider' || isLider) && authRole !== 'admin' && LIDER_VIEWS.includes(view);
     const match = allowed.includes(view) && (roleMatch || liderViewAllowed || perfilForLider || perfilForAdmin);
+    if ((view === 'resumo' || view === 'voluntarios') && (authRole === 'lider' || isLider)) {
+      console.log('DEBUG setView para líder:', {
+        view,
+        allowed,
+        authRole,
+        isLider,
+        isAdmin,
+        roleMatch,
+        liderViewAllowed,
+        match,
+        willBeActive: match
+      });
+    }
     item.classList.toggle('active', match);
   });
   if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Celeiro SP';
@@ -526,12 +543,15 @@ function setView(view, options) {
   if ((view === 'resumo' || view === 'voluntarios') && canSeeResumoVoluntarios) {
     if (!Array.isArray(voluntarios) || voluntarios.length === 0) {
       const isLeaderNotAdmin = (authRole === 'lider' || isLider) && !isAdmin;
+      console.log('DEBUG setView chamando fetch:', { view, isLeaderNotAdmin, willRenderBefore: isLeaderNotAdmin });
       if (isLeaderNotAdmin) render();
       fetchVoluntarios({ showGlobalLoading: !isLeaderNotAdmin });
     } else {
       render();
     }
   }
+  const activeViews = Array.from(document.querySelectorAll('.view.active')).map(el => el.dataset.view);
+  console.log('DEBUG setView fim:', { view, currentView, activeViewsCount: activeViews.length, activeViews });
 }
 
 async function fetchVoluntarios(opts) {
@@ -556,11 +576,13 @@ async function fetchVoluntarios(opts) {
     if (settled) return;
     if (!r.ok) {
       const errData = await r.json().catch(() => ({}));
+      console.error('DEBUG fetchVoluntarios erro:', { status: r.status, error: errData.error });
       throw new Error(errData.error || `HTTP ${r.status}`);
     }
     const data = await r.json();
     voluntarios = data.voluntarios || [];
     resumo = data.resumo || {};
+    console.log('DEBUG fetchVoluntarios sucesso:', { voluntariosCount: voluntarios.length, resumo });
     render();
     settled = true;
     clearTimeout(timeoutId);
