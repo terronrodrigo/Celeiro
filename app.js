@@ -274,7 +274,7 @@ function clearUserContent() {
   eventoSelecionadoHoje = null;
   selectedEmails.clear();
   currentView = '';
-  ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio'].forEach(v => setViewLoading(v, false));
+  ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios'].forEach(v => setViewLoading(v, false));
   const perfilFields = [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilEstado, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilMinisterio, perfilHorasSemana, perfilAreas, perfilTestemunho];
   perfilFields.forEach(el => { if (el) el.value = ''; });
   if (perfilDisponibilidadeGroup) {
@@ -514,8 +514,8 @@ function setView(view, options) {
   if (searchBox) searchBox.style.display = (isAdmin || isLider || authRole === 'lider') && view === 'voluntarios' ? 'flex' : 'none';
   if (view === 'voluntarios') voluntariosPageOffset = 0;
   if (!options.skipFetch) {
-    const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio'];
-    viewsWithFetch.forEach(v => setViewLoading(v, v === view));
+    const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios'];
+    viewsWithFetch.forEach(v => setViewLoading(v, false)); // Limpa loading de todas as views primeiro
     if (view === 'eventos-checkin') runWithTimeout('eventos-checkin', () => fetchEventosCheckin());
     else if (view === 'checkin-hoje') runWithTimeout('checkin-hoje', () => fetchEventosHoje());
     else if (view === 'meus-checkins') runWithTimeout('meus-checkins', () => fetchMeusCheckins());
@@ -523,7 +523,6 @@ function setView(view, options) {
     else if (view === 'ministros') runWithTimeout('ministros', () => fetchMinistros());
     else if (view === 'usuarios') runWithTimeout('usuarios', () => fetchUsers());
     else if (view === 'checkin-ministerio') runWithTimeout('checkin-ministerio', () => fetchCheckinsMinisterio());
-    else { viewsWithFetch.forEach(v => setViewLoading(v, false)); }
     if (view === 'resumo') fetchVersiculoDia();
     if ((view === 'resumo' || view === 'voluntarios') && Array.isArray(voluntarios) && voluntarios.length > 0) {
       updateFilters();
