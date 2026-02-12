@@ -404,6 +404,34 @@ function setViewLoading(viewName, loading) {
   if (section) section.classList.toggle('view-loading', loading);
 }
 
+const VIEW_LOAD_TIMEOUT_MS = 15000;
+let viewLoadTimeoutId = null;
+
+function getDefaultView() {
+  const isVol = String(authRole || '').toLowerCase() === 'voluntario';
+  const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
+  const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
+  if (isVol) return 'perfil';
+  if (isLider && !(authRole === 'admin')) return 'checkin-ministerio';
+  return 'resumo';
+}
+
+/** Executa fetch da view com timeout; se travar, remove loading e redireciona sem animação. */
+function runWithTimeout(viewName, fetchFn, timeoutMs) {
+  const ms = timeoutMs || VIEW_LOAD_TIMEOUT_MS;
+  if (viewLoadTimeoutId) clearTimeout(viewLoadTimeoutId);
+  viewLoadTimeoutId = setTimeout(() => {
+    viewLoadTimeoutId = null;
+    setViewLoading(viewName, false);
+    setView(getDefaultView(), { skipFetch: true });
+  }, ms);
+  Promise.resolve(fetchFn()).finally(() => {
+    if (viewLoadTimeoutId) clearTimeout(viewLoadTimeoutId);
+    viewLoadTimeoutId = null;
+    setViewLoading(viewName, false);
+  });
+}
+
 const LIST_PAGE_SIZE = 50;
 let voluntariosPageOffset = 0;
 
@@ -420,8 +448,13 @@ const VIEW_META = {
   'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico de presenças.', role: 'voluntario' },
 };
 
-function setView(view) {
-  if (view === 'emails') view = 'voluntarios'; // legado: links antigos
+function setView(view, options) {
+  options = options || {};
+  if (viewLoadTimeoutId) {
+    clearTimeout(viewLoadTimeoutId);
+    viewLoadTimeoutId = null;
+  }
+  if (view === 'emails') view = 'voluntarios';
   const isVol = String(authRole || '').toLowerCase() === 'voluntario';
   const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
   const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
@@ -451,18 +484,21 @@ function setView(view) {
   if (pageSubtitle) pageSubtitle.textContent = (meta && meta.subtitle) || '';
   if (searchBox) searchBox.style.display = isAdmin && view === 'voluntarios' ? 'flex' : 'none';
   if (view === 'voluntarios') voluntariosPageOffset = 0;
-  const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio'];
-  viewsWithFetch.forEach(v => setViewLoading(v, v === view));
-  if (view === 'eventos-checkin') fetchEventosCheckin();
-  if (view === 'checkin-hoje') fetchEventosHoje();
-  if (view === 'meus-checkins') fetchMeusCheckins();
-  if (view === 'perfil') fetchPerfil();
-  if (view === 'ministros') fetchMinistros();
-  if (view === 'usuarios') fetchUsers();
-  if (view === 'checkin-ministerio') fetchCheckinsMinisterio();
-  if (view === 'resumo') fetchVersiculoDia();
-  if ((view === 'resumo' || view === 'voluntarios') && Array.isArray(voluntarios) && voluntarios.length > 0) {
-    updateFilters();
+  if (!options.skipFetch) {
+    const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio'];
+    viewsWithFetch.forEach(v => setViewLoading(v, v === view));
+    if (view === 'eventos-checkin') runWithTimeout('eventos-checkin', () => fetchEventosCheckin());
+    else if (view === 'checkin-hoje') runWithTimeout('checkin-hoje', () => fetchEventosHoje());
+    else if (view === 'meus-checkins') runWithTimeout('meus-checkins', () => fetchMeusCheckins());
+    else if (view === 'perfil') runWithTimeout('perfil', () => fetchPerfil());
+    else if (view === 'ministros') runWithTimeout('ministros', () => fetchMinistros());
+    else if (view === 'usuarios') runWithTimeout('usuarios', () => fetchUsers());
+    else if (view === 'checkin-ministerio') runWithTimeout('checkin-ministerio', () => fetchCheckinsMinisterio());
+    else { viewsWithFetch.forEach(v => setViewLoading(v, false)); }
+    if (view === 'resumo') fetchVersiculoDia();
+    if ((view === 'resumo' || view === 'voluntarios') && Array.isArray(voluntarios) && voluntarios.length > 0) {
+      updateFilters();
+    }
   }
   if (view === 'checkin' && isAdmin) {
     authFetch(`${API_BASE}/api/eventos-checkin`).then(r => r.ok ? r.json() : []).then(list => {
@@ -484,8 +520,16 @@ async function fetchVoluntarios() {
     return;
   }
   showLoading(true);
+  let settled = false;
+  const timeoutId = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    showLoading(false);
+    showError('A conexão demorou. Tente novamente.');
+  }, VIEW_LOAD_TIMEOUT_MS);
   try {
     const r = await authFetch(`${API_BASE}/api/voluntarios`);
+    if (settled) return;
     if (!r.ok) {
       const errData = await r.json().catch(() => ({}));
       throw new Error(errData.error || `HTTP ${r.status}`);
@@ -494,9 +538,17 @@ async function fetchVoluntarios() {
     voluntarios = data.voluntarios || [];
     resumo = data.resumo || {};
     render();
+    settled = true;
+    clearTimeout(timeoutId);
     showLoading(false);
   } catch (e) {
-    if (e.message === 'AUTH_REQUIRED') return;
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeoutId);
+    if (e.message === 'AUTH_REQUIRED') {
+      showLoading(false);
+      return;
+    }
     showError(e.message || 'Verifique se o servidor está rodando em ' + API_BASE);
   }
 }
