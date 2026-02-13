@@ -1968,10 +1968,11 @@ async function openPerfilVoluntario(email, options) {
   if (v) {
     // Líder vê apenas nome, email e telefone
     if (isLider) {
+      const whatsappValue = v.whatsapp || '(não cadastrado)';
       content.innerHTML = fotoBlock + (`
         ${fieldRow('Nome', v.nome)}
         ${fieldRow('Email', v.email)}
-        ${fieldRow('WhatsApp', v.whatsapp)}
+        ${fieldRow('WhatsApp', whatsappValue)}
         ${checkinsSection}
       `.trim() || '<p>Nenhum dado cadastrado.</p>');
     } else {
