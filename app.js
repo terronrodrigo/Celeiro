@@ -1963,27 +1963,40 @@ async function openPerfilVoluntario(email, options) {
   const nomeDisplay = v?.nome || (checkinsList && checkinsList.find(c => (c.email || '').toLowerCase() === key)?.nome) || email || '?';
   const fotoBlock = `<div class="perfil-modal-foto">${avatarHtml(fotoUrl, nomeDisplay, 'avatar-lg')}</div>`;
   const checkinsSection = `<div class="perfil-section"><span class="perfil-label">Check-ins</span>${renderCheckinsBadges(key, checkinsList)}</div>`;
+  const isLider = authRole === 'lider';
+  
   if (v) {
-    const areasStr = Array.isArray(v.areas) ? v.areas.join(', ') : (v.areas || '');
-    content.innerHTML = fotoBlock + (`
-      ${fieldRow('Nome', v.nome)}
-      ${fieldRow('Email', v.email)}
-      ${fieldRow('Nascimento', v.nascimento ? (typeof v.nascimento === 'string' ? v.nascimento : new Date(v.nascimento).toLocaleDateString('pt-BR')) : null)}
-      ${fieldRow('WhatsApp', v.whatsapp)}
-      ${fieldRow('País', v.pais)}
-      ${fieldRow('Estado', v.estado)}
-      ${fieldRow('Cidade', v.cidade)}
-      ${fieldRow('Evangélico', v.evangelico)}
-      ${fieldRow('Igreja', v.igreja)}
-      ${fieldRow('Tempo na igreja', v.tempoIgreja)}
-      ${fieldRow('Voluntário na igreja', v.voluntarioIgreja)}
-      ${fieldRow('Ministério', v.ministerio)}
-      ${fieldRow('Disponibilidade', v.disponibilidade)}
-      ${fieldRow('Horas por semana', v.horasSemana)}
-      ${fieldRow('Áreas', areasStr || null)}
-      ${fieldRow('Testemunho', v.testemunho || null)}
-      ${checkinsSection}
-    `.trim() || '<p>Nenhum dado cadastrado.</p>');
+    // Líder vê apenas nome, email e telefone
+    if (isLider) {
+      content.innerHTML = fotoBlock + (`
+        ${fieldRow('Nome', v.nome)}
+        ${fieldRow('Email', v.email)}
+        ${fieldRow('WhatsApp', v.whatsapp)}
+        ${checkinsSection}
+      `.trim() || '<p>Nenhum dado cadastrado.</p>');
+    } else {
+      // Admin vê todos os dados
+      const areasStr = Array.isArray(v.areas) ? v.areas.join(', ') : (v.areas || '');
+      content.innerHTML = fotoBlock + (`
+        ${fieldRow('Nome', v.nome)}
+        ${fieldRow('Email', v.email)}
+        ${fieldRow('Nascimento', v.nascimento ? (typeof v.nascimento === 'string' ? v.nascimento : new Date(v.nascimento).toLocaleDateString('pt-BR')) : null)}
+        ${fieldRow('WhatsApp', v.whatsapp)}
+        ${fieldRow('País', v.pais)}
+        ${fieldRow('Estado', v.estado)}
+        ${fieldRow('Cidade', v.cidade)}
+        ${fieldRow('Evangélico', v.evangelico)}
+        ${fieldRow('Igreja', v.igreja)}
+        ${fieldRow('Tempo na igreja', v.tempoIgreja)}
+        ${fieldRow('Voluntário na igreja', v.voluntarioIgreja)}
+        ${fieldRow('Ministério', v.ministerio)}
+        ${fieldRow('Disponibilidade', v.disponibilidade)}
+        ${fieldRow('Horas por semana', v.horasSemana)}
+        ${fieldRow('Áreas', areasStr || null)}
+        ${fieldRow('Testemunho', v.testemunho || null)}
+        ${checkinsSection}
+      `.trim() || '<p>Nenhum dado cadastrado.</p>');
+    }
   } else {
     const sourceForCheckin = checkinsList || (Array.isArray(checkins) ? checkins : []);
     const checkin = sourceForCheckin.find(c => (c.email || '').toLowerCase() === key);
