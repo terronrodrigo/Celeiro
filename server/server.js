@@ -257,9 +257,7 @@ function requireMasterAdmin(req, res, next) {
 }
 
 function requireAdminOrLider(req, res, next) {
-  console.log('[requireAdminOrLider]', { userRole: req.userRole, userEmail: req.userEmail });
   if (req.userRole !== 'admin' && req.userRole !== 'lider') {
-    console.error('[requireAdminOrLider] BLOCKED:', req.userRole);
     return res.status(403).json({ error: 'Acesso negado. Apenas administradores ou líderes de ministério.' });
   }
   next();
@@ -715,7 +713,6 @@ app.post('/api/logout', requireAuth, (req, res) => {
 });
 
 app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) => {
-  console.log('[GET /api/voluntarios] START', { userRole: req.userRole, userEmail: req.userEmail, ministerioNomes: req.userMinisterioNomes });
   try {
     const isLider = req.userRole === 'lider';
     const ministerioNomes = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
@@ -838,13 +835,9 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
     cache.voluntarios = fullData;
     cache.voluntariosTime = Date.now();
 
-    if (!isLider) {
-      console.log('[GET /api/voluntarios] ADMIN response:', { voluntariosCount: fullData.voluntarios.length });
-      return res.json(fullData);
-    }
+    if (!isLider) return res.json(fullData);
 
     const filtered = filterByMinisterio(normalizedAll);
-    console.log('[GET /api/voluntarios] LIDER response:', { voluntariosCount: filtered.length, ministerioNomes });
     return res.json({
       voluntarios: filtered,
       resumo: buildResumo(filtered),
@@ -943,11 +936,11 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
     if (eventoId) query.eventoId = eventoId;
     if (ministerio) query.ministerio = ministerio;
 
-    let checkinsData = await Checkin.find(query).sort({ timestampMs: -1 }).lean();
+    let checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin eventoId presente').sort({ timestampMs: -1 }).lean();
 
     if (isAdmin && checkinsData.length === 0 && CHECKIN_CSV_PATH) {
       await syncCheckins();
-      checkinsData = await Checkin.find(query).sort({ timestampMs: -1 }).lean();
+      checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin eventoId presente').sort({ timestampMs: -1 }).lean();
     }
 
     if (checkinsData.length === 0) {
@@ -1021,7 +1014,7 @@ app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
       }
     }
     // Limita a 500 check-ins mais recentes para performance
-    const checkinsData = await Checkin.find(query).sort({ timestampMs: -1 }).limit(500).lean();
+    const checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin').sort({ timestampMs: -1 }).limit(500).lean();
     const ministeriosCount = {};
     checkinsData.forEach(c => {
       const m = (c.ministerio || '').trim();
@@ -1806,10 +1799,19 @@ app.get('/api/ministros', requireAuth, requireAdmin, async (req, res) => {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
     const list = await Ministerio.find({}).sort({ nome: 1 }).lean();
-    const withLeaders = await Promise.all(list.map(async (m) => {
-      const leaders = await User.find({ ministerioIds: m._id, ativo: true }).select('nome email role').lean();
-      return { ...m, lideres: leaders };
-    }));
+    
+    // Otimização: busca todos os líderes de uma vez (evita N+1)
+    const ministerioIds = list.map(m => m._id);
+    const allLeaders = await User.find({ ministerioIds: { $in: ministerioIds }, ativo: true }).select('nome email role ministerioIds').lean();
+    const leadersByMinist = {};
+    allLeaders.forEach(u => {
+      (u.ministerioIds || []).forEach(mid => {
+        const k = String(mid);
+        if (!leadersByMinist[k]) leadersByMinist[k] = [];
+        leadersByMinist[k].push({ nome: u.nome, email: u.email, role: u.role });
+      });
+    });
+    const withLeaders = list.map(m => ({ ...m, lideres: leadersByMinist[String(m._id)] || [] }));
     res.json(withLeaders);
   } catch (err) {
     console.error(err);

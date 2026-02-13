@@ -21,6 +21,7 @@ const checkinSchema = new mongoose.Schema({
     { email: 1, ministerio: 1, dataCheckin: 1 },
     { ministerio: 1, dataCheckin: 1 },
     { ministerio: 1, timestampMs: -1 }, // Para sort rápido na consulta de check-ins do líder
+    { eventoId: 1, email: 1, dataCheckin: 1 }, // Para validação de check-in duplicado
     { email: 1 },
     { eventoId: 1 },
     { userId: 1 },

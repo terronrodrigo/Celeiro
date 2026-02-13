@@ -48,7 +48,14 @@ const userSchema = new mongoose.Schema({
   resetTokenExpires: { type: Date, default: null },
   /** Exigir troca de senha no primeiro acesso (ex.: usuário criado por admin). */
   mustChangePassword: { type: Boolean, default: false },
+}, {
+  timestamps: false,
 });
+
+// Índices para performance
+userSchema.index({ role: 1 });
+userSchema.index({ ministerioIds: 1, ativo: 1 });
+userSchema.index({ resetToken: 1 });
 
 // Hash da senha antes de salvar
 userSchema.pre('save', async function(next) {

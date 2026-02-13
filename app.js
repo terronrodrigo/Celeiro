@@ -24,10 +24,6 @@ const MINISTERIOS_PADRAO = [
   'Intercessão Online',
 ];
 
-const TEMPO_IGREJA_OPCOES = ['', 'Menos de 1 ano', '1 a 3 anos', '3 a 5 anos', '5 a 10 anos', 'Mais de 10 anos', 'Não frequento'];
-const DISPONIBILIDADE_OPCOES = ['', 'Domingos manhã', 'Domingos noite', 'Sábados', 'Durante a semana', 'Finais de semana', 'Conforme necessidade', 'Outro'];
-const HORAS_SEMANA_OPCOES = ['', 'Até 2 horas', '2 a 4 horas', '4 a 6 horas', '6 a 10 horas', 'Mais de 10 horas'];
-
 /** Formata e valida WhatsApp: só dígitos, 10 ou 11 caracteres. Retorna string formatada (11) 99999-9999 ou vazio se inválido. */
 function formatarWhatsApp(val) {
   const digits = String(val || '').replace(/\D/g, '');
@@ -224,7 +220,6 @@ function updateAuthUi() {
     if (errorEl) errorEl.style.display = 'none';
   } else {
     if (contentEl) contentEl.style.display = authMustChangePassword ? 'none' : 'block';
-    console.log('DEBUG updateAuthUi:', { isLogged, authRole, isLider, isAdmin, isVoluntario, contentDisplay: contentEl?.style.display });
   }
   if (btnLogout) btnLogout.disabled = !isLogged;
   const defaultName = isVoluntario ? 'Voluntário' : (isLider ? 'Líder' : 'Admin');
@@ -468,7 +463,6 @@ function setView(view, options) {
   const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
   const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
   const isAdmin = authRole === 'admin';
-  console.log('DEBUG setView início:', { view, authRole, isVol, hasMinisterios, isLider, isAdmin });
   if (isVol && !VOLUNTARIO_VIEWS.includes(view)) view = 'perfil';
   if ((authRole === 'lider' || isLider) && !isAdmin && !LIDER_VIEWS.includes(view)) view = 'checkin-ministerio';
   if (!isVol && !isLider && !isAdmin) view = 'perfil';
@@ -492,21 +486,6 @@ function setView(view, options) {
     const perfilForAdmin = (view === 'perfil' && isAdmin);
     const liderViewAllowed = (authRole === 'lider' || isLider) && authRole !== 'admin' && LIDER_VIEWS.includes(view);
     const match = allowed.includes(view) && (roleMatch || liderViewAllowed || perfilForLider || perfilForAdmin);
-    if ((view === 'resumo' || view === 'voluntarios') && (authRole === 'lider' || isLider)) {
-      console.log('DEBUG setView viewItem para líder:', {
-        view,
-        dataView: item.dataset.view,
-        allowed,
-        authRole,
-        isLider,
-        isAdmin,
-        role,
-        roleMatch,
-        liderViewAllowed,
-        match,
-        willBeActive: match
-      });
-    }
     item.classList.toggle('active', match);
   });
   if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Celeiro SP';
@@ -544,15 +523,12 @@ function setView(view, options) {
   if ((view === 'resumo' || view === 'voluntarios') && canSeeResumoVoluntarios) {
     if (!Array.isArray(voluntarios) || voluntarios.length === 0) {
       const isLeaderNotAdmin = (authRole === 'lider' || isLider) && !isAdmin;
-      console.log('DEBUG setView chamando fetch:', { view, isLeaderNotAdmin, willRenderBefore: isLeaderNotAdmin });
       if (isLeaderNotAdmin) render();
       fetchVoluntarios({ showGlobalLoading: !isLeaderNotAdmin });
     } else {
       render();
     }
   }
-  const activeViews = Array.from(document.querySelectorAll('.view.active')).map(el => el.dataset.view);
-  console.log('DEBUG setView fim:', { view, currentView, activeViewsCount: activeViews.length, activeViews });
 }
 
 async function fetchVoluntarios(opts) {
@@ -577,13 +553,11 @@ async function fetchVoluntarios(opts) {
     if (settled) return;
     if (!r.ok) {
       const errData = await r.json().catch(() => ({}));
-      console.error('DEBUG fetchVoluntarios erro:', { status: r.status, error: errData.error });
       throw new Error(errData.error || `HTTP ${r.status}`);
     }
     const data = await r.json();
     voluntarios = data.voluntarios || [];
     resumo = data.resumo || {};
-    console.log('DEBUG fetchVoluntarios sucesso:', { voluntariosCount: voluntarios.length, resumo });
     render();
     settled = true;
     clearTimeout(timeoutId);
@@ -1319,30 +1293,6 @@ function populatePerfilEstado() {
   sel.innerHTML = '<option value="">Selecione o estado (UF)</option>' + UFS_BR.map(uf => `<option value="${uf}">${uf}</option>`).join('');
 }
 
-function updatePerfilFotoUI() {
-  const img = document.getElementById('perfilFotoImg');
-  const placeholder = document.getElementById('perfilFotoPlaceholder');
-  const btnUpload = document.getElementById('btnPerfilFotoUpload');
-  const btnExcluir = document.getElementById('btnPerfilFotoExcluir');
-  const url = authFotoUrl ? getFotoUrl(authFotoUrl) : '';
-  if (img) {
-    if (url) {
-      img.onerror = function () { this.onerror = null; this.style.display = 'none'; if (placeholder) placeholder.style.display = 'flex'; };
-      img.src = url;
-      img.style.display = '';
-      img.alt = 'Sua foto';
-    } else {
-      img.src = '';
-      img.style.display = 'none';
-    }
-  }
-  if (placeholder) placeholder.style.display = url ? 'none' : 'flex';
-  if (btnUpload) {
-    btnUpload.textContent = url ? 'Trocar imagem' : 'Enviar foto';
-  }
-  if (btnExcluir) btnExcluir.style.display = url ? '' : 'none';
-}
-
 async function fetchPerfil() {
   if (!authToken) return;
   populatePerfilEstado();
@@ -1394,7 +1344,6 @@ async function fetchPerfil() {
       }
       updateAuthUi();
     }
-    updatePerfilFotoUI();
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
   finally { setViewLoading('perfil', false); }
 }
@@ -1499,32 +1448,6 @@ async function confirmarCheckinDesdePerfil() {
   } catch (e) {
     alert(e.message || 'Erro ao confirmar check-in.');
   }
-}
-
-async function fetchEscalaFutura() {
-  const container = document.getElementById('escalaFuturaList');
-  if (!container || !authToken) return;
-  try {
-    const r = await authFetch(`${API_BASE}/api/eventos-checkin`);
-    if (!r.ok) return;
-    const list = await r.json();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const futuros = (list || []).filter(e => {
-      const d = new Date(e.data);
-      d.setHours(0, 0, 0, 0);
-      return d >= today;
-    }).sort((a, b) => new Date(a.data) - new Date(b.data));
-    if (!futuros.length) {
-      container.innerHTML = '<p class="auth-subtitle">Nenhum evento futuro cadastrado. Os eventos aparecem aqui quando o admin criar datas de check-in.</p>';
-      return;
-    }
-    container.innerHTML = futuros.map(e => {
-      const d = new Date(e.data);
-      const label = e.label || d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-      return `<div class="kpi-card" style="margin-bottom:12px"><strong>${escapeHtml(label)}</strong><br><small>${d.toLocaleDateString('pt-BR')}</small></div>`;
-    }).join('');
-  } catch (e) { if (e.message === 'AUTH_REQUIRED') return; container.innerHTML = '<p class="auth-subtitle">Não foi possível carregar a escala.</p>'; }
 }
 
 async function fetchMeusCheckins() {
@@ -2906,45 +2829,6 @@ function resizeImageForAvatar(file) {
   });
 }
 
-document.getElementById('btnPerfilFotoUpload')?.addEventListener('click', () => document.getElementById('perfilFotoInput')?.click());
-document.getElementById('perfilFotoInput')?.addEventListener('change', async (e) => {
-  const file = e.target?.files?.[0];
-  e.target.value = '';
-  if (!file || !authToken) return;
-  const btn = document.getElementById('btnPerfilFotoUpload');
-  if (btn) btn.disabled = true;
-  try {
-    const resized = await resizeImageForAvatar(file);
-    const fd = new FormData();
-    fd.append('foto', resized instanceof Blob ? resized : file, 'foto.jpg');
-    const r = await authFetch(`${API_BASE}/api/me/foto`, { method: 'POST', body: fd });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || 'Falha no upload');
-    authFotoUrl = data.fotoUrl || null;
-    updatePerfilFotoUI();
-    updateAuthUi();
-    const stored = localStorage.getItem(AUTH_STORAGE_KEY);
-    if (stored) try { const p = JSON.parse(stored); p.fotoUrl = authFotoUrl; localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(p)); } catch (_) {}
-  } catch (err) { alert(err.message || 'Erro ao enviar foto.'); }
-  if (btn) btn.disabled = false;
-});
-document.getElementById('btnPerfilFotoExcluir')?.addEventListener('click', async () => {
-  if (!authToken) return;
-  const btn = document.getElementById('btnPerfilFotoExcluir');
-  if (btn) btn.disabled = true;
-  try {
-    const r = await authFetch(`${API_BASE}/api/me/foto`, { method: 'DELETE' });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || 'Falha ao excluir');
-    authFotoUrl = null;
-    updatePerfilFotoUI();
-    updateAuthUi();
-    const stored = localStorage.getItem(AUTH_STORAGE_KEY);
-    if (stored) try { const p = JSON.parse(stored); p.fotoUrl = null; localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(p)); } catch (_) {}
-  } catch (err) { alert(err.message || 'Erro ao excluir foto.'); }
-  if (btn) btn.disabled = false;
-});
-
 btnConfirmarCheckin?.addEventListener('click', confirmarCheckin);
 document.getElementById('btnPerfilConfirmarCheckin')?.addEventListener('click', confirmarCheckinDesdePerfil);
 
@@ -3263,14 +3147,6 @@ function showCheckinPublicOverlay() {
   if (overlay) overlay.style.display = 'flex';
   if (auth) auth.style.display = 'none';
   if (content) content.style.display = 'none';
-}
-
-function hideCheckinPublicOverlay() {
-  const overlay = document.getElementById('checkinPublicOverlay');
-  if (overlay) overlay.style.display = 'none';
-  checkinPublicEventoId = null;
-  updateAuthUi();
-  if (authToken && contentEl) contentEl.style.display = 'block';
 }
 
 async function loadCheckinPublic(eventoId) {
