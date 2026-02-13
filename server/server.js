@@ -1556,13 +1556,14 @@ app.post('/api/send-email', requireAuth, requireAdmin, async (req, res) => {
 
   const baseHtml = html || (text ? `<p>${String(text).replace(/\n/g, '<br>')}</p>` : undefined);
 
+  // Resend: limite de 2 requisições por segundo – envio sequencial com intervalo de 500ms
+  const RESEND_DELAY_MS = 500;
+
   try {
-    const BATCH = 10;
     const results = [];
-    for (let i = 0; i < validTo.length; i += BATCH) {
-      const chunk = validTo.slice(i, i + BATCH);
-      const promises = chunk.map(async (email) => {
-        const htmlFinal = baseHtml ? personalize(baseHtml, email) : undefined;
+    for (const email of validTo) {
+      const htmlFinal = baseHtml ? personalize(baseHtml, email) : undefined;
+      try {
         const { data, error } = await resend.emails.send({
           from,
           to: email,
@@ -1571,10 +1572,11 @@ app.post('/api/send-email', requireAuth, requireAdmin, async (req, res) => {
           html: htmlFinal,
           text: !html && text ? personalize(text, email) : undefined,
         });
-        return { email, id: data?.id, error: error?.message };
-      });
-      const chunkResults = await Promise.all(promises);
-      results.push(...chunkResults);
+        results.push({ email, id: data?.id, error: error?.message });
+      } catch (e) {
+        results.push({ email, id: null, error: e?.message || 'Erro ao enviar' });
+      }
+      if (results.length < validTo.length) await new Promise(r => setTimeout(r, RESEND_DELAY_MS));
     }
     const failed = results.filter(r => r.error);
     res.json({

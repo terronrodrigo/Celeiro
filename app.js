@@ -96,7 +96,9 @@ const emailSubject = document.getElementById('emailSubject');
 const emailBodyBase = document.getElementById('emailBodyBase');
 const emailBodyEditor = document.getElementById('emailBodyEditor');
 const btnSendEmail = document.getElementById('btnSendEmail');
+const btnReenviarUltimo = document.getElementById('btnReenviarUltimo');
 const btnReviewLLM = document.getElementById('btnReviewLLM');
+let lastSendPayload = null; // { to, subject, html, voluntarios } para "Reenviar último envio"
 const emailReviewError = document.getElementById('emailReviewError');
 const sendResult = document.getElementById('sendResult');
 const authOverlay = document.getElementById('authOverlay');
@@ -2349,6 +2351,7 @@ function openModal() {
   if (emailBodyEditor) emailBodyEditor.innerHTML = '';
   if (emailReviewError) { emailReviewError.style.display = ''; emailReviewError.style.visibility = 'hidden'; emailReviewError.textContent = ''; }
   if (sendResult) { sendResult.style.display = 'none'; sendResult.innerHTML = ''; }
+  if (btnReenviarUltimo) btnReenviarUltimo.style.display = lastSendPayload ? '' : 'none';
   modal?.setAttribute('aria-hidden', 'false');
   modal?.classList.add('open');
 }
@@ -2426,6 +2429,15 @@ async function sendEmails() {
       sendResult.innerHTML = totalSent > 0
         ? `Enviados: ${totalSent}${totalFailed > 0 ? ` · Falhas: ${totalFailed}` : ''}.`
         : (totalFailed > 0 ? `Nenhum enviado. Falhas: ${totalFailed}.` : 'Nenhum destinatário válido.');
+      const volList = Array.isArray(voluntarios) ? voluntarios : [];
+      const voluntariosByEmail = new Map(volList.map(v => [(v.email || '').toLowerCase(), v]));
+      const fullMap = {};
+      to.forEach(email => {
+        const v = voluntariosByEmail.get((email || '').toLowerCase());
+        if (v?.nome) fullMap[email] = v.nome;
+      });
+      lastSendPayload = { to: [...to], subject, html, voluntarios: fullMap };
+      if (btnReenviarUltimo) btnReenviarUltimo.style.display = '';
       setTimeout(() => {
         closeModal();
         if (sendResult) { sendResult.style.display = 'none'; sendResult.innerHTML = ''; }
@@ -2440,6 +2452,60 @@ async function sendEmails() {
   }
   btnSendEmail.disabled = false;
   btnSendEmail.textContent = 'Enviar';
+}
+
+async function reenviarUltimoEnvio() {
+  if (!lastSendPayload || !lastSendPayload.to || !lastSendPayload.to.length) {
+    alert('Não há último envio para reenviar.');
+    return;
+  }
+  const { to, subject, html, voluntarios: voluntariosMap } = lastSendPayload;
+  const total = to.length;
+  if (btnSendEmail) { btnSendEmail.disabled = true; btnSendEmail.textContent = 'Enviando...'; }
+  if (btnReenviarUltimo) btnReenviarUltimo.disabled = true;
+  sendResult.style.display = 'block';
+  sendResult.className = 'send-result';
+  sendResult.textContent = `Reenviando 0/${total}...`;
+
+  const BATCH_SIZE = 50;
+  let totalSent = 0;
+  let totalFailed = 0;
+
+  try {
+    for (let i = 0; i < to.length; i += BATCH_SIZE) {
+      const chunk = to.slice(i, i + BATCH_SIZE);
+      const map = {};
+      chunk.forEach(email => {
+        if (voluntariosMap && voluntariosMap[email]) map[email] = voluntariosMap[email];
+      });
+      sendResult.textContent = `Reenviando ${Math.min(i + BATCH_SIZE, total)}/${total}...`;
+      const r = await authFetch(`${API_BASE}/api/send-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: chunk, subject, html, voluntarios: map }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        sendResult.className = 'send-result error';
+        sendResult.textContent = `Erro: ${data.error || 'Falha no envio.'} (lote ${Math.floor(i / BATCH_SIZE) + 1})`;
+        break;
+      }
+      totalSent += data.sent || 0;
+      totalFailed += data.failed || 0;
+    }
+    if (totalSent > 0 || totalFailed > 0) {
+      sendResult.className = 'send-result success';
+      sendResult.innerHTML = totalSent > 0
+        ? `Reenviados: ${totalSent}${totalFailed > 0 ? ` · Falhas: ${totalFailed}` : ''}.`
+        : (totalFailed > 0 ? `Nenhum reenviado. Falhas: ${totalFailed}.` : '');
+    }
+  } catch (e) {
+    if (e.message === 'AUTH_REQUIRED') return;
+    sendResult.className = 'send-result error';
+    sendResult.textContent = 'Erro de rede: ' + (e.message || 'Verifique o servidor.');
+  }
+  if (btnSendEmail) { btnSendEmail.disabled = false; btnSendEmail.textContent = 'Enviar'; }
+  if (btnReenviarUltimo) btnReenviarUltimo.disabled = false;
 }
 
 async function handleLogin(e) {
@@ -2554,6 +2620,7 @@ modalClose?.addEventListener('click', closeModal);
 modalCancel?.addEventListener('click', closeModal);
 modalBackdrop?.addEventListener('click', closeModal);
 btnSendEmail?.addEventListener('click', sendEmails);
+btnReenviarUltimo?.addEventListener('click', reenviarUltimoEnvio);
 
 btnReviewLLM?.addEventListener('click', async () => {
   const text = (emailBodyBase?.value || '').trim() || (emailBodyEditor?.innerText || emailBodyEditor?.textContent || '').trim();
