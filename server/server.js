@@ -1218,21 +1218,7 @@ app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
 
     const evento = await EventoCheckin.findById(eventoId).lean();
     if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou inativo.');
-    const hoje = new Date();
-    const start = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
-    const eventDate = new Date(evento.data);
-    const eventDayStart = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
-    if (eventDayStart < start || eventDayStart >= end) return sendError(res, 400, 'Só é possível confirmar check-in no próprio dia do evento.');
-    if (!isWithinEventWindow(evento)) {
-      const hin = (evento.horarioInicio || '').trim();
-      const hfi = (evento.horarioFim || '').trim();
-      const msg = hin || hfi
-        ? `Check-in só é permitido entre ${hin || '00:00'} e ${hfi || '23:59'} (horário de São Paulo).`
-        : 'Check-in não permitido neste momento.';
-      return sendError(res, 400, msg);
-    }
+    // Se o evento está ativo, aceita check-in a qualquer momento (sem trava de data nem janela de horário).
 
     const dataCheckinStr = evento.data.toISOString().slice(0,10);
     const dataCheckin = getDayRangeUTC(dataCheckinStr).start;
@@ -1297,17 +1283,8 @@ app.post('/api/checkin-public', async (req, res) => {
     if (!eventoId) return sendError(res, 400, 'Evento é obrigatório.');
     const evento = await EventoCheckin.findById(eventoId).lean();
     if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
-    const hojeStr = getHojeDateString();
-    const eventDateStr = getEventDateStringSaoPaulo(evento);
-    if (eventDateStr !== hojeStr) return sendError(res, 400, 'Só é possível fazer check-in no dia do evento.');
-    if (!isWithinEventWindow(evento)) {
-      const hin = (evento.horarioInicio || '').trim();
-      const hfi = (evento.horarioFim || '').trim();
-      const msg = hin || hfi
-        ? `Check-in só é permitido entre ${hin || '00:00'} e ${hfi || '23:59'} (horário de São Paulo).`
-        : 'Check-in não permitido neste momento.';
-      return sendError(res, 400, msg);
-    }
+    // Se o evento está ativo, aceita check-in a qualquer momento (sem trava de data nem janela de horário).
+    const eventDateStr = getEventDateStringSaoPaulo(evento) || new Date(evento.data).toISOString().slice(0, 10);
     const dataCheckin = getDayRangeUTC(eventDateStr).start;
     const existing = await Checkin.findOne({ eventoId, email: em, dataCheckin });
     if (existing) return res.status(200).json({ message: 'Check-in já realizado.', checkin: existing });
