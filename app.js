@@ -2697,6 +2697,19 @@ document.getElementById('btnVerMaisVoluntarios')?.addEventListener('click', () =
 });
 checkinMinisterio?.addEventListener('change', () => { checkinFilters.ministerio = checkinMinisterio?.value || ''; fetchCheckinsWithFilters(); });
 checkinSearch?.addEventListener('input', () => renderCheckins());
+document.getElementById('btnCheckinHoje')?.addEventListener('click', () => {
+  if (!checkinData) return;
+  const hojeStr = getHojeDateString();
+  const hasHoje = Array.from(checkinData.options).some((o) => o.value === hojeStr);
+  if (!hasHoje) {
+    const opt = document.createElement('option');
+    opt.value = hojeStr;
+    opt.textContent = 'Hoje (' + new Date(hojeStr + 'T12:00:00').toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA, day: '2-digit', month: '2-digit', year: 'numeric' }) + ')';
+    checkinData.insertBefore(opt, checkinData.options[1] || null);
+  }
+  checkinData.value = hojeStr;
+  fetchCheckinsWithFilters();
+});
 btnClearCheckinFilters?.addEventListener('click', () => { if (checkinData) checkinData.value = ''; if (checkinEvento) checkinEvento.value = ''; if (checkinMinisterio) checkinMinisterio.value = ''; checkinFilters.ministerio = ''; fetchCheckinsWithFilters(); });
 checkinData?.addEventListener('change', fetchCheckinsWithFilters);
 checkinEvento?.addEventListener('change', fetchCheckinsWithFilters);
