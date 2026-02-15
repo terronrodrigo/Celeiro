@@ -2,6 +2,7 @@
 // API na mesma origem (frontend servido pelo Express em / e API em /api/*)
 const API_BASE = '';
 const AUTH_STORAGE_KEY = 'celeiro_admin_auth';
+const TZ_BRASILIA = 'America/Sao_Paulo'; // Eventos de check-in: sempre horário de Brasília
 
 const UFS_BR = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
 
@@ -515,7 +516,7 @@ function setView(view, options) {
       if (checkinEvento) {
         checkinEvento.innerHTML = '<option value="">Todos os eventos</option>' + eventosCheckin.map(e => {
           const d = new Date(e.data);
-          return `<option value="${e._id}">${e.label || d.toLocaleDateString('pt-BR')}</option>`;
+          return `<option value="${e._id}">${e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</option>`;
         }).join('');
       }
       fetchCheckinsWithFilters();
@@ -616,7 +617,7 @@ function populateCheckinDataSelect(checkinsArray) {
   const currentValue = checkinData.value;
   checkinData.innerHTML = '<option value="">Todas as datas</option>' + dates.map(dateStr => {
     const d = new Date(dateStr + 'T12:00:00');
-    const label = d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
+    const label = d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA, weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
     return `<option value="${escapeAttr(dateStr)}">${escapeHtml(label)}</option>`;
   }).join('');
   if (dates.includes(currentValue)) checkinData.value = currentValue;
@@ -1019,7 +1020,7 @@ async function fetchCheckinsMinisterio() {
       });
       if (currentDataVal) dateSet.add(currentDataVal);
       const dates = Array.from(dateSet).sort((a, b) => b.localeCompare(a));
-      dateSelect.innerHTML = '<option value="">Todas as datas</option>' + dates.map(d => `<option value="${escapeAttr(d)}">${escapeHtml(new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'))}</option>`).join('');
+      dateSelect.innerHTML = '<option value="">Todas as datas</option>' + dates.map(d => `<option value="${escapeAttr(d)}">${escapeHtml(new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }))}</option>`).join('');
       if (currentDataVal && dates.includes(currentDataVal)) dateSelect.value = currentDataVal;
     }
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
@@ -1074,15 +1075,15 @@ async function fetchEventosCheckin() {
         eventosCheckinBody.innerHTML = displayList.map(e => {
           const eventId = (e._id != null ? String(e._id) : '');
           const d = new Date(e.data);
-          const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+          const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
           const hin = (e.horarioInicio || '').trim();
           const hfi = (e.horarioFim || '').trim();
-          const horarioText = (hin || hfi) ? `${hin || '—'} – ${hfi || '—'}` : 'Dia inteiro';
+          const horarioText = (hin || hfi) ? `${hin || '—'} – ${hfi || '—'} (Brasília)` : 'Dia inteiro (Brasília)';
           const ativo = e.ativo !== false;
           const statusText = ativo ? 'Ativo' : 'Inativo';
           const btnLabel = ativo ? 'Desligar' : 'Ligar';
           return `<tr data-event-id="${escapeAttr(eventId)}">
-            <td>${d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</td>
+            <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
             <td>${escapeHtml(label)}</td>
             <td>${escapeHtml(horarioText)}</td>
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
@@ -1118,7 +1119,7 @@ async function fetchEventosCheckin() {
 async function excluirEventoCheckin(eventoId) {
   if (!eventoId || !authToken) return;
   const evento = (eventosCheckin || []).find(e => String(e._id) === String(eventoId));
-  const label = evento?.label || (evento?.data ? new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '');
+  const label = evento?.label || (evento?.data ? new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '');
   if (!confirm(`Excluir o evento "${(label || '').replace(/"/g, '')}"? Esta ação não pode ser desfeita.`)) return;
   try {
     const r = await authFetch(`${API_BASE}/api/eventos-checkin/${eventoId}`, { method: 'DELETE' });
@@ -1187,8 +1188,8 @@ async function fetchEventosHoje() {
         eventoSelecionadoHoje = list[0]._id;
         eventosHojeList.innerHTML = list.map(e => {
           const d = new Date(e.data);
-          const label = e.label || d.toLocaleDateString('pt-BR');
-          return `<div class="kpi-card evento-hoje-card" style="margin-bottom:12px"><strong>${escapeHtml(label)}</strong><br><small>${d.toLocaleDateString('pt-BR')}</small></div>`;
+          const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
+          return `<div class="kpi-card evento-hoje-card" style="margin-bottom:12px"><strong>${escapeHtml(label)}</strong><br><small>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })} (Brasília)</small></div>`;
         }).join('');
         if (formConfirmarCheckin) formConfirmarCheckin.style.display = 'block';
         if (confirmarMinisterio && confirmarMinisterio.options.length <= 1) {
@@ -1427,8 +1428,8 @@ async function fetchPerfilExtras() {
     eventoSelecionadoHoje = eventos[0]._id;
     containerDisponiveis.innerHTML = eventos.map(e => {
       const d = new Date(e.data);
-      const label = e.label || d.toLocaleDateString('pt-BR');
-      return `<div class="kpi-card perfil-evento-card"><strong>${escapeHtml(label)}</strong><br><small>${d.toLocaleDateString('pt-BR')}</small></div>`;
+      const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
+      return `<div class="kpi-card perfil-evento-card"><strong>${escapeHtml(label)}</strong><br><small>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })} (Brasília)</small></div>`;
     }).join('');
     if (formConfirmar) formConfirmar.style.display = 'block';
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; if (containerDisponiveis) containerDisponiveis.innerHTML = '<p class="auth-subtitle">Não foi possível carregar os eventos.</p>'; if (formConfirmar) formConfirmar.style.display = 'none'; }
@@ -3248,14 +3249,14 @@ async function loadCheckinPublic(eventoId) {
     }
     checkinPublicEventoId = data.evento?._id || eventoId;
     if (eventLabel) {
-      const d = data.evento?.data ? new Date(data.evento.data).toLocaleDateString('pt-BR') : '';
+      const d = data.evento?.data ? new Date(data.evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
       eventLabel.textContent = (data.evento?.label || d) ? `Evento: ${data.evento?.label || d}${d ? ` (${d})` : ''}` : '';
     }
     const horarioEl = document.getElementById('checkinPublicEventHorario');
     if (horarioEl) {
       const hin = (data.evento?.horarioInicio || '').trim();
       const hfi = (data.evento?.horarioFim || '').trim();
-      horarioEl.textContent = (hin || hfi) ? `Horário de check-in: das ${hin || '00:00'} às ${hfi || '23:59'} (horário de São Paulo)` : 'Check-in disponível o dia todo (horário de São Paulo).';
+      horarioEl.textContent = (hin || hfi) ? `Horário de check-in: das ${hin || '00:00'} às ${hfi || '23:59'} (horário de Brasília)` : 'Check-in disponível o dia todo (horário de Brasília).';
     }
     if (select && Array.isArray(data.ministerios)) {
       select.innerHTML = '<option value="">Selecione o ministério</option>' + data.ministerios.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
