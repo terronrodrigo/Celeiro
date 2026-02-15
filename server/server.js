@@ -48,6 +48,8 @@ const uploadFoto = multer({
   },
 });
 
+const TZ_BRASILIA = process.env.TZ || process.env.APP_TIMEZONE || 'America/Sao_Paulo';
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 const AUTH_TOKEN_TTL_HOURS = Number(process.env.AUTH_TOKEN_TTL_HOURS || 24);
@@ -312,13 +314,7 @@ function formatDatePtBr(ms) {
   if (!ms) return '';
   const d = new Date(ms);
   if (Number.isNaN(d.getTime())) return '';
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mi = String(d.getMinutes()).padStart(2, '0');
-  const ss = String(d.getSeconds()).padStart(2, '0');
-  return `${dd}/${mm}/${yyyy} ${hh}:${mi}:${ss}`;
+  return d.toLocaleString('pt-BR', { timeZone: TZ_BRASILIA, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
 function dateOnlyFromMs(ms) {
@@ -424,8 +420,8 @@ function rowToCheckin(headers, row, colMap) {
   if (!email || !email.includes('@')) return null;
   const timestamp = get('timestamp');
   const timestampMs = parseDatePtBr(timestamp);
-  const dataCheckinStr = timestampMs ? new Date(timestampMs).toISOString().slice(0,10) : null;
-  const dataCheckin = dataCheckinStr ? getDayRangeUTC(dataCheckinStr).start : null;
+  const dataCheckinStr = timestampMs ? new Date(timestampMs).toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA }) : null;
+  const dataCheckin = dataCheckinStr ? getDayRangeBrasilia(dataCheckinStr).start : null;
   return {
     email: email.toLowerCase(),
     nome: get('nome'),
@@ -481,10 +477,10 @@ async function syncCheckinsFromText(text) {
   const colMap = buildColMap(headers, CHECKIN_COLS);
   const checkins = rows.slice(1).map(row => rowToCheckin(headers, row, colMap)).filter(Boolean);
 
-  // Dedup by email + ministerio + timestamp_ms
+  // Dedup by email + ministerio + timestampMs
   const byKey = new Map();
   checkins.forEach(c => {
-    const key = `${c.email}-${c.ministerio}-${c.timestamp_ms || 0}`;
+    const key = `${c.email}-${c.ministerio}-${c.timestampMs || 0}`;
     byKey.set(key, c);
   });
   const unique = Array.from(byKey.values());
@@ -929,7 +925,7 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
     if (dataFiltro) {
       const dateStr = String(dataFiltro).trim().slice(0, 10);
       if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        const { start, end } = getDayRangeUTC(dateStr);
+        const { start, end } = getDayRangeBrasilia(dateStr);
         if (start && end) query.dataCheckin = { $gte: start, $lt: end };
       }
     }
@@ -1009,7 +1005,7 @@ app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
     if (dataFiltro) {
       const dateStr = String(dataFiltro).trim().slice(0, 10);
       if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        const { start, end } = getDayRangeUTC(dateStr);
+        const { start, end } = getDayRangeBrasilia(dateStr);
         if (start && end) query.dataCheckin = { $gte: start, $lt: end };
       }
     }
@@ -1058,6 +1054,16 @@ function parseDateAsUTC(dateStr) {
 function getDayRangeUTC(dateStr) {
   const start = parseDateAsUTC(dateStr);
   if (!start) return { start: null, end: null };
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return { start, end };
+}
+
+/** Intervalo do dia em Brasília (BRT = UTC-3): YYYY-MM-DD = 00:00–24:00 BRT em UTC. Usado para check-ins. */
+function getDayRangeBrasilia(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return { start: null, end: null };
+  const s = dateStr.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return { start: null, end: null };
+  const start = new Date(s + 'T03:00:00.000Z');
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   return { start, end };
 }
@@ -1219,9 +1225,8 @@ app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
     const evento = await EventoCheckin.findById(eventoId).lean();
     if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou inativo.');
     // Se o evento está ativo, aceita check-in a qualquer momento (sem trava de data nem janela de horário).
-
-    const dataCheckinStr = evento.data.toISOString().slice(0,10);
-    const dataCheckin = getDayRangeUTC(dataCheckinStr).start;
+    const eventDateStr = getEventDateStringSaoPaulo(evento) || new Date(evento.data).toISOString().slice(0, 10);
+    const dataCheckin = getDayRangeBrasilia(eventDateStr).start;
     const existing = await Checkin.findOne({ eventoId, email: email.toLowerCase(), dataCheckin });
     if (existing) return res.json({ message: 'Check-in já realizado.', checkin: existing });
 
@@ -1285,7 +1290,7 @@ app.post('/api/checkin-public', async (req, res) => {
     if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
     // Se o evento está ativo, aceita check-in a qualquer momento (sem trava de data nem janela de horário).
     const eventDateStr = getEventDateStringSaoPaulo(evento) || new Date(evento.data).toISOString().slice(0, 10);
-    const dataCheckin = getDayRangeUTC(eventDateStr).start;
+    const dataCheckin = getDayRangeBrasilia(eventDateStr).start;
     const existing = await Checkin.findOne({ eventoId, email: em, dataCheckin });
     if (existing) return res.status(200).json({ message: 'Check-in já realizado.', checkin: existing });
     const checkin = await Checkin.create({

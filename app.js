@@ -599,7 +599,7 @@ async function fetchCheckins() {
   }
 }
 
-/** Extrai datas únicas (YYYY-MM-DD) em UTC para bater com o filtro do backend. Preenche o select de filtro. */
+/** Extrai datas únicas (YYYY-MM-DD) em Brasília para bater com o filtro do backend. Preenche o select de filtro. */
 function populateCheckinDataSelect(checkinsArray) {
   if (!checkinData) return;
   const list = Array.isArray(checkinsArray) ? checkinsArray : [];
@@ -607,10 +607,8 @@ function populateCheckinDataSelect(checkinsArray) {
   list.forEach(c => {
     const d = c.dataCheckin ? new Date(c.dataCheckin) : (c.timestampMs != null || c.timestamp ? new Date(c.timestampMs ?? c.timestamp) : null);
     if (d && !Number.isNaN(d.getTime())) {
-      const yyyy = d.getUTCFullYear();
-      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-      const dd = String(d.getUTCDate()).padStart(2, '0');
-      dateSet.add(`${yyyy}-${mm}-${dd}`);
+      const dateStr = d.toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
+      if (dateStr) dateSet.add(dateStr);
     }
   });
   const dates = Array.from(dateSet).sort((a, b) => b.localeCompare(a));
