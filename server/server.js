@@ -923,8 +923,11 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
       else return res.json({ checkins: [], resumo: { total: 0, ministerios: [] } });
     }
     if (dataFiltro) {
-      const { start, end } = getDayRangeBrasilia(String(dataFiltro).trim());
-      if (start && end) query.dataCheckin = { $gte: start, $lt: end };
+      const dateStr = String(dataFiltro).trim().slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        const { start, end } = getDayRangeBrasilia(dateStr);
+        if (start && end) query.dataCheckin = { $gte: start, $lt: end };
+      }
     }
     if (eventoId) query.eventoId = eventoId;
     if (ministerio) query.ministerio = ministerio;
@@ -1000,8 +1003,11 @@ app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
     ];
     const query = { $or: orConditions };
     if (dataFiltro) {
-      const { start, end } = getDayRangeBrasilia(String(dataFiltro).trim());
-      if (start && end) query.dataCheckin = { $gte: start, $lt: end };
+      const dateStr = String(dataFiltro).trim().slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        const { start, end } = getDayRangeBrasilia(dateStr);
+        if (start && end) query.dataCheckin = { $gte: start, $lt: end };
+      }
     }
     // Limita a 500 check-ins mais recentes para performance
     const checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin').sort({ timestampMs: -1 }).limit(500).lean();
@@ -1052,25 +1058,12 @@ function getDayRangeUTC(dateStr) {
   return { start, end };
 }
 
-/** Normaliza string de data para YYYY-MM-DD. Aceita YYYY-MM-DD, DD/MM/YYYY ou DD-MM-YYYY. */
-function normalizeDateToYYYYMMDD(dateStr) {
-  if (!dateStr || typeof dateStr !== 'string') return null;
-  const s = dateStr.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const ddmmyyyy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (ddmmyyyy) {
-    const [, dd, mm, yyyy] = ddmmyyyy;
-    return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
-  }
-  return null;
-}
-
 /** Intervalo do dia em Brasília (BRT = UTC-3): YYYY-MM-DD = 00:00–24:00 BRT em UTC. Usado para check-ins. */
 function getDayRangeBrasilia(dateStr) {
   if (!dateStr || typeof dateStr !== 'string') return { start: null, end: null };
-  const normalized = normalizeDateToYYYYMMDD(dateStr);
-  if (!normalized) return { start: null, end: null };
-  const start = new Date(normalized + 'T03:00:00.000Z');
+  const s = dateStr.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return { start: null, end: null };
+  const start = new Date(s + 'T03:00:00.000Z');
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   return { start, end };
 }
