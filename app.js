@@ -4,6 +4,11 @@ const API_BASE = '';
 const AUTH_STORAGE_KEY = 'celeiro_admin_auth';
 const TZ_BRASILIA = 'America/Sao_Paulo'; // Eventos de check-in: sempre horário de Brasília
 
+/** Data de hoje em Brasília no formato YYYY-MM-DD (para filtro de check-ins). */
+function getHojeDateString() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
+}
+
 const UFS_BR = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
 
 // Ministérios para lives e cadastro (lista revisada – ortografia e gramática)
@@ -511,6 +516,7 @@ function setView(view, options) {
     }
   }
   if (view === 'checkin' && isAdmin) {
+    populateCheckinDataSelect([]);
     authFetch(`${API_BASE}/api/eventos-checkin`).then(r => r.ok ? r.json() : []).then(list => {
       eventosCheckin = list || [];
       if (checkinEvento) {
@@ -599,11 +605,13 @@ async function fetchCheckins() {
   }
 }
 
-/** Extrai datas únicas (YYYY-MM-DD) em Brasília para bater com o filtro do backend. Preenche o select de filtro. */
+/** Extrai datas únicas (YYYY-MM-DD) em Brasília para bater com o filtro do backend. Sempre inclui "Hoje". */
 function populateCheckinDataSelect(checkinsArray) {
   if (!checkinData) return;
   const list = Array.isArray(checkinsArray) ? checkinsArray : [];
   const dateSet = new Set();
+  const hojeStr = getHojeDateString();
+  dateSet.add(hojeStr);
   list.forEach(c => {
     const d = c.dataCheckin ? new Date(c.dataCheckin) : (c.timestampMs != null || c.timestamp ? new Date(c.timestampMs ?? c.timestamp) : null);
     if (d && !Number.isNaN(d.getTime())) {
@@ -613,12 +621,17 @@ function populateCheckinDataSelect(checkinsArray) {
   });
   const dates = Array.from(dateSet).sort((a, b) => b.localeCompare(a));
   const currentValue = checkinData.value;
-  checkinData.innerHTML = '<option value="">Todas as datas</option>' + dates.map(dateStr => {
+  const options = ['<option value="">Todas as datas</option>'];
+  const hojeLabel = 'Hoje (' + new Date(hojeStr + 'T12:00:00').toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA, day: '2-digit', month: '2-digit', year: 'numeric' }) + ')';
+  options.push(`<option value="${escapeAttr(hojeStr)}">${escapeHtml(hojeLabel)}</option>`);
+  dates.forEach(dateStr => {
+    if (dateStr === hojeStr) return;
     const d = new Date(dateStr + 'T12:00:00');
     const label = d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA, weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
-    return `<option value="${escapeAttr(dateStr)}">${escapeHtml(label)}</option>`;
-  }).join('');
-  if (dates.includes(currentValue)) checkinData.value = currentValue;
+    options.push(`<option value="${escapeAttr(dateStr)}">${escapeHtml(label)}</option>`);
+  });
+  checkinData.innerHTML = options.join('');
+  if (currentValue === hojeStr || dates.includes(currentValue)) checkinData.value = currentValue;
 }
 
 function fetchCheckinsWithFilters() {
