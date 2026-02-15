@@ -923,11 +923,8 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
       else return res.json({ checkins: [], resumo: { total: 0, ministerios: [] } });
     }
     if (dataFiltro) {
-      const dateStr = String(dataFiltro).trim().slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        const { start, end } = getDayRangeBrasilia(dateStr);
-        if (start && end) query.dataCheckin = { $gte: start, $lt: end };
-      }
+      const dateCondition = queryDataCheckinDiaBrasilia(String(dataFiltro).trim());
+      if (dateCondition) Object.assign(query, dateCondition);
     }
     if (eventoId) query.eventoId = eventoId;
     if (ministerio) query.ministerio = ministerio;
@@ -1003,11 +1000,8 @@ app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
     ];
     const query = { $or: orConditions };
     if (dataFiltro) {
-      const dateStr = String(dataFiltro).trim().slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        const { start, end } = getDayRangeBrasilia(dateStr);
-        if (start && end) query.dataCheckin = { $gte: start, $lt: end };
-      }
+      const dateCondition = queryDataCheckinDiaBrasilia(String(dataFiltro).trim());
+      if (dateCondition) Object.assign(query, dateCondition);
     }
     // Limita a 500 check-ins mais recentes para performance
     const checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin').sort({ timestampMs: -1 }).limit(500).lean();
@@ -1066,6 +1060,21 @@ function getDayRangeBrasilia(dateStr) {
   const start = new Date(s + 'T03:00:00.000Z');
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   return { start, end };
+}
+
+/** Filtro por data: retorna condição MongoDB que seleciona todos os check-ins cujo dia (em Brasília) é dateStr (YYYY-MM-DD), independente da hora armazenada. */
+function queryDataCheckinDiaBrasilia(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return null;
+  const s = dateStr.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  return {
+    $expr: {
+      $eq: [
+        { $dateToString: { date: '$dataCheckin', format: '%Y-%m-%d', timezone: 'America/Sao_Paulo' } },
+        s,
+      ],
+    },
+  };
 }
 
 const RE_HHMM = /^([01]?\d|2[0-3]):([0-5]\d)$/;
