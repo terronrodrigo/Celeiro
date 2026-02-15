@@ -634,9 +634,10 @@ function populateCheckinDataSelect(checkinsArray) {
   if (currentValue === hojeStr || dates.includes(currentValue)) checkinData.value = currentValue;
 }
 
-function fetchCheckinsWithFilters() {
+function fetchCheckinsWithFilters(opts) {
   const params = new URLSearchParams();
-  const dataFilter = checkinData?.value;
+  const dataOverride = opts && opts.data !== undefined ? opts.data : null;
+  const dataFilter = dataOverride !== null ? dataOverride : (checkinData?.value || '');
   if (dataFilter) params.set('data', dataFilter);
   if (checkinEvento?.value) params.set('eventoId', checkinEvento.value);
   if (checkinMinisterio?.value) params.set('ministerio', checkinMinisterio.value);
@@ -644,6 +645,7 @@ function fetchCheckinsWithFilters() {
     checkins = data.checkins || [];
     checkinResumo = data.resumo || {};
     if (!dataFilter) populateCheckinDataSelect(checkins);
+    if (dataOverride !== null && checkinData) checkinData.value = dataOverride;
     renderCheckins();
   }).catch(() => {});
 }
@@ -2698,17 +2700,18 @@ document.getElementById('btnVerMaisVoluntarios')?.addEventListener('click', () =
 checkinMinisterio?.addEventListener('change', () => { checkinFilters.ministerio = checkinMinisterio?.value || ''; fetchCheckinsWithFilters(); });
 checkinSearch?.addEventListener('input', () => renderCheckins());
 document.getElementById('btnCheckinHoje')?.addEventListener('click', () => {
-  if (!checkinData) return;
   const hojeStr = getHojeDateString();
-  const hasHoje = Array.from(checkinData.options).some((o) => o.value === hojeStr);
-  if (!hasHoje) {
-    const opt = document.createElement('option');
-    opt.value = hojeStr;
-    opt.textContent = 'Hoje (' + new Date(hojeStr + 'T12:00:00').toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA, day: '2-digit', month: '2-digit', year: 'numeric' }) + ')';
-    checkinData.insertBefore(opt, checkinData.options[1] || null);
+  if (checkinData) {
+    const hasHoje = Array.from(checkinData.options).some((o) => o.value === hojeStr);
+    if (!hasHoje) {
+      const opt = document.createElement('option');
+      opt.value = hojeStr;
+      opt.textContent = 'Hoje (' + new Date(hojeStr + 'T12:00:00').toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA, day: '2-digit', month: '2-digit', year: 'numeric' }) + ')';
+      checkinData.insertBefore(opt, checkinData.options[1] || null);
+    }
+    checkinData.value = hojeStr;
   }
-  checkinData.value = hojeStr;
-  fetchCheckinsWithFilters();
+  fetchCheckinsWithFilters({ data: hojeStr });
 });
 btnClearCheckinFilters?.addEventListener('click', () => { if (checkinData) checkinData.value = ''; if (checkinEvento) checkinEvento.value = ''; if (checkinMinisterio) checkinMinisterio.value = ''; checkinFilters.ministerio = ''; fetchCheckinsWithFilters(); });
 checkinData?.addEventListener('change', fetchCheckinsWithFilters);
