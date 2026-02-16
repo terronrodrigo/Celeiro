@@ -66,6 +66,7 @@ let authMustChangePassword = false;
 let authIsMasterAdmin = false;
 let eventosCheckin = [];
 let eventoSelecionadoHoje = null;
+let allCheckins = []; // todos os check-ins sem filtro, para contagem histórica por pessoa
 const filters = {
   areas: [], // múltiplas áreas (array)
   disponibilidade: '',
@@ -645,6 +646,10 @@ function fetchCheckinsWithFilters(opts) {
   authFetch(`${API_BASE}/api/checkins?${params}`).then(r => r.json()).then(data => {
     checkins = data.checkins || [];
     checkinResumo = data.resumo || {};
+    // Guarda a lista completa (sem filtros de servidor) para contar check-ins históricos por pessoa
+    if (!dataFilter && !checkinEvento?.value && !checkinMinisterio?.value) {
+      allCheckins = checkins;
+    }
     if (!dataFilter) populateCheckinDataSelect(checkins);
     if (dataOverride !== null && checkinData) checkinData.value = dataOverride;
     renderCheckins();
@@ -2210,7 +2215,9 @@ function getTodayPtBr() {
 }
 
 function getCheckinCountByEmail() {
-  const list = Array.isArray(checkins) ? checkins : [];
+  // Usa allCheckins (sem filtro de data/evento) para contar o histórico total por pessoa.
+  // Fallback para checkins quando allCheckins ainda não foi populado.
+  const list = Array.isArray(allCheckins) && allCheckins.length ? allCheckins : (Array.isArray(checkins) ? checkins : []);
   const map = new Map();
   list.forEach(c => {
     const e = (c.email || '').toLowerCase().trim();
@@ -2231,7 +2238,9 @@ function getFilteredCheckins() {
     }
     if (countMap && qtdTarget) {
       const e = (c.email || '').toLowerCase().trim();
-      if ((countMap.get(e) || 0) !== qtdTarget) return false;
+      const count = countMap.get(e) || 0;
+      // "Somente 1" = exatamente 1; "N ou mais" = count >= N
+      if (qtdTarget === 1 ? count !== 1 : count < qtdTarget) return false;
     }
     if (q) {
       const nome = String(c.nome || '').toLowerCase();
@@ -2250,11 +2259,15 @@ function updateCheckinFilters() {
 
   if (checkinQtdCheckins) {
     const countMap = getCheckinCountByEmail();
-    const uniqueCounts = [...new Set(countMap.values())].sort((a, b) => a - b);
+    const maxCount = countMap.size ? Math.max(...countMap.values()) : 0;
     const current = checkinFilters.qtdCheckins;
-    checkinQtdCheckins.innerHTML = '<option value="">Qualquer qtd.</option>' +
-      uniqueCounts.map(n => `<option value="${n}">${n} check-in${n !== 1 ? 's' : ''}</option>`).join('');
-    if (current && uniqueCounts.includes(parseInt(current, 10))) checkinQtdCheckins.value = current;
+    const opts = ['<option value="">Qualquer qtd.</option>'];
+    if (maxCount >= 1) opts.push('<option value="1">Somente 1 check-in</option>');
+    for (let n = 2; n <= maxCount; n++) {
+      opts.push(`<option value="${n}">${n} ou mais check-ins</option>`);
+    }
+    checkinQtdCheckins.innerHTML = opts.join('');
+    if (current) checkinQtdCheckins.value = current;
   }
 }
 
