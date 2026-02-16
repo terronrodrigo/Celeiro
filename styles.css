@@ -308,36 +308,6 @@ body {
 }
 
 /* KPI Cards */
-.versiculo-dia-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
-  padding: 20px 24px;
-  margin-bottom: 24px;
-  border-left: 4px solid var(--accent);
-}
-.versiculo-dia-card.versiculo-dia-error {
-  border-left-color: var(--text-muted);
-}
-.versiculo-dia-label {
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  margin-bottom: 8px;
-}
-.versiculo-dia-text {
-  font-size: 1.1rem;
-  line-height: 1.5;
-  color: var(--text-primary);
-  margin: 0 0 8px 0;
-  font-style: italic;
-}
-.versiculo-dia-ref {
-  font-size: 0.9rem;
-  color: var(--text-muted);
-  margin: 0;
-}
 
 .kpi-grid {
   display: grid;

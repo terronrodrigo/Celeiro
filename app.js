@@ -510,7 +510,6 @@ function setView(view, options) {
     else if (view === 'ministros') runWithTimeout('ministros', () => fetchMinistros());
     else if (view === 'usuarios') runWithTimeout('usuarios', () => fetchUsers());
     else if (view === 'checkin-ministerio') runWithTimeout('checkin-ministerio', () => fetchCheckinsMinisterio());
-    if (view === 'resumo') fetchVersiculoDia();
     if ((view === 'resumo' || view === 'voluntarios') && Array.isArray(voluntarios) && voluntarios.length > 0) {
       updateFilters();
     }
@@ -1497,33 +1496,6 @@ async function fetchMeusCheckins() {
 
 async function fetchAllData() {
   await Promise.all([fetchVoluntarios(), fetchCheckins()]);
-}
-
-async function fetchVersiculoDia() {
-  const textEl = document.getElementById('versiculoDiaText');
-  const refEl = document.getElementById('versiculoDiaRef');
-  const card = document.getElementById('versiculoDiaCard');
-  if (!textEl || !card) return;
-  textEl.textContent = 'Carregando…';
-  if (refEl) refEl.textContent = '';
-  try {
-    const r = await authFetch(`${API_BASE}/api/versiculo-dia`);
-    const data = await r.json().catch(() => ({}));
-    if (r.ok && data.text) {
-      textEl.textContent = data.text;
-      if (refEl) refEl.textContent = data.reference || '';
-      card.classList.remove('versiculo-dia-error');
-    } else {
-      textEl.textContent = data.error || 'Versículo do dia indisponível.';
-      if (refEl) refEl.textContent = '';
-      card.classList.add('versiculo-dia-error');
-    }
-  } catch (e) {
-    if (e.message === 'AUTH_REQUIRED') return;
-    textEl.textContent = 'Não foi possível carregar o versículo.';
-    if (refEl) refEl.textContent = '';
-    card.classList.add('versiculo-dia-error');
-  }
 }
 
 /** Uma única chamada a getFilteredVoluntarios e atualiza KPIs, gráficos, tabela e contadores. */
