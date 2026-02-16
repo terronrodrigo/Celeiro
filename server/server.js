@@ -601,10 +601,12 @@ app.post('/api/login', async (req, res) => {
     const ministerioNome = ministerioNomes[0] || null;
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
-    authTokens.set(token, { user: user.nome, userId: user._id, role: user.role, email: user.email, ministerioId, ministerioNome, ministerioIds, ministerioNomes, expiresAt, mustChangePassword });
+    const roleNorm = String(user.role || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') || 'voluntario';
+    const roleFinal = roleNorm === 'lider' || roleNorm.includes('lider') ? 'lider' : roleNorm;
+    authTokens.set(token, { user: user.nome, userId: user._id, role: roleFinal, email: user.email, ministerioId, ministerioNome, ministerioIds, ministerioNomes, expiresAt, mustChangePassword });
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const isMasterAdmin = MASTER_ADMIN_EMAIL && (user.email || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
-    return res.json({ token, user: { nome: user.nome, email: user.email, role: user.role, ministerioId, ministerioNome, ministerioIds, ministerioNomes, fotoUrl: user.fotoUrl || null, mustChangePassword, isMasterAdmin }, expiresAt });
+    return res.json({ token, user: { nome: user.nome, email: user.email, role: roleFinal, ministerioId, ministerioNome, ministerioIds, ministerioNomes, fotoUrl: user.fotoUrl || null, mustChangePassword, isMasterAdmin }, expiresAt });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao fazer login.' });
@@ -616,14 +618,32 @@ app.get('/api/me', requireAuth, async (req, res) => {
   let displayName = req.user;
   let fotoUrl = null;
   let mustChangePassword = false;
+  let role = req.userRole;
+  let ministerioId = req.userMinisterioId;
+  let ministerioNome = req.userMinisterioNome;
+  let ministerioIds = req.userMinisterioIds || [];
+  let ministerioNomes = req.userMinisterioNomes || [];
   try {
     let userEmail = req.userEmail;
     if (req.userId) {
-      const user = await User.findById(req.userId).select('nome fotoUrl mustChangePassword email').lean();
-      if (user && user.nome) displayName = user.nome;
-      if (user && user.fotoUrl) fotoUrl = user.fotoUrl;
-      if (user && user.mustChangePassword) mustChangePassword = true;
-      if (user && user.email) userEmail = user.email;
+      const user = await User.findById(req.userId).select('nome fotoUrl mustChangePassword email role ministerioIds').lean();
+      if (user) {
+        if (user.nome) displayName = user.nome;
+        if (user.fotoUrl) fotoUrl = user.fotoUrl;
+        if (user.mustChangePassword) mustChangePassword = true;
+        if (user.email) userEmail = user.email;
+        if (user.role) {
+          const r = String(user.role).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          role = r === 'lider' || r.includes('lider') ? 'lider' : r;
+        }
+        if (user.ministerioIds && user.ministerioIds.length > 0) {
+          ministerioIds = user.ministerioIds.map(id => id);
+          const mins = await Ministerio.find({ _id: { $in: ministerioIds } }).select('nome').lean();
+          ministerioNomes = mins.map(m => m?.nome).filter(Boolean);
+          ministerioId = ministerioIds[0] || null;
+          ministerioNome = ministerioNomes[0] || null;
+        }
+      }
     } else if (req.userRole === 'admin' && ADMIN_USER) {
       const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
       if (adminUser && adminUser.fotoUrl) fotoUrl = adminUser.fotoUrl;
@@ -634,14 +654,16 @@ app.get('/api/me', requireAuth, async (req, res) => {
       if (vol && vol.nome && String(vol.nome).trim()) displayName = vol.nome.trim();
     }
   } catch (_) {}
-  const payload = { user: displayName, role: req.userRole, email: req.userEmail };
+  const roleNorm = String(role || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const roleFinal = roleNorm === 'lider' || roleNorm.includes('lider') ? 'lider' : roleNorm;
+  const payload = { user: displayName, role: roleFinal, email: req.userEmail };
   if (fotoUrl) payload.fotoUrl = fotoUrl;
   if (mustChangePassword) payload.mustChangePassword = true;
-  if ((req.userMinisterioIds && req.userMinisterioIds.length) || req.userMinisterioId) {
-    payload.ministerioId = req.userMinisterioId;
-    payload.ministerioNome = req.userMinisterioNome;
-    payload.ministerioIds = req.userMinisterioIds || [];
-    payload.ministerioNomes = req.userMinisterioNomes || [];
+  if ((ministerioIds && ministerioIds.length) || ministerioId) {
+    payload.ministerioId = ministerioId;
+    payload.ministerioNome = ministerioNome;
+    payload.ministerioIds = ministerioIds || [];
+    payload.ministerioNomes = ministerioNomes || [];
   }
   if (MASTER_ADMIN_EMAIL) {
     payload.isMasterAdmin = (req.userEmail || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;

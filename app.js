@@ -258,7 +258,8 @@ function updateAuthUi() {
   const liderLabel = authMinisterioNomes?.length ? authMinisterioNomes.join(', ') : (authMinisterioNome || '');
   if (roleEl) roleEl.textContent = isVoluntario ? 'Voluntário' : (isLider ? (liderLabel ? `Líder · ${liderLabel}` : 'Líder') : 'Admin');
   if (navAdmin) navAdmin.style.display = isLogged && isAdmin ? 'flex' : 'none';
-  if (navLider) navLider.style.display = isLogged && (authRole === 'lider' || isLider) && !isAdmin ? 'flex' : 'none';
+  const showNavLider = isLogged && !isAdmin && (authRole === 'lider' || isLider || (hasMinisterios && !isVoluntario));
+  if (navLider) navLider.style.display = showNavLider ? 'flex' : 'none';
   if (navVoluntario) navVoluntario.style.display = isLogged && isVoluntario ? 'flex' : 'none';
   const navAdminCheckinMin = document.getElementById('navAdminCheckinMinisterio');
   if (navAdminCheckinMin) navAdminCheckinMin.style.display = isLogged && isAdmin && hasMinisterios ? '' : 'none';
@@ -280,7 +281,7 @@ function clearUserContent() {
   eventoSelecionadoHoje = null;
   selectedEmails.clear();
   currentView = '';
-  ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios'].forEach(v => setViewLoading(v, false));
+  ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas'].forEach(v => setViewLoading(v, false));
   const perfilFields = [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilEstado, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilMinisterio, perfilHorasSemana, perfilAreas, perfilTestemunho];
   perfilFields.forEach(el => { if (el) el.value = ''; });
   if (perfilDisponibilidadeGroup) {
@@ -299,8 +300,8 @@ function setAuthSession(data) {
   authToken = data?.token || '';
   const user = data?.user;
   authUser = typeof user === 'string' ? user : (user?.nome || user?.email || '');
-  const rawRole = (user && user.role) ? user.role : (data?.role != null ? data.role : 'admin');
-  authRole = (rawRole != null && rawRole !== '') ? String(rawRole).toLowerCase() : 'admin';
+  const rawRole = (user && user.role) != null ? user.role : (data?.role != null ? data.role : 'admin');
+  authRole = normalizeAuthRole(rawRole);
   authEmail = (user && user.email) ? user.email : (data?.email != null ? data.email : null);
   authMinisterioId = (user && user.ministerioId) ? user.ministerioId : (data?.ministerioId != null ? data.ministerioId : null);
   authMinisterioNome = (user && user.ministerioNome) ? user.ministerioNome : (data?.ministerioNome != null ? data.ministerioNome : null);
@@ -332,6 +333,16 @@ function clearAuthSession() {
   updateAuthUi();
 }
 
+/** Normaliza role para comparação: trim, lowercase e remove acentos ("líder" -> "lider"). */
+function normalizeAuthRole(r) {
+  if (r == null || r === '') return 'admin';
+  const s = String(r).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') || '';
+  if (s === 'lider' || s.includes('lider')) return 'lider';
+  if (s === 'admin') return 'admin';
+  if (s === 'voluntario') return 'voluntario';
+  return s || 'admin';
+}
+
 function getAuthHeaders() {
   if (!authToken) return {};
   return { Authorization: `Bearer ${authToken}` };
@@ -355,7 +366,7 @@ async function verifyAuth() {
     const data = await r.json();
     authUser = (data.user != null ? data.user : authUser);
     if (typeof authUser === 'object') authUser = authUser?.nome || authUser?.email || '';
-    authRole = (data.role != null && data.role !== '') ? String(data.role).toLowerCase() : authRole;
+    authRole = normalizeAuthRole(data.role ?? authRole);
     authEmail = data.email || authEmail;
     authMinisterioId = data.ministerioId != null ? data.ministerioId : authMinisterioId;
     authMinisterioNome = data.ministerioNome != null ? data.ministerioNome : authMinisterioNome;
@@ -2403,10 +2414,18 @@ async function fetchEscalas() {
   if (!authToken) { updateAuthUi(); return; }
   try {
     const r = await authFetch(`${API_BASE}/api/escalas`);
-    if (!r.ok) return;
+    if (!r.ok) {
+      escalasList = [];
+      renderEscalas();
+      return;
+    }
     escalasList = await r.json();
     renderEscalas();
-  } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
+  } catch (e) {
+    if (e.message === 'AUTH_REQUIRED') return;
+    escalasList = [];
+    renderEscalas();
+  }
 }
 
 function renderEscalas() {
@@ -3554,7 +3573,7 @@ registerForm?.addEventListener('submit', async (e) => {
 navItems.forEach(item => {
   item.addEventListener('click', (e) => {
     e.preventDefault();
-    const view = item.dataset.view || (authRole === 'voluntario' ? 'perfil' : 'resumo');
+    const view = item.dataset.view || (authRole === 'voluntario' ? 'perfil' : (authRole === 'lider' ? 'checkin-ministerio' : 'resumo'));
     setView(view);
     const sidebar = document.querySelector('.sidebar');
     const overlay = document.getElementById('sidebarOverlay');
@@ -3790,8 +3809,7 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
       const parsed = JSON.parse(stored);
       authToken = parsed.token || '';
       authUser = parsed.user || '';
-      const r = parsed.role;
-      authRole = (r != null && r !== '') ? String(r).toLowerCase() : 'admin';
+      authRole = normalizeAuthRole(parsed.role);
       authEmail = parsed.email || null;
       authMinisterioId = parsed.ministerioId != null ? parsed.ministerioId : null;
       authMinisterioNome = parsed.ministerioNome != null ? parsed.ministerioNome : null;
