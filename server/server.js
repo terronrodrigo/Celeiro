@@ -2233,6 +2233,8 @@ app.post('/api/candidaturas', async (req, res) => {
       telefone: (telefone || '').toString().trim(),
       ministerio: (ministerio || '').toString().trim(),
     });
+    // Garante que o candidato apareça na lista de voluntários
+    try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim() }); } catch (_) {}
     res.status(201).json({ message: 'Candidatura registrada! Aguarde a aprovação do líder do seu ministério.', candidatura });
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });

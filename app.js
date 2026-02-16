@@ -2706,35 +2706,43 @@ document.getElementById('modalNovaEscala')?.querySelector('.modal-backdrop')?.ad
 document.getElementById('modalEditarEscala')?.querySelector('.modal-backdrop')?.addEventListener('click', () => { document.getElementById('modalEditarEscala')?.classList.remove('open'); });
 
 // ─── Candidatura pública via link ?escala=XXX ─────────────────────────────
-(function initEscalaPublic() {
-  const params = new URLSearchParams(window.location.search);
-  const escalaId = params.get('escala');
-  if (!escalaId) return;
 
+function showEscalaPublicOverlay() {
   const overlay = document.getElementById('escalaPublicOverlay');
+  const auth = document.getElementById('authOverlay');
+  const content = document.getElementById('content');
+  if (overlay) overlay.style.display = 'flex';
+  if (auth) auth.style.display = 'none';
+  if (content) content.style.display = 'none';
+}
+
+async function loadEscalaPublic(escalaId) {
   const labelEl = document.getElementById('escalaPublicLabel');
   const subtitleEl = document.getElementById('escalaPublicSubtitle');
   const ministerioSel = document.getElementById('escalaPublicMinisterio');
   const errorEl = document.getElementById('escalaPublicError');
   const successEl = document.getElementById('escalaPublicSuccess');
-  if (!overlay) return;
 
-  overlay.style.display = 'flex';
+  if (subtitleEl) subtitleEl.textContent = 'Carregando…';
 
-  fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(escalaId)}`)
-    .then(r => r.json())
-    .then(data => {
-      if (data.error) { if (labelEl) labelEl.textContent = data.error; return; }
-      const nome = data.escala?.nome || 'Escala';
-      const dt = data.escala?.data ? new Date(data.escala.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
-      if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
-      if (labelEl) labelEl.textContent = '';
-      if (ministerioSel) {
-        ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' +
-          (data.ministerios || []).map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
-      }
-    })
-    .catch(() => { if (labelEl) labelEl.textContent = 'Erro ao carregar dados da escala.'; });
+  try {
+    const r = await fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(escalaId)}`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (subtitleEl) subtitleEl.textContent = data.error || 'Escala não encontrada ou não está ativa.';
+      return;
+    }
+    const nome = data.escala?.nome || 'Escala';
+    const dt = data.escala?.data ? new Date(data.escala.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+    if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
+    if (labelEl) labelEl.textContent = data.escala?.descricao || '';
+    if (ministerioSel) {
+      ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' +
+        (data.ministerios || []).map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+    }
+  } catch (_) {
+    if (subtitleEl) subtitleEl.textContent = 'Erro ao carregar dados da escala.';
+  }
 
   document.getElementById('escalaPublicForm')?.addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -2755,13 +2763,14 @@ document.getElementById('modalEditarEscala')?.querySelector('.modal-backdrop')?.
       const data = await r.json();
       if (!r.ok && r.status !== 200) throw new Error(data.error || 'Erro ao enviar candidatura.');
       if (successEl) { successEl.textContent = data.message || 'Candidatura registrada! Aguarde a aprovação do líder.'; successEl.style.display = ''; }
-      if (document.getElementById('escalaPublicForm')) document.getElementById('escalaPublicForm').style.display = 'none';
+      const form = document.getElementById('escalaPublicForm');
+      if (form) form.style.display = 'none';
     } catch (err) {
       if (errorEl) errorEl.textContent = err.message || 'Erro ao enviar candidatura.';
       if (btn) btn.disabled = false;
     }
-  });
-})();
+  }, { once: true });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -3755,10 +3764,17 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
 });
 
 (() => {
-  const checkinParam = new URLSearchParams(window.location.search).get('checkin');
+  const urlSearchParams = new URLSearchParams(window.location.search);
+  const checkinParam = urlSearchParams.get('checkin');
   if (checkinParam) {
     showCheckinPublicOverlay();
     loadCheckinPublic(checkinParam);
+    return;
+  }
+  const escalaParam = urlSearchParams.get('escala');
+  if (escalaParam) {
+    showEscalaPublicOverlay();
+    loadEscalaPublic(escalaParam);
     return;
   }
   if (window.location.hash === '#cadastro') {
