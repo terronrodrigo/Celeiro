@@ -463,7 +463,7 @@ const VIEW_META = {
   perfil: { title: 'Meu perfil', subtitle: 'Seus dados de cadastro.', role: 'voluntario' },
   'checkin-hoje': { title: 'Check-in do dia', subtitle: 'Confirme presença no culto de hoje.', role: 'voluntario' },
   'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico de presenças.', role: 'voluntario' },
-  escalas: { title: 'Escalas', subtitle: 'Gerencie escalas e candidaturas de voluntários.', role: 'lider' },
+  escalas: { title: 'Escalas', subtitle: 'Gerencie escalas e candidaturas de voluntários.', role: 'admin' },
 };
 
 function setView(view, options) {
@@ -499,7 +499,8 @@ function setView(view, options) {
     const perfilForLider = (view === 'perfil' && isLider);
     const perfilForAdmin = (view === 'perfil' && isAdmin);
     const liderViewAllowed = (authRole === 'lider' || isLider) && authRole !== 'admin' && LIDER_VIEWS.includes(view);
-    const match = allowed.includes(view) && (roleMatch || liderViewAllowed || perfilForLider || perfilForAdmin);
+    const volViewAllowed = isVol && VOLUNTARIO_VIEWS.includes(view);
+    const match = allowed.includes(view) && (roleMatch || liderViewAllowed || volViewAllowed || perfilForLider || perfilForAdmin);
     item.classList.toggle('active', match);
   });
   if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Celeiro SP';
