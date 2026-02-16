@@ -1524,3 +1524,41 @@ body {
     flex: 1 1 100%;
   }
 }
+
+/* ── Seção dados incompletos (checkins sem perfil) ─────────────────────────── */
+.dados-incompletos-section {
+  margin-top: 24px;
+}
+
+.dados-incompletos-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.dados-incompletos-header h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dados-incompletos-sub {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.dados-incompletos-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.dados-incompletos-status {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}

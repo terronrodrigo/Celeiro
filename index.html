@@ -525,9 +525,14 @@
                   <label for="checkinSearch">Buscar</label>
                   <input type="text" id="checkinSearch" placeholder="Nome ou email">
                 </div>
+                <div class="form-group compact">
+                  <label for="checkinQtdCheckins">Qtd. check-ins</label>
+                  <select id="checkinQtdCheckins">
+                    <option value="">Qualquer qtd.</option>
+                  </select>
+                </div>
               </div>
               <div class="filters-actions">
-                <button type="button" class="btn btn-primary btn-sm" id="btnCheckinHoje">Hoje</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnClearCheckinFilters">Limpar filtros</button>
               </div>
             </div>
@@ -585,6 +590,32 @@
               </div>
               <div class="table-footer">
                 <span id="checkinCount">0</span> check-ins <span id="checkinRange" class="list-range"></span>
+              </div>
+            </div>
+          </section>
+
+          <section class="dados-incompletos-section" id="dadosIncompletosSection" style="display:none">
+            <div class="filters-card">
+              <div class="dados-incompletos-header">
+                <div>
+                  <h3 id="dadosIncompletosTitle">Dados incompletos</h3>
+                  <p class="dados-incompletos-sub">Voluntários que fizeram check-in mas não criaram conta na plataforma</p>
+                </div>
+                <div class="dados-incompletos-actions">
+                  <span id="dadosIncompletosStatus" class="dados-incompletos-status"></span>
+                  <button type="button" class="btn btn-primary btn-sm" id="btnEnviarEmailIncompletos">Enviar email de cadastro</button>
+                </div>
+              </div>
+              <div class="table-wrapper" style="margin-top:16px">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Nome</th>
+                      <th>Email</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dadosIncompletosBody"></tbody>
+                </table>
               </div>
             </div>
           </section>

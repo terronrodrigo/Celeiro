@@ -76,6 +76,7 @@ const filters = {
 const checkinFilters = {
   ministerio: '',
   search: '',
+  qtdCheckins: '',
 };
 
 Chart.defaults.color = '#a0a0a0';
@@ -140,6 +141,7 @@ const navLider = document.getElementById('navLider');
 const navVoluntario = document.getElementById('navVoluntario');
 const checkinData = document.getElementById('checkinData');
 const checkinEvento = document.getElementById('checkinEvento');
+const checkinQtdCheckins = document.getElementById('checkinQtdCheckins');
 const eventosCheckinBody = document.getElementById('eventosCheckinBody');
 const btnNovoEvento = document.getElementById('btnNovoEvento');
 const modalNovoEvento = document.getElementById('modalNovoEvento');
@@ -2207,13 +2209,29 @@ function getTodayPtBr() {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+function getCheckinCountByEmail() {
+  const list = Array.isArray(checkins) ? checkins : [];
+  const map = new Map();
+  list.forEach(c => {
+    const e = (c.email || '').toLowerCase().trim();
+    if (e) map.set(e, (map.get(e) || 0) + 1);
+  });
+  return map;
+}
+
 function getFilteredCheckins() {
   const q = (checkinSearch?.value || '').trim().toLowerCase();
   const list = Array.isArray(checkins) ? checkins : [];
+  const countMap = checkinFilters.qtdCheckins ? getCheckinCountByEmail() : null;
+  const qtdTarget = checkinFilters.qtdCheckins ? parseInt(checkinFilters.qtdCheckins, 10) : 0;
   return list.filter(c => {
     if (checkinFilters.ministerio) {
       const m = String(c.ministerio || '').trim();
       if (m !== checkinFilters.ministerio) return false;
+    }
+    if (countMap && qtdTarget) {
+      const e = (c.email || '').toLowerCase().trim();
+      if ((countMap.get(e) || 0) !== qtdTarget) return false;
     }
     if (q) {
       const nome = String(c.nome || '').toLowerCase();
@@ -2229,6 +2247,15 @@ function updateCheckinFilters() {
   const ministerios = countByField(list, 'ministerio').map(([label]) => label);
   populateSelect(checkinMinisterio, ministerios, 'Todos os ministérios');
   if (checkinMinisterio) checkinMinisterio.value = checkinFilters.ministerio || '';
+
+  if (checkinQtdCheckins) {
+    const countMap = getCheckinCountByEmail();
+    const uniqueCounts = [...new Set(countMap.values())].sort((a, b) => a - b);
+    const current = checkinFilters.qtdCheckins;
+    checkinQtdCheckins.innerHTML = '<option value="">Qualquer qtd.</option>' +
+      uniqueCounts.map(n => `<option value="${n}">${n} check-in${n !== 1 ? 's' : ''}</option>`).join('');
+    if (current && uniqueCounts.includes(parseInt(current, 10))) checkinQtdCheckins.value = current;
+  }
 }
 
 function setCheckinFilter(key, value) {
@@ -2238,7 +2265,9 @@ function setCheckinFilter(key, value) {
 
 function clearCheckinFilters() {
   checkinFilters.ministerio = '';
+  checkinFilters.qtdCheckins = '';
   if (checkinSearch) checkinSearch.value = '';
+  if (checkinQtdCheckins) checkinQtdCheckins.value = '';
   renderCheckins();
 }
 
@@ -2311,6 +2340,20 @@ function renderCheckinTable(list) {
   if (rangeEl) rangeEl.textContent = total > LIST_PAGE_SIZE ? ` — exibindo 1–${LIST_PAGE_SIZE} de ${total}` : '';
 }
 
+function renderCheckinDadosIncompletos() {
+  const section = document.getElementById('dadosIncompletosSection');
+  const body = document.getElementById('dadosIncompletosBody');
+  const title = document.getElementById('dadosIncompletosTitle');
+  if (!section || !body) return;
+  const list = getSoCheckinList();
+  if (!list.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  if (title) title.textContent = `Dados incompletos (${list.length})`;
+  body.innerHTML = list.map(v =>
+    `<tr><td>${escapeHtml(v.nome || '—')}</td><td>${escapeHtml(v.email || '')}</td></tr>`
+  ).join('');
+}
+
 function renderCheckins() {
   updateCheckinFilters();
   const filtered = getFilteredCheckins();
@@ -2324,6 +2367,7 @@ function renderCheckins() {
   }
   renderCheckinChart();
   renderCheckinTable(filtered);
+  renderCheckinDadosIncompletos();
 }
 
 function openModal() {
@@ -2669,23 +2713,38 @@ document.getElementById('btnVerMaisVoluntarios')?.addEventListener('click', () =
 });
 checkinMinisterio?.addEventListener('change', () => { checkinFilters.ministerio = checkinMinisterio?.value || ''; fetchCheckinsWithFilters(); });
 checkinSearch?.addEventListener('input', () => renderCheckins());
-document.getElementById('btnCheckinHoje')?.addEventListener('click', () => {
-  const hojeStr = getHojeDateString();
-  if (checkinData) {
-    const hasHoje = Array.from(checkinData.options).some((o) => o.value === hojeStr);
-    if (!hasHoje) {
-      const opt = document.createElement('option');
-      opt.value = hojeStr;
-      opt.textContent = 'Hoje (' + new Date(hojeStr + 'T12:00:00').toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA, day: '2-digit', month: '2-digit', year: 'numeric' }) + ')';
-      checkinData.insertBefore(opt, checkinData.options[1] || null);
-    }
-    checkinData.value = hojeStr;
-  }
-  fetchCheckinsWithFilters({ data: hojeStr });
+checkinQtdCheckins?.addEventListener('change', () => { checkinFilters.qtdCheckins = checkinQtdCheckins?.value || ''; renderCheckins(); });
+btnClearCheckinFilters?.addEventListener('click', () => {
+  if (checkinData) checkinData.value = '';
+  if (checkinEvento) checkinEvento.value = '';
+  if (checkinMinisterio) checkinMinisterio.value = '';
+  if (checkinQtdCheckins) checkinQtdCheckins.value = '';
+  checkinFilters.ministerio = '';
+  checkinFilters.qtdCheckins = '';
+  fetchCheckinsWithFilters();
 });
-btnClearCheckinFilters?.addEventListener('click', () => { if (checkinData) checkinData.value = ''; if (checkinEvento) checkinEvento.value = ''; if (checkinMinisterio) checkinMinisterio.value = ''; checkinFilters.ministerio = ''; fetchCheckinsWithFilters(); });
 checkinData?.addEventListener('change', fetchCheckinsWithFilters);
 checkinEvento?.addEventListener('change', fetchCheckinsWithFilters);
+
+document.getElementById('btnEnviarEmailIncompletos')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btnEnviarEmailIncompletos');
+  const status = document.getElementById('dadosIncompletosStatus');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = 'Enviando…';
+  if (status) status.textContent = '';
+  try {
+    const r = await authFetch(`${API_BASE}/api/send-cadastro-incompleto`, { method: 'POST' });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Erro ao enviar.');
+    if (status) status.textContent = `✓ ${data.sent} enviados${data.failed ? `, ${data.failed} falhas` : ''}`;
+  } catch (e) {
+    if (status) status.textContent = `Erro: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Enviar email de cadastro';
+  }
+});
 
 btnNovoEvento?.addEventListener('click', () => { if (modalNovoEvento) { eventoData.value = new Date().toISOString().slice(0, 10); eventoLabel.value = ''; if (eventoHorarioInicio) eventoHorarioInicio.value = ''; if (eventoHorarioFim) eventoHorarioFim.value = ''; if (eventoAtivo) eventoAtivo.checked = true; modalNovoEvento.setAttribute('aria-hidden', 'false'); modalNovoEvento.classList.add('open'); } });
 modalNovoEventoClose?.addEventListener('click', () => { modalNovoEvento?.classList.remove('open'); });
