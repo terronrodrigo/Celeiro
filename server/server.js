@@ -18,6 +18,8 @@ import Checkin from './models/Checkin.js';
 import EventoCheckin from './models/EventoCheckin.js';
 import Ministerio from './models/Ministerio.js';
 import RoleHistory from './models/RoleHistory.js';
+import Escala from './models/Escala.js';
+import Candidatura from './models/Candidatura.js';
 import { normalizarEstado, normalizarCidade } from './utils/normalize-locale.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -2128,6 +2130,277 @@ app.post('/api/send-cadastro-incompleto', requireAuth, requireAdmin, async (req,
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao enviar emails.');
   }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// ESCALAS
+// ──────────────────────────────────────────────────────────────────────────────
+
+// GET /api/escalas — lista escalas (admin: todas; lider: só ativas)
+app.get('/api/escalas', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = req.userRole === 'admin';
+    const query = isAdmin ? {} : { ativo: true };
+    const escalas = await Escala.find(query).sort({ createdAt: -1 }).lean();
+    // Conta candidaturas por escala
+    const ids = escalas.map(e => e._id);
+    const counts = await Candidatura.aggregate([
+      { $match: { escalaId: { $in: ids } } },
+      { $group: { _id: '$escalaId', total: { $sum: 1 }, aprovados: { $sum: { $cond: [{ $eq: ['$status', 'aprovado'] }, 1, 0] } } } },
+    ]);
+    const countMap = new Map(counts.map(c => [String(c._id), c]));
+    const result = escalas.map(e => ({
+      ...e,
+      totalCandidaturas: countMap.get(String(e._id))?.total || 0,
+      totalAprovados: countMap.get(String(e._id))?.aprovados || 0,
+    }));
+    res.json(result);
+  } catch (err) { console.error(err); sendError(res, 500, err.message); }
+});
+
+// POST /api/escalas — cria escala (admin only)
+app.post('/api/escalas', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { nome, data, descricao, ativo } = req.body || {};
+    if (!nome || !String(nome).trim()) return sendError(res, 400, 'Nome é obrigatório.');
+    const escala = await Escala.create({
+      nome: String(nome).trim(),
+      data: data ? new Date(data) : null,
+      descricao: (descricao || '').trim(),
+      ativo: typeof ativo === 'boolean' ? ativo : true,
+      criadoPor: req.userId,
+    });
+    res.status(201).json(escala);
+  } catch (err) { console.error(err); sendError(res, 500, err.message); }
+});
+
+// PUT /api/escalas/:id — atualiza escala (admin only)
+app.put('/api/escalas/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { nome, data, descricao, ativo } = req.body || {};
+    const update = {};
+    if (nome !== undefined) update.nome = String(nome).trim();
+    if (data !== undefined) update.data = data ? new Date(data) : null;
+    if (descricao !== undefined) update.descricao = String(descricao).trim();
+    if (typeof ativo === 'boolean') update.ativo = ativo;
+    const escala = await Escala.findByIdAndUpdate(req.params.id, update, { new: true });
+    if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+    res.json(escala);
+  } catch (err) { console.error(err); sendError(res, 500, err.message); }
+});
+
+// DELETE /api/escalas/:id — exclui escala (admin only, só se sem candidaturas)
+app.delete('/api/escalas/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const count = await Candidatura.countDocuments({ escalaId: req.params.id });
+    if (count > 0) return sendError(res, 400, `Esta escala tem ${count} candidatura(s). Remova-as antes de excluir.`);
+    const escala = await Escala.findByIdAndDelete(req.params.id);
+    if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+    res.json({ ok: true });
+  } catch (err) { console.error(err); sendError(res, 500, err.message); }
+});
+
+// GET /api/escala-publica/:id — info pública da escala para o form de candidatura
+app.get('/api/escala-publica/:id', async (req, res) => {
+  try {
+    const escala = await Escala.findById(req.params.id).select('nome data descricao ativo').lean();
+    if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+    if (!escala.ativo) return sendError(res, 404, 'Esta escala não está aceitando candidaturas no momento.');
+    const ministerios = await Ministerio.find({ ativo: true }).sort({ nome: 1 }).select('nome').lean();
+    res.json({
+      escala: { _id: escala._id, nome: escala.nome, data: escala.data, descricao: escala.descricao },
+      ministerios: ministerios.map(m => m.nome).filter(Boolean),
+    });
+  } catch (err) { console.error(err); sendError(res, 500, err.message); }
+});
+
+// POST /api/candidaturas — candidatura pública (sem auth)
+app.post('/api/candidaturas', async (req, res) => {
+  try {
+    const { escalaId, nome, email, telefone, ministerio } = req.body || {};
+    const em = (email || '').toString().trim().toLowerCase();
+    if (!em || !em.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
+    if (!escalaId) return sendError(res, 400, 'Escala é obrigatória.');
+    if (!ministerio) return sendError(res, 400, 'Ministério é obrigatório.');
+    const escala = await Escala.findById(escalaId).lean();
+    if (!escala || !escala.ativo) return sendError(res, 404, 'Escala não encontrada ou não está ativa.');
+    const existing = await Candidatura.findOne({ escalaId, email: em });
+    if (existing) return res.status(200).json({ message: 'Você já se candidatou para esta escala.', candidatura: existing });
+    const candidatura = await Candidatura.create({
+      escalaId,
+      nome: (nome || '').toString().trim(),
+      email: em,
+      telefone: (telefone || '').toString().trim(),
+      ministerio: (ministerio || '').toString().trim(),
+    });
+    res.status(201).json({ message: 'Candidatura registrada! Aguarde a aprovação do líder do seu ministério.', candidatura });
+  } catch (err) { console.error(err); sendError(res, 500, err.message); }
+});
+
+// GET /api/escalas/:id/candidaturas — lista candidaturas de uma escala (com stats de histórico)
+app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = req.userRole === 'admin';
+    const isLider = req.userRole === 'lider';
+    if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
+
+    const query = { escalaId: req.params.id };
+    if (isLider) {
+      const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length ? req.userMinisterioNomes : (req.userMinisterioNome ? [req.userMinisterioNome] : []);
+      if (!nomes.length) return res.json([]);
+      query.ministerio = { $in: nomes };
+    }
+
+    const candidaturas = await Candidatura.find(query).sort({ createdAt: -1 }).lean();
+    if (!candidaturas.length) return res.json([]);
+
+    const emails = [...new Set(candidaturas.map(c => c.email).filter(Boolean))];
+
+    // Stats históricos de candidaturas por email (todas as escalas)
+    const statsAgg = await Candidatura.aggregate([
+      { $match: { email: { $in: emails } } },
+      {
+        $group: {
+          _id: '$email',
+          totalParticipacoes: { $sum: { $cond: [{ $eq: ['$status', 'aprovado'] }, 1, 0] } },
+          totalDesistencias: { $sum: { $cond: [{ $eq: ['$status', 'desistencia'] }, 1, 0] } },
+          totalFaltas: { $sum: { $cond: [{ $eq: ['$status', 'falta'] }, 1, 0] } },
+        },
+      },
+    ]);
+    const statsMap = new Map(statsAgg.map(s => [s._id, s]));
+
+    // Total de check-ins por email
+    const checkinsAgg = await Checkin.aggregate([
+      { $match: { email: { $in: emails } } },
+      { $group: { _id: { $toLower: '$email' }, totalCheckins: { $sum: 1 } } },
+    ]);
+    const checkinsMap = new Map(checkinsAgg.map(c => [c._id, c.totalCheckins]));
+
+    const result = candidaturas.map(c => {
+      const stats = statsMap.get(c.email) || {};
+      return {
+        ...c,
+        totalCheckins: checkinsMap.get(c.email) || 0,
+        totalParticipacoes: stats.totalParticipacoes || 0,
+        totalDesistencias: stats.totalDesistencias || 0,
+        totalFaltas: stats.totalFaltas || 0,
+      };
+    });
+    res.json(result);
+  } catch (err) { console.error(err); sendError(res, 500, err.message); }
+});
+
+// PUT /api/candidaturas/:id/status — atualiza status de candidatura
+app.put('/api/candidaturas/:id/status', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = req.userRole === 'admin';
+    const isLider = req.userRole === 'lider';
+    if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
+
+    const { status } = req.body || {};
+    const validStatus = ['pendente', 'aprovado', 'desistencia', 'falta'];
+    if (!validStatus.includes(status)) return sendError(res, 400, `Status inválido. Use: ${validStatus.join(', ')}`);
+
+    const candidatura = await Candidatura.findById(req.params.id).lean();
+    if (!candidatura) return sendError(res, 404, 'Candidatura não encontrada.');
+
+    // Líder só pode alterar candidaturas do seu ministério
+    if (isLider) {
+      const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length ? req.userMinisterioNomes : (req.userMinisterioNome ? [req.userMinisterioNome] : []);
+      if (!nomes.includes(candidatura.ministerio)) return sendError(res, 403, 'Acesso negado. Esta candidatura não é do seu ministério.');
+    }
+
+    const update = { status };
+    if (status === 'aprovado') { update.aprovadoPor = req.userId; update.aprovadoEm = new Date(); }
+
+    const updated = await Candidatura.findByIdAndUpdate(req.params.id, update, { new: true }).lean();
+
+    // Envia email de confirmação ao aprovar
+    if (status === 'aprovado' && !candidatura.emailEnviado && candidatura.email) {
+      const apiKey = process.env.RESEND_API_KEY;
+      if (apiKey) {
+        try {
+          const escala = await Escala.findById(candidatura.escalaId).lean();
+          const resend = new Resend(apiKey);
+          const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+          const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
+          const nomeDisplay = (candidatura.nome || '').trim() || 'voluntário(a)';
+          const escalaNome = escala?.nome || 'Escala';
+          const escalaData = escala?.data ? new Date(escala.data).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '';
+          const { error } = await resend.emails.send({
+            from, to: candidatura.email, reply_to: replyTo,
+            subject: `Participação confirmada — ${escalaNome}`,
+            html: `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Participação confirmada</title></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;">
+  <tr><td align="center">
+    <table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+      <tr><td style="background:#1a1a2e;padding:32px 40px;text-align:center;">
+        <p style="margin:0;font-size:13px;color:#f59e0b;text-transform:uppercase;letter-spacing:.1em;font-weight:600;">Igreja Celeiro São Paulo</p>
+        <h1 style="margin:8px 0 0;font-size:24px;color:#fff;font-weight:700;">Equipe de Voluntários</h1>
+      </td></tr>
+      <tr><td style="padding:40px 40px 32px;">
+        <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${nomeDisplay}</strong>! 🎉</p>
+        <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Sua participação na escala foi <strong>confirmada</strong>. Estamos animados em contar com você!</p>
+        <table cellpadding="0" cellspacing="0" style="margin:24px 0;width:100%;background:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
+          <tr><td style="padding:20px 24px;">
+            <p style="margin:0 0 8px;font-size:14px;color:#6b7280;">Escala</p>
+            <p style="margin:0;font-size:18px;font-weight:700;color:#1a1a2e;">${escalaNome}</p>
+            ${escalaData ? `<p style="margin:4px 0 0;font-size:14px;color:#6b7280;">${escalaData}</p>` : ''}
+            <p style="margin:12px 0 0;font-size:14px;color:#374151;">Ministério: <strong>${candidatura.ministerio}</strong></p>
+          </td></tr>
+        </table>
+        <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Você pode acompanhar suas escalas diretamente na plataforma:</p>
+        <table cellpadding="0" cellspacing="0" style="margin:0 auto 24px;">
+          <tr><td style="border-radius:8px;background:#f59e0b;">
+            <a href="https://voluntariosceleirosp.com/" style="display:inline-block;padding:14px 36px;font-size:16px;font-weight:700;color:#1a1a2e;text-decoration:none;border-radius:8px;">Ver minhas escalas →</a>
+          </td></tr>
+        </table>
+        <p style="margin:0;font-size:15px;color:#374151;line-height:1.6;">Obrigado por servir! Se tiver dúvidas, responda este email.</p>
+      </td></tr>
+      <tr><td style="padding:0 40px 40px;">
+        <table cellpadding="0" cellspacing="0"><tr>
+          <td style="border-left:3px solid #f59e0b;padding-left:16px;">
+            <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a2e;">Com gratidão,</p>
+            <p style="margin:4px 0 0;font-size:14px;color:#6b7280;">Equipe Voluntários Celeiro São Paulo</p>
+          </td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:20px 40px;text-align:center;">
+        <p style="margin:0;font-size:12px;color:#9ca3af;">Igreja Celeiro São Paulo · São Paulo, SP</p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>`,
+          });
+          if (!error) await Candidatura.updateOne({ _id: candidatura._id }, { emailEnviado: true });
+        } catch (_) {}
+      }
+    }
+
+    res.json(updated);
+  } catch (err) { console.error(err); sendError(res, 500, err.message); }
+});
+
+// GET /api/minhas-candidaturas — candidaturas do usuário logado
+app.get('/api/minhas-candidaturas', requireAuth, async (req, res) => {
+  try {
+    const email = (req.userEmail || '').toLowerCase().trim();
+    if (!email) return res.json([]);
+    const candidaturas = await Candidatura.find({ email }).sort({ createdAt: -1 }).lean();
+    // Enriquece com nome da escala
+    const escalaIds = [...new Set(candidaturas.map(c => String(c.escalaId)))];
+    const escalas = await Escala.find({ _id: { $in: escalaIds } }).select('nome data').lean();
+    const escalaMap = new Map(escalas.map(e => [String(e._id), e]));
+    const result = candidaturas.map(c => ({
+      ...c,
+      escalaNome: escalaMap.get(String(c.escalaId))?.nome || '',
+      escalaData: escalaMap.get(String(c.escalaId))?.data || null,
+    }));
+    res.json(result);
+  } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
 // Servir arquivos estáticos (deve estar APÓS as rotas da API)

@@ -47,6 +47,10 @@
           <span class="nav-icon">✅</span>
           <span>Check-ins dos meus ministérios</span>
         </a>
+        <a href="#" class="nav-item" data-view="escalas">
+          <span class="nav-icon">📋</span>
+          <span>Escalas</span>
+        </a>
         <a href="#" class="nav-item" data-view="perfil">
           <span class="nav-icon">👤</span>
           <span>Perfil</span>
@@ -56,6 +60,10 @@
         <a href="#" class="nav-item active" data-view="checkin-ministerio">
           <span class="nav-icon">✅</span>
           <span>Check-ins do ministério</span>
+        </a>
+        <a href="#" class="nav-item" data-view="escalas">
+          <span class="nav-icon">📋</span>
+          <span>Escalas</span>
         </a>
         <a href="#" class="nav-item" data-view="perfil">
           <span class="nav-icon">👤</span>
@@ -78,6 +86,10 @@
         <a href="#" class="nav-item" data-view="meus-checkins">
           <span class="nav-icon">📋</span>
           <span>Meus check-ins</span>
+        </a>
+        <a href="#" class="nav-item" data-view="escalas">
+          <span class="nav-icon">📋</span>
+          <span>Minhas escalas</span>
         </a>
       </nav>
       <div class="sidebar-footer">
@@ -621,6 +633,11 @@
           </section>
         </section>
 
+        <!-- Escalas (admin / lider / voluntario) -->
+        <section class="view" data-view="escalas">
+          <div id="escalasContent"><!-- renderizado por JS --></div>
+        </section>
+
         <!-- Voluntário / Líder / Admin: tela de perfil -->
         <section class="view" data-view="perfil">
           <div class="perfil-page">
@@ -739,6 +756,38 @@
   </div>
 
   <!-- Check-in público por link (sem login) -->
+  <!-- Candidatura pública por link de escala -->
+  <div id="escalaPublicOverlay" class="auth-overlay" style="display: none;">
+    <div class="auth-card checkin-public-card">
+      <div class="auth-header">
+        <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
+        <p class="auth-subtitle" id="escalaPublicSubtitle">Candidatura para escala</p>
+      </div>
+      <form id="escalaPublicForm" class="auth-form">
+        <p class="form-hint" id="escalaPublicLabel" style="margin-bottom:12px;font-size:1rem;font-weight:600;color:var(--text-primary)"></p>
+        <div class="form-group">
+          <label for="escalaPublicNome">Nome completo</label>
+          <input type="text" id="escalaPublicNome" placeholder="Seu nome completo" required autocomplete="name">
+        </div>
+        <div class="form-group">
+          <label for="escalaPublicEmail">Email</label>
+          <input type="email" id="escalaPublicEmail" placeholder="seu@email.com" required autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label for="escalaPublicTelefone">Telefone / WhatsApp</label>
+          <input type="tel" id="escalaPublicTelefone" placeholder="(11) 99999-9999" autocomplete="tel">
+        </div>
+        <div class="form-group">
+          <label for="escalaPublicMinisterio">Ministério</label>
+          <select id="escalaPublicMinisterio" required><option value="">Selecione o ministério</option></select>
+        </div>
+        <p id="escalaPublicError" class="auth-error"></p>
+        <p id="escalaPublicSuccess" class="auth-success" style="display:none;"></p>
+        <button type="submit" class="btn btn-primary" id="btnEscalaPublicSubmit">Me candidatar</button>
+      </form>
+    </div>
+  </div>
+
   <div id="checkinPublicOverlay" class="auth-overlay" style="display: none;">
     <div class="auth-card checkin-public-card">
       <div class="auth-header">
@@ -991,6 +1040,77 @@
         <button type="button" class="btn btn-primary" id="btnSendEmail">Enviar</button>
       </div>
       <div id="sendResult" class="send-result" style="display: none;"></div>
+    </div>
+  </div>
+
+  <!-- Modal: Nova Escala -->
+  <div id="modalNovaEscala" class="modal" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Nova escala</h2>
+        <button type="button" class="modal-close" id="modalNovaEscalaClose">&times;</button>
+      </div>
+      <form id="formNovaEscala" class="modal-body">
+        <div class="form-group">
+          <label for="escalaNovoNome">Nome da escala</label>
+          <input type="text" id="escalaNovoNome" placeholder="Ex: Culto 02/03" required>
+        </div>
+        <div class="form-group">
+          <label for="escalaNovaData">Data (opcional)</label>
+          <input type="date" id="escalaNovaData">
+        </div>
+        <div class="form-group">
+          <label for="escalaNovaDescricao">Descrição (opcional)</label>
+          <input type="text" id="escalaNovaDescricao" placeholder="Informações adicionais">
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="escalaNovoAtivo" checked>
+            Ativa (aceita candidaturas via link público)
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="modalNovaEscalaCancel">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Criar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Editar Escala -->
+  <div id="modalEditarEscala" class="modal" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Editar escala</h2>
+        <button type="button" class="modal-close" id="modalEditarEscalaClose">&times;</button>
+      </div>
+      <form id="formEditarEscala" class="modal-body">
+        <input type="hidden" id="editarEscalaId">
+        <div class="form-group">
+          <label for="editarEscalaNome">Nome da escala</label>
+          <input type="text" id="editarEscalaNome" required>
+        </div>
+        <div class="form-group">
+          <label for="editarEscalaData">Data (opcional)</label>
+          <input type="date" id="editarEscalaData">
+        </div>
+        <div class="form-group">
+          <label for="editarEscalaDescricao">Descrição (opcional)</label>
+          <input type="text" id="editarEscalaDescricao">
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="editarEscalaAtivo">
+            Ativa (aceita candidaturas via link público)
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="modalEditarEscalaCancel">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Salvar</button>
+        </div>
+      </form>
     </div>
   </div>
 

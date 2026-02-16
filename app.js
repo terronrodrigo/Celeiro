@@ -405,14 +405,16 @@ function showError(msg) {
 }
 
 const ADMIN_ONLY_VIEWS = ['ministros', 'usuarios', 'eventos-checkin', 'checkin'];
-const LIDER_VIEWS = ['checkin-ministerio', 'perfil', 'meus-checkins'];
-const VOLUNTARIO_VIEWS = ['perfil', 'checkin-hoje', 'meus-checkins'];
+const LIDER_VIEWS = ['checkin-ministerio', 'perfil', 'meus-checkins', 'escalas'];
+const VOLUNTARIO_VIEWS = ['perfil', 'checkin-hoje', 'meus-checkins', 'escalas'];
 
 let currentView = '';
 let ministrosList = [];
 let usersList = [];
 let checkinsMinisterio = [];
 let checkinMinisterioResumo = {};
+let escalasList = [];
+let escalaAtiva = null; // escala cujas candidaturas estão sendo exibidas
 
 function setViewLoading(viewName, loading) {
   const section = document.querySelector(`.view[data-view="${viewName}"]`);
@@ -461,6 +463,7 @@ const VIEW_META = {
   perfil: { title: 'Meu perfil', subtitle: 'Seus dados de cadastro.', role: 'voluntario' },
   'checkin-hoje': { title: 'Check-in do dia', subtitle: 'Confirme presença no culto de hoje.', role: 'voluntario' },
   'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico de presenças.', role: 'voluntario' },
+  escalas: { title: 'Escalas', subtitle: 'Gerencie escalas e candidaturas de voluntários.', role: 'admin' },
 };
 
 function setView(view, options) {
@@ -504,7 +507,7 @@ function setView(view, options) {
   if (searchBox) searchBox.style.display = (isAdmin || isLider || authRole === 'lider') && view === 'voluntarios' ? 'flex' : 'none';
   if (view === 'voluntarios') voluntariosPageOffset = 0;
   if (!options.skipFetch) {
-    const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios'];
+    const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas'];
     viewsWithFetch.forEach(v => setViewLoading(v, false)); // Limpa loading de todas as views primeiro
     if (view === 'eventos-checkin') runWithTimeout('eventos-checkin', () => fetchEventosCheckin());
     else if (view === 'checkin-hoje') runWithTimeout('checkin-hoje', () => fetchEventosHoje());
@@ -513,6 +516,7 @@ function setView(view, options) {
     else if (view === 'ministros') runWithTimeout('ministros', () => fetchMinistros());
     else if (view === 'usuarios') runWithTimeout('usuarios', () => fetchUsers());
     else if (view === 'checkin-ministerio') runWithTimeout('checkin-ministerio', () => fetchCheckinsMinisterio());
+    else if (view === 'escalas') runWithTimeout('escalas', () => fetchEscalas());
     if ((view === 'resumo' || view === 'voluntarios') && Array.isArray(voluntarios) && voluntarios.length > 0) {
       updateFilters();
     }
@@ -2382,6 +2386,384 @@ function renderCheckins() {
   renderCheckinTable(filtered);
   renderCheckinDadosIncompletos();
 }
+
+// ─── ESCALAS ─────────────────────────────────────────────────────────────────
+
+function statusEscalaLabel(s) {
+  const map = { pendente: 'Pendente', aprovado: 'Aprovado', desistencia: 'Desistência', falta: 'Falta' };
+  return map[s] || s;
+}
+
+function statusEscalaBadge(s) {
+  return `<span class="escala-badge escala-badge-${s}">${statusEscalaLabel(s)}</span>`;
+}
+
+async function fetchEscalas() {
+  if (!authToken) { updateAuthUi(); return; }
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas`);
+    if (!r.ok) return;
+    escalasList = await r.json();
+    renderEscalas();
+  } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
+}
+
+function renderEscalas() {
+  const isAdmin = authRole === 'admin';
+  const isVol = String(authRole || '').toLowerCase() === 'voluntario';
+  if (isAdmin) renderEscalasAdmin();
+  else if (isVol) renderEscalasVoluntario();
+  else renderEscalasLider();
+}
+
+function renderEscalasAdmin() {
+  const container = document.getElementById('escalasContent');
+  if (!container) return;
+  const rows = escalasList.map(e => {
+    const data = e.data ? new Date(e.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
+    const ativo = e.ativo !== false;
+    return `<tr>
+      <td>${escapeHtml(e.nome)}</td>
+      <td>${data}</td>
+      <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${ativo ? 'Ativa' : 'Inativa'}</span></td>
+      <td>${e.totalCandidaturas || 0} <span style="color:var(--text-muted);font-size:.8em">(${e.totalAprovados || 0} aprovados)</span></td>
+      <td><button class="btn btn-sm btn-primary" data-escala-link="${escapeAttr(String(e._id))}" title="Copiar link de candidatura">Copiar link</button></td>
+      <td>
+        <button class="btn btn-sm btn-ghost" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos</button>
+        <button class="btn btn-sm btn-ghost" data-escala-edit="${escapeAttr(String(e._id))}">Editar</button>
+        <button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(String(e._id))}">${ativo ? 'Desligar' : 'Ligar'}</button>
+        <button class="btn btn-sm btn-ghost" data-escala-delete="${escapeAttr(String(e._id))}">Excluir</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6">Nenhuma escala. Clique em "Nova escala" para criar.</td></tr>';
+
+  container.innerHTML = `
+    <div class="filters-card" style="margin-bottom:20px">
+      <button type="button" class="btn btn-primary" id="btnNovaEscala">+ Nova escala</button>
+    </div>
+    <div class="table-card">
+      <div class="chart-header"><h2>Escalas</h2></div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead><tr><th>Nome</th><th>Data</th><th>Status</th><th>Candidaturas</th><th>Link</th><th>Ações</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+    <div id="escalaCandidaturasPanel" style="margin-top:24px;display:none"></div>
+  `;
+
+  document.getElementById('btnNovaEscala')?.addEventListener('click', () => {
+    const m = document.getElementById('modalNovaEscala');
+    if (m) { document.getElementById('escalaNovoNome').value = ''; document.getElementById('escalaNovaData').value = ''; document.getElementById('escalaNovaDescricao').value = ''; document.getElementById('escalaNovoAtivo').checked = true; m.classList.add('open'); m.setAttribute('aria-hidden', 'false'); }
+  });
+
+  container.querySelectorAll('[data-escala-link]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-escala-link');
+      const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}?escala=${encodeURIComponent(id)}`;
+      navigator.clipboard.writeText(url).then(() => alert('Link copiado! Compartilhe com os voluntários para que se candidatem.')).catch(() => prompt('Copie o link:', url));
+    });
+  });
+
+  container.querySelectorAll('[data-escala-candidaturas]').forEach(btn => {
+    btn.addEventListener('click', () => fetchCandidaturasEscala(btn.getAttribute('data-escala-candidaturas')));
+  });
+
+  container.querySelectorAll('[data-escala-edit]').forEach(btn => {
+    btn.addEventListener('click', () => openModalEditarEscala(btn.getAttribute('data-escala-edit')));
+  });
+
+  container.querySelectorAll('[data-escala-toggle]').forEach(btn => {
+    btn.addEventListener('click', () => toggleEscalaAtivo(btn.getAttribute('data-escala-toggle')));
+  });
+
+  container.querySelectorAll('[data-escala-delete]').forEach(btn => {
+    btn.addEventListener('click', () => excluirEscala(btn.getAttribute('data-escala-delete')));
+  });
+}
+
+function renderEscalasLider() {
+  const container = document.getElementById('escalasContent');
+  if (!container) return;
+  if (!escalasList.length) {
+    container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Nenhuma escala disponível no momento.</p></div>';
+    return;
+  }
+  const rows = escalasList.map(e => {
+    const data = e.data ? new Date(e.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
+    return `<tr>
+      <td>${escapeHtml(e.nome)}</td>
+      <td>${data}</td>
+      <td>${e.totalCandidaturas || 0} candidatos</td>
+      <td><button class="btn btn-sm btn-primary" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos do meu ministério</button></td>
+    </tr>`;
+  }).join('');
+  container.innerHTML = `
+    <div class="table-card">
+      <div class="chart-header"><h2>Escalas</h2></div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead><tr><th>Nome</th><th>Data</th><th>Candidatos</th><th>Ação</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+    <div id="escalaCandidaturasPanel" style="margin-top:24px;display:none"></div>
+  `;
+  container.querySelectorAll('[data-escala-candidaturas]').forEach(btn => {
+    btn.addEventListener('click', () => fetchCandidaturasEscala(btn.getAttribute('data-escala-candidaturas')));
+  });
+}
+
+async function renderEscalasVoluntario() {
+  const container = document.getElementById('escalasContent');
+  if (!container) return;
+  container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando suas escalas…</p></div>';
+  try {
+    const r = await authFetch(`${API_BASE}/api/minhas-candidaturas`);
+    if (!r.ok) throw new Error('Falha ao carregar');
+    const list = await r.json();
+    if (!list.length) {
+      container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Você ainda não se candidatou para nenhuma escala. Quando um líder compartilhar um link de escala, use-o para se candidatar.</p></div>';
+      return;
+    }
+    const rows = list.map(c => {
+      const data = c.escalaData ? new Date(c.escalaData).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
+      return `<tr>
+        <td>${escapeHtml(c.escalaNome || '—')}</td>
+        <td>${data}</td>
+        <td>${escapeHtml(c.ministerio || '—')}</td>
+        <td>${statusEscalaBadge(c.status)}</td>
+      </tr>`;
+    }).join('');
+    container.innerHTML = `
+      <div class="table-card">
+        <div class="chart-header"><h2>Minhas escalas</h2></div>
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead><tr><th>Escala</th><th>Data</th><th>Ministério</th><th>Status</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Erro ao carregar escalas.</p></div>';
+  }
+}
+
+async function fetchCandidaturasEscala(escalaId) {
+  const panel = document.getElementById('escalaCandidaturasPanel');
+  if (!panel) return;
+  panel.style.display = '';
+  panel.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando candidatos…</p></div>';
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(escalaId)}/candidaturas`);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    const list = await r.json();
+    const escala = escalasList.find(e => String(e._id) === escalaId);
+    const isAdmin = authRole === 'admin';
+    if (!list.length) {
+      panel.innerHTML = `<div class="filters-card"><div class="chart-header"><h2>Candidatos${escala ? ` — ${escapeHtml(escala.nome)}` : ''}</h2></div><p class="auth-subtitle">Nenhum candidato ainda.</p></div>`;
+      return;
+    }
+    const rows = list.map(c => {
+      const acoes = isAdmin
+        ? `<button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
+           <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="desistencia">Desist.</button>
+           <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button>`
+        : `<button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
+           <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button>`;
+      return `<tr>
+        <td>${escapeHtml(c.nome || '—')}</td>
+        <td><button type="button" class="link-voluntario" data-email="${escapeAttr((c.email || '').toLowerCase())}">${escapeHtml(c.email || '')}</button></td>
+        <td>${escapeHtml(c.telefone || '—')}</td>
+        <td>${escapeHtml(c.ministerio || '—')}</td>
+        <td>${c.totalCheckins || 0}</td>
+        <td>${c.totalParticipacoes || 0}</td>
+        <td>${c.totalDesistencias || 0}</td>
+        <td>${c.totalFaltas || 0}</td>
+        <td>${statusEscalaBadge(c.status)}</td>
+        <td>${acoes}</td>
+      </tr>`;
+    }).join('');
+    panel.innerHTML = `
+      <div class="table-card">
+        <div class="chart-header"><h2>Candidatos${escala ? ` — ${escapeHtml(escala.nome)}` : ''}</h2></div>
+        <div class="table-wrapper">
+          <table class="data-table" style="min-width:900px">
+            <thead><tr><th>Nome</th><th>Email</th><th>Telefone</th><th>Ministério</th><th title="Total de check-ins">CI</th><th title="Participações aprovadas">Part.</th><th title="Desistências">Desist.</th><th title="Faltas">Faltas</th><th>Status</th><th>Ações</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+    panel.querySelectorAll('[data-cand-id]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-cand-id');
+        const action = btn.getAttribute('data-cand-action');
+        await atualizarStatusCandidatura(id, action);
+        fetchCandidaturasEscala(escalaId);
+      });
+    });
+    panel.querySelectorAll('.link-voluntario').forEach(btn => {
+      btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email')));
+    });
+  } catch (e) {
+    panel.innerHTML = `<div class="filters-card"><p class="auth-subtitle">Erro: ${escapeHtml(e.message)}</p></div>`;
+  }
+}
+
+async function atualizarStatusCandidatura(id, status) {
+  try {
+    const r = await authFetch(`${API_BASE}/api/candidaturas/${encodeURIComponent(id)}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+  } catch (e) { alert(e.message || 'Erro ao atualizar status.'); }
+}
+
+async function toggleEscalaAtivo(id) {
+  const escala = escalasList.find(e => String(e._id) === id);
+  if (!escala) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ativo: !escala.ativo }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    await fetchEscalas();
+  } catch (e) { alert(e.message || 'Erro ao alterar status.'); }
+}
+
+async function excluirEscala(id) {
+  const escala = escalasList.find(e => String(e._id) === id);
+  if (!confirm(`Excluir a escala "${(escala?.nome || '').replace(/"/g, '')}"? Esta ação não pode ser desfeita.`)) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    await fetchEscalas();
+  } catch (e) { alert(e.message || 'Erro ao excluir escala.'); }
+}
+
+function openModalEditarEscala(id) {
+  const escala = escalasList.find(e => String(e._id) === id);
+  if (!escala) return;
+  const m = document.getElementById('modalEditarEscala');
+  if (!m) return;
+  document.getElementById('editarEscalaId').value = id;
+  document.getElementById('editarEscalaNome').value = escala.nome || '';
+  document.getElementById('editarEscalaData').value = escala.data ? new Date(escala.data).toISOString().slice(0, 10) : '';
+  document.getElementById('editarEscalaDescricao').value = escala.descricao || '';
+  document.getElementById('editarEscalaAtivo').checked = escala.ativo !== false;
+  m.classList.add('open');
+  m.setAttribute('aria-hidden', 'false');
+}
+
+// ─── Form handlers: nova e editar escala ─────────────────────────────────────
+document.getElementById('formNovaEscala')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const nome = document.getElementById('escalaNovoNome')?.value?.trim();
+  const data = document.getElementById('escalaNovaData')?.value || '';
+  const descricao = document.getElementById('escalaNovaDescricao')?.value?.trim() || '';
+  const ativo = document.getElementById('escalaNovoAtivo')?.checked !== false;
+  if (!nome) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome, data: data || undefined, descricao, ativo }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    document.getElementById('modalNovaEscala')?.classList.remove('open');
+    fetchEscalas();
+  } catch (err) { alert(err.message || 'Erro ao criar escala.'); }
+});
+
+document.getElementById('formEditarEscala')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = document.getElementById('editarEscalaId')?.value;
+  if (!id) return;
+  const nome = document.getElementById('editarEscalaNome')?.value?.trim();
+  const data = document.getElementById('editarEscalaData')?.value || '';
+  const descricao = document.getElementById('editarEscalaDescricao')?.value?.trim() || '';
+  const ativo = document.getElementById('editarEscalaAtivo')?.checked !== false;
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome, data: data || null, descricao, ativo }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    document.getElementById('modalEditarEscala')?.classList.remove('open');
+    fetchEscalas();
+  } catch (err) { alert(err.message || 'Erro ao salvar escala.'); }
+});
+
+['modalNovaEscalaClose', 'modalNovaEscalaCancel'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', () => { document.getElementById('modalNovaEscala')?.classList.remove('open'); });
+});
+['modalEditarEscalaClose', 'modalEditarEscalaCancel'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', () => { document.getElementById('modalEditarEscala')?.classList.remove('open'); });
+});
+document.getElementById('modalNovaEscala')?.querySelector('.modal-backdrop')?.addEventListener('click', () => { document.getElementById('modalNovaEscala')?.classList.remove('open'); });
+document.getElementById('modalEditarEscala')?.querySelector('.modal-backdrop')?.addEventListener('click', () => { document.getElementById('modalEditarEscala')?.classList.remove('open'); });
+
+// ─── Candidatura pública via link ?escala=XXX ─────────────────────────────
+(function initEscalaPublic() {
+  const params = new URLSearchParams(window.location.search);
+  const escalaId = params.get('escala');
+  if (!escalaId) return;
+
+  const overlay = document.getElementById('escalaPublicOverlay');
+  const labelEl = document.getElementById('escalaPublicLabel');
+  const subtitleEl = document.getElementById('escalaPublicSubtitle');
+  const ministerioSel = document.getElementById('escalaPublicMinisterio');
+  const errorEl = document.getElementById('escalaPublicError');
+  const successEl = document.getElementById('escalaPublicSuccess');
+  if (!overlay) return;
+
+  overlay.style.display = 'flex';
+
+  fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(escalaId)}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { if (labelEl) labelEl.textContent = data.error; return; }
+      const nome = data.escala?.nome || 'Escala';
+      const dt = data.escala?.data ? new Date(data.escala.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+      if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
+      if (labelEl) labelEl.textContent = '';
+      if (ministerioSel) {
+        ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' +
+          (data.ministerios || []).map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+      }
+    })
+    .catch(() => { if (labelEl) labelEl.textContent = 'Erro ao carregar dados da escala.'; });
+
+  document.getElementById('escalaPublicForm')?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const nome = document.getElementById('escalaPublicNome')?.value?.trim();
+    const email = document.getElementById('escalaPublicEmail')?.value?.trim();
+    const telefone = document.getElementById('escalaPublicTelefone')?.value?.trim() || '';
+    const ministerio = document.getElementById('escalaPublicMinisterio')?.value;
+    if (errorEl) errorEl.textContent = '';
+    if (!nome || !email || !ministerio) { if (errorEl) errorEl.textContent = 'Preencha todos os campos obrigatórios.'; return; }
+    const btn = document.getElementById('btnEscalaPublicSubmit');
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch(`${API_BASE}/api/candidaturas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ escalaId, nome, email, telefone, ministerio }),
+      });
+      const data = await r.json();
+      if (!r.ok && r.status !== 200) throw new Error(data.error || 'Erro ao enviar candidatura.');
+      if (successEl) { successEl.textContent = data.message || 'Candidatura registrada! Aguarde a aprovação do líder.'; successEl.style.display = ''; }
+      if (document.getElementById('escalaPublicForm')) document.getElementById('escalaPublicForm').style.display = 'none';
+    } catch (err) {
+      if (errorEl) errorEl.textContent = err.message || 'Erro ao enviar candidatura.';
+      if (btn) btn.disabled = false;
+    }
+  });
+})();
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function openModal() {
   const list = [...selectedEmails];
