@@ -2071,12 +2071,41 @@ app.post('/api/migrate', requireAuth, requireAdmin, async (req, res) => {
 // Servir arquivos estáticos (deve estar APÓS as rotas da API)
 app.use(express.static(join(__dirname, '..')));
 
+/** Correção única: check-ins com eventoId e dataCheckin errado (bug getEventDateStringSaoPaulo).
+ *  Idempotente — registros já corretos não são tocados. */
+async function fixDataCheckinOnce() {
+  try {
+    const checkins = await Checkin.find({ eventoId: { $exists: true, $ne: null } })
+      .select('_id eventoId dataCheckin').lean();
+    if (!checkins.length) return;
+    const eventIds = [...new Set(checkins.map(c => String(c.eventoId)))];
+    const eventos = await EventoCheckin.find({ _id: { $in: eventIds } }).select('_id data').lean();
+    const eventoMap = new Map(eventos.map(e => [String(e._id), e]));
+    let fixed = 0;
+    for (const c of checkins) {
+      const ev = eventoMap.get(String(c.eventoId));
+      if (!ev || !ev.data) continue;
+      const d = ev.data instanceof Date ? ev.data : new Date(ev.data);
+      const dataCorreta = new Date(d.toISOString().slice(0, 10) + 'T03:00:00.000Z');
+      const dataAtual = c.dataCheckin instanceof Date ? c.dataCheckin : new Date(c.dataCheckin);
+      if (!dataAtual || dataAtual.getTime() !== dataCorreta.getTime()) {
+        await Checkin.updateOne({ _id: c._id }, { $set: { dataCheckin: dataCorreta } });
+        fixed++;
+      }
+    }
+    if (fixed > 0) console.log(`✅ fixDataCheckinOnce: ${fixed} check-in(s) corrigidos.`);
+  } catch (err) {
+    console.error('fixDataCheckinOnce erro:', err.message);
+  }
+}
+
 // Conectar MongoDB e só então iniciar o servidor (evita "buffering timed out" no login)
 async function start() {
   if (process.env.MONGODB_URI) {
     try {
       await mongoose.connect(process.env.MONGODB_URI);
       console.log('✅ MongoDB conectado');
+      await fixDataCheckinOnce();
     } catch (err) {
       console.error('❌ MongoDB erro:', err);
       process.exit(1);
