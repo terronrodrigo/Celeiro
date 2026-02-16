@@ -2012,6 +2012,41 @@ app.delete('/api/users/:id', requireAuth, requireMasterAdmin, async (req, res) =
   }
 });
 
+// POST /api/fix-datacheckin - Corrige dataCheckin de check-ins com eventoId (admin only).
+// Necessário uma vez: bug antigo em getEventDateStringSaoPaulo causava data -1 dia.
+app.post('/api/fix-datacheckin', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const mongoReady = mongoose.connection.readyState === 1;
+    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    const dryRun = req.query.dry !== 'false';
+    const checkins = await Checkin.find({ eventoId: { $exists: true, $ne: null } })
+      .select('_id eventoId dataCheckin').lean();
+    const eventIds = [...new Set(checkins.map(c => String(c.eventoId)))];
+    const eventos = await EventoCheckin.find({ _id: { $in: eventIds } }).select('_id data').lean();
+    const eventoMap = new Map(eventos.map(e => [String(e._id), e]));
+
+    const errados = [];
+    for (const c of checkins) {
+      const evento = eventoMap.get(String(c.eventoId));
+      if (!evento || !evento.data) continue;
+      const d = evento.data instanceof Date ? evento.data : new Date(evento.data);
+      // Data correta: UTC midnight do evento → meia-noite BRT (T03:00:00Z)
+      const dataCorreta = new Date(d.toISOString().slice(0, 10) + 'T03:00:00.000Z');
+      const dataAtual = c.dataCheckin instanceof Date ? c.dataCheckin : new Date(c.dataCheckin);
+      if (!dataAtual || dataAtual.getTime() !== dataCorreta.getTime()) {
+        errados.push({ id: c._id, de: dataAtual?.toISOString(), para: dataCorreta.toISOString() });
+        if (!dryRun) {
+          await Checkin.updateOne({ _id: c._id }, { $set: { dataCheckin: dataCorreta } });
+        }
+      }
+    }
+    res.json({ dryRun, total: checkins.length, errados: errados.length, detalhes: errados });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao corrigir dataCheckin.');
+  }
+});
+
 // POST /api/migrate - Migrar dados das CSVs para o MongoDB (admin only)
 app.post('/api/migrate', requireAuth, requireAdmin, async (req, res) => {
   try {
