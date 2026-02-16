@@ -317,13 +317,6 @@ function formatDatePtBr(ms) {
   return d.toLocaleString('pt-BR', { timeZone: TZ_BRASILIA, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 }
 
-function dateOnlyFromMs(ms) {
-  if (!ms) return null;
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return null;
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
 function sendError(res, status, message, details) {
   const payload = { error: message };
   if (details) payload.details = details;
@@ -622,16 +615,18 @@ app.get('/api/me', requireAuth, async (req, res) => {
   let fotoUrl = null;
   let mustChangePassword = false;
   try {
+    let userEmail = req.userEmail;
     if (req.userId) {
-      const user = await User.findById(req.userId).select('nome fotoUrl mustChangePassword').lean();
+      const user = await User.findById(req.userId).select('nome fotoUrl mustChangePassword email').lean();
       if (user && user.nome) displayName = user.nome;
       if (user && user.fotoUrl) fotoUrl = user.fotoUrl;
       if (user && user.mustChangePassword) mustChangePassword = true;
+      if (user && user.email) userEmail = user.email;
     } else if (req.userRole === 'admin' && ADMIN_USER) {
       const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
       if (adminUser && adminUser.fotoUrl) fotoUrl = adminUser.fotoUrl;
     }
-    const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email').lean())?.email);
+    const email = userEmail;
     if (email) {
       const vol = await Voluntario.findOne({ email: email.toLowerCase() }).select('nome').lean();
       if (vol && vol.nome && String(vol.nome).trim()) displayName = vol.nome.trim();
@@ -1028,12 +1023,9 @@ app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
   }
 });
 
-// Timezone para "hoje" e datas de eventos (evita servidor em UTC não bater com Brasil)
-const TZ_APP = process.env.TZ || process.env.APP_TIMEZONE || 'America/Sao_Paulo';
-
 /** Retorna a data de hoje no fuso da aplicação como YYYY-MM-DD. */
 function getHojeDateString() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: TZ_APP });
+  return new Date().toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
 }
 
 /** Dado YYYY-MM-DD, retorna o início desse dia em UTC (00:00:00.000Z). */
@@ -1085,14 +1077,14 @@ function parseHHMM(s) {
 
 /** Retorna o horário atual em São Paulo no formato "HH:mm". */
 function getNowHHMMSaoPaulo() {
-  return new Date().toLocaleTimeString('en-GB', { timeZone: TZ_APP, hour: '2-digit', minute: '2-digit', hour12: false });
+  return new Date().toLocaleTimeString('en-GB', { timeZone: TZ_BRASILIA, hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 /** Data do evento no fuso São Paulo (YYYY-MM-DD). */
 function getEventDateStringSaoPaulo(evento) {
   if (!evento || !evento.data) return '';
   const d = evento.data instanceof Date ? evento.data : new Date(evento.data);
-  return d.toLocaleDateString('en-CA', { timeZone: TZ_APP });
+  return d.toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
 }
 
 /** Verifica se o momento atual (em São Paulo) está dentro da janela de check-in do evento (também em São Paulo). */
@@ -1159,7 +1151,7 @@ app.post('/api/eventos-checkin', requireAuth, requireAdmin, async (req, res) => 
     if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm (ex: 22:00).');
     const evento = await EventoCheckin.create({
       data: dataOnly,
-      label: label || `Culto ${dataOnly.toLocaleDateString('pt-BR', { timeZone: TZ_APP })}`,
+      label: label || `Culto ${dataOnly.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}`,
       criadoPor: req.userId,
       ativo: typeof ativo === 'boolean' ? ativo : true,
       horarioInicio: hin || '',
@@ -1227,8 +1219,15 @@ app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
     const { eventoId, ministerio } = req.body || {};
     if (!eventoId) return sendError(res, 400, 'eventoId é obrigatório.');
-    const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email').lean())?.email);
-    const nome = req.user || (req.userId && (await User.findById(req.userId).select('nome').lean())?.nome) || req.user;
+    let email = req.userEmail;
+    let nome = req.user;
+    if (req.userId && (!email || !nome)) {
+      const userDoc = await User.findById(req.userId).select('email nome').lean();
+      if (userDoc) {
+        if (!email && userDoc.email) email = userDoc.email;
+        if (!nome && userDoc.nome) nome = userDoc.nome;
+      }
+    }
     if (!email) return sendError(res, 403, 'Usuário sem email. Faça login como voluntário.');
 
     const evento = await EventoCheckin.findById(eventoId).lean();
@@ -1273,7 +1272,7 @@ app.get('/api/checkin-public/:eventoId', async (req, res) => {
     res.json({
       evento: {
         _id: evento._id,
-        label: evento.label || new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_APP }),
+        label: evento.label || new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }),
         data: evento.data,
         horarioInicio: (evento.horarioInicio || '').trim() || null,
         horarioFim: (evento.horarioFim || '').trim() || null,

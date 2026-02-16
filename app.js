@@ -1162,7 +1162,7 @@ async function toggleEventoAtivo(eventoId) {
   if (!eventoId || !authToken) return;
   const evento = (eventosCheckin || []).find(e => String(e._id) === String(eventoId));
   if (!evento) return;
-  const novoAtivo = evento.ativo !== false ? false : true;
+  const novoAtivo = !evento.ativo;
   const btn = eventosCheckinBody?.querySelector(`[data-event-toggle="${eventoId.replace(/"/g, '&quot;')}"]`);
   if (btn) btn.disabled = true;
   try {
@@ -1496,8 +1496,7 @@ async function fetchMeusCheckins() {
 }
 
 async function fetchAllData() {
-  await fetchVoluntarios();
-  await fetchCheckins();
+  await Promise.all([fetchVoluntarios(), fetchCheckins()]);
 }
 
 async function fetchVersiculoDia() {
@@ -1596,7 +1595,6 @@ function renderCharts(filteredInput) {
   const dispData = countByMultiValueField(filtered, 'disponibilidade');
   const estadoData = countByField(filtered, 'estado');
   const cidadeData = countByField(filtered, 'cidade');
-
 
   const ctxAreas = document.getElementById('areasChart');
   if (ctxAreas) {
