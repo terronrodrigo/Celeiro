@@ -1080,11 +1080,14 @@ function getNowHHMMSaoPaulo() {
   return new Date().toLocaleTimeString('en-GB', { timeZone: TZ_BRASILIA, hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-/** Data do evento no fuso São Paulo (YYYY-MM-DD). */
+/** Data do evento como YYYY-MM-DD.
+ * Eventos são gravados como meia-noite UTC (parseDateAsUTC), então a data
+ * intencional é o componente UTC — converter para Brasília adiantaria -3h e
+ * pularia para o dia anterior (ex.: 2026-02-15T00:00Z → "2026-02-14" BRT). */
 function getEventDateStringSaoPaulo(evento) {
   if (!evento || !evento.data) return '';
   const d = evento.data instanceof Date ? evento.data : new Date(evento.data);
-  return d.toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
+  return d.toISOString().slice(0, 10);
 }
 
 /** Verifica se o momento atual (em São Paulo) está dentro da janela de check-in do evento (também em São Paulo). */
