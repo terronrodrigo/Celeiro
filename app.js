@@ -429,7 +429,7 @@ function getDefaultView() {
   const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
   const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
   if (isVol) return 'perfil';
-  if (isLider && !(authRole === 'admin')) return 'checkin-ministerio';
+  if (authRole === 'lider' || (isLider && authRole !== 'admin')) return 'checkin-ministerio';
   return 'resumo';
 }
 
@@ -463,7 +463,7 @@ const VIEW_META = {
   perfil: { title: 'Meu perfil', subtitle: 'Seus dados de cadastro.', role: 'voluntario' },
   'checkin-hoje': { title: 'Check-in do dia', subtitle: 'Confirme presença no culto de hoje.', role: 'voluntario' },
   'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico de presenças.', role: 'voluntario' },
-  escalas: { title: 'Escalas', subtitle: 'Gerencie escalas e candidaturas de voluntários.', role: 'admin' },
+  escalas: { title: 'Escalas', subtitle: 'Gerencie escalas e candidaturas de voluntários.', role: 'lider' },
 };
 
 function setView(view, options) {
@@ -479,7 +479,7 @@ function setView(view, options) {
   const isAdmin = authRole === 'admin';
   if (isVol && !VOLUNTARIO_VIEWS.includes(view)) view = 'perfil';
   if ((authRole === 'lider' || isLider) && !isAdmin && !LIDER_VIEWS.includes(view)) view = 'checkin-ministerio';
-  if (!isVol && !isLider && !isAdmin) view = 'perfil';
+  if (!isVol && !isLider && !isAdmin && authRole !== 'lider') view = 'perfil';
   currentView = view;
   const meta = VIEW_META[view];
   const role = meta ? meta.role : 'admin';
@@ -2973,10 +2973,11 @@ async function handleLogin(e) {
     const isVol = String(authRole || '').toLowerCase() === 'voluntario';
     const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
     const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
-    const defaultView = isVol ? 'perfil' : (isLider ? 'checkin-ministerio' : 'resumo');
+    const isLiderRole = authRole === 'lider' || isLider;
+    const defaultView = isVol ? 'perfil' : (isLiderRole && authRole !== 'admin' ? 'checkin-ministerio' : 'resumo');
     setView(defaultView);
     if (authRole === 'admin') await fetchAllData();
-    else if (isLider) { await fetchCheckinsMinisterio(); await fetchMeusCheckins(); await fetchPerfil(); }
+    else if (isLiderRole && authRole !== 'admin') { await fetchCheckinsMinisterio(); await fetchMeusCheckins(); await fetchPerfil(); }
     else { await fetchEventosHoje(); await fetchMeusCheckins(); await fetchPerfil(); }
   } catch (err) {
     if (loginError) loginError.textContent = err.message || 'Erro de rede.';
@@ -3432,10 +3433,11 @@ document.getElementById('mustChangePasswordForm')?.addEventListener('submit', as
     const isVol = String(authRole || '').toLowerCase() === 'voluntario';
     const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
     const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
-    const defaultView = isVol ? 'perfil' : (isLider ? 'checkin-ministerio' : 'resumo');
+    const isLiderRole = authRole === 'lider' || isLider;
+    const defaultView = isVol ? 'perfil' : (isLiderRole && authRole !== 'admin' ? 'checkin-ministerio' : 'resumo');
     setView(defaultView);
     if (authRole === 'admin') await fetchAllData();
-    else if (isLider) { await fetchCheckinsMinisterio(); await fetchMeusCheckins(); await fetchPerfil(); }
+    else if (isLiderRole && authRole !== 'admin') { await fetchCheckinsMinisterio(); await fetchMeusCheckins(); await fetchPerfil(); }
     else { await fetchEventosHoje(); await fetchMeusCheckins(); await fetchPerfil(); }
   } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro ao alterar senha.'; }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Trocar senha'; } }
@@ -3808,16 +3810,18 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
       const isVol = authRole === 'voluntario';
       const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
       const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
-      const defaultView = isVol ? 'perfil' : (isLider ? 'checkin-ministerio' : 'resumo');
+      const isLiderRole = authRole === 'lider' || isLider;
+      const defaultView = isVol ? 'perfil' : (isLiderRole && authRole !== 'admin' ? 'checkin-ministerio' : 'resumo');
       setView(defaultView);
       if (authRole === 'admin') fetchAllData();
-      else if (isLider) { fetchCheckinsMinisterio(); fetchMeusCheckins(); fetchPerfil(); }
+      else if (isLiderRole && authRole !== 'admin') { fetchCheckinsMinisterio(); fetchMeusCheckins(); fetchPerfil(); }
       else { fetchEventosHoje(); fetchMeusCheckins(); fetchPerfil(); }
     } else {
       const isVol = authRole === 'voluntario';
       const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
       const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
-      setView(isVol ? 'perfil' : (isLider ? 'checkin-ministerio' : 'resumo'));
+      const isLiderRole = authRole === 'lider' || isLider;
+      setView(isVol ? 'perfil' : (isLiderRole && authRole !== 'admin' ? 'checkin-ministerio' : 'resumo'));
     }
   });
 })();
