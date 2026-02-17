@@ -2262,19 +2262,25 @@ app.post('/api/candidaturas', async (req, res) => {
 });
 
 // GET /api/escalas/:id/candidaturas — lista candidaturas de uma escala (com stats de histórico)
+// Admin: vê todos. Líder: só candidaturas do(s) ministério(s) que lidera
 app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
     if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
 
-    const query = { escalaId: req.params.id };
+    let query = { escalaId: req.params.id };
     if (isLider) {
-      const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length ? req.userMinisterioNomes : (req.userMinisterioNome ? [req.userMinisterioNome] : []);
+      const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length
+        ? req.userMinisterioNomes.map(String).map(s => s.trim()).filter(Boolean)
+        : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
       if (!nomes.length) return res.json([]);
-      query.ministerio = { $in: nomes };
+      const orConditions = [
+        { ministerio: { $in: nomes } },
+        ...nomes.map((n) => ({ ministerio: new RegExp(escapeRegex(n), 'i') })),
+      ];
+      query = { escalaId: req.params.id, $or: orConditions };
     }
-
     const candidaturas = await Candidatura.find(query).sort({ createdAt: -1 }).lean();
     if (!candidaturas.length) return res.json([]);
 
@@ -2331,8 +2337,15 @@ app.put('/api/candidaturas/:id/status', requireAuth, async (req, res) => {
 
     // Líder só pode alterar candidaturas do seu ministério
     if (isLider) {
-      const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length ? req.userMinisterioNomes : (req.userMinisterioNome ? [req.userMinisterioNome] : []);
-      if (!nomes.includes(candidatura.ministerio)) return sendError(res, 403, 'Acesso negado. Esta candidatura não é do seu ministério.');
+      const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length
+        ? req.userMinisterioNomes.map(String).map(s => s.trim()).filter(Boolean)
+        : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
+      const candMin = (candidatura.ministerio || '').toString().trim();
+      const pertence = nomes.length > 0 && (
+        nomes.includes(candMin) ||
+        nomes.some((n) => new RegExp(escapeRegex(n), 'i').test(candMin))
+      );
+      if (!pertence) return sendError(res, 403, 'Acesso negado. Esta candidatura não é do seu ministério.');
     }
 
     const update = { status };
