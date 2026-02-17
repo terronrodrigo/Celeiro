@@ -2447,12 +2447,14 @@ function renderEscalasAdmin() {
       <td>${data}</td>
       <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${ativo ? 'Ativa' : 'Inativa'}</span></td>
       <td>${e.totalCandidaturas || 0} <span style="color:var(--text-muted);font-size:.8em">(${e.totalAprovados || 0} aprovados)</span></td>
-      <td><button class="btn btn-sm btn-primary" data-escala-link="${escapeAttr(String(e._id))}" title="Copiar link de candidatura">Copiar link</button></td>
-      <td>
-        <button class="btn btn-sm btn-ghost" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos</button>
-        <button class="btn btn-sm btn-ghost" data-escala-edit="${escapeAttr(String(e._id))}">Editar</button>
-        <button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(String(e._id))}">${ativo ? 'Desligar' : 'Ligar'}</button>
-        <button class="btn btn-sm btn-ghost" data-escala-delete="${escapeAttr(String(e._id))}">Excluir</button>
+      <td class="escala-actions-cell"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-link="${escapeAttr(String(e._id))}" title="Copiar link de candidatura">Copiar link</button></td>
+      <td class="escala-actions-cell">
+        <div class="escala-actions-wrap">
+          <button class="btn btn-sm btn-ghost" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos</button>
+          <button class="btn btn-sm btn-ghost" data-escala-edit="${escapeAttr(String(e._id))}">Editar</button>
+          <button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(String(e._id))}">${ativo ? 'Desligar' : 'Ligar'}</button>
+          <button class="btn btn-sm btn-ghost" data-escala-delete="${escapeAttr(String(e._id))}">Excluir</button>
+        </div>
       </td>
     </tr>`;
   }).join('') || '<tr><td colspan="6">Nenhuma escala. Clique em "Nova escala" para criar.</td></tr>';
@@ -2461,16 +2463,16 @@ function renderEscalasAdmin() {
     <div class="filters-card" style="margin-bottom:20px">
       <button type="button" class="btn btn-primary" id="btnNovaEscala">+ Nova escala</button>
     </div>
-    <div class="table-card">
+    <div class="table-card escala-table-card">
       <div class="chart-header"><h2>Escalas</h2></div>
       <div class="table-wrapper">
-        <table class="data-table">
+        <table class="data-table escala-table">
           <thead><tr><th>Nome</th><th>Data</th><th>Status</th><th>Candidaturas</th><th>Link</th><th>Ações</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
     </div>
-    <div id="escalaCandidaturasPanel" style="margin-top:24px;display:none"></div>
+    <div id="escalaCandidaturasPanel" class="escala-candidaturas-panel" style="margin-top:24px;display:none"></div>
   `;
 
   document.getElementById('btnNovaEscala')?.addEventListener('click', () => {
@@ -2516,20 +2518,20 @@ function renderEscalasLider() {
       <td>${escapeHtml(e.nome)}</td>
       <td>${data}</td>
       <td>${e.totalCandidaturas || 0} candidatos</td>
-      <td><button class="btn btn-sm btn-primary" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos do meu ministério</button></td>
+      <td class="escala-actions-cell"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos do meu ministério</button></td>
     </tr>`;
   }).join('');
   container.innerHTML = `
-    <div class="table-card">
+    <div class="table-card escala-table-card">
       <div class="chart-header"><h2>Escalas</h2></div>
       <div class="table-wrapper">
-        <table class="data-table">
+        <table class="data-table escala-table">
           <thead><tr><th>Nome</th><th>Data</th><th>Candidatos</th><th>Ação</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
     </div>
-    <div id="escalaCandidaturasPanel" style="margin-top:24px;display:none"></div>
+    <div id="escalaCandidaturasPanel" class="escala-candidaturas-panel" style="margin-top:24px;display:none"></div>
   `;
   container.querySelectorAll('[data-escala-candidaturas]').forEach(btn => {
     btn.addEventListener('click', () => fetchCandidaturasEscala(btn.getAttribute('data-escala-candidaturas')));
@@ -2590,11 +2592,11 @@ async function fetchCandidaturasEscala(escalaId) {
     }
     const rows = list.map(c => {
       const acoes = isAdmin
-        ? `<button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
+        ? `<div class="escala-cand-actions"><button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
            <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="desistencia">Desist.</button>
-           <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button>`
-        : `<button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
-           <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button>`;
+           <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button></div>`
+        : `<div class="escala-cand-actions"><button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
+           <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button></div>`;
       return `<tr>
         <td>${escapeHtml(c.nome || '—')}</td>
         <td><button type="button" class="link-voluntario" data-email="${escapeAttr((c.email || '').toLowerCase())}">${escapeHtml(c.email || '')}</button></td>
@@ -2609,10 +2611,10 @@ async function fetchCandidaturasEscala(escalaId) {
       </tr>`;
     }).join('');
     panel.innerHTML = `
-      <div class="table-card">
+      <div class="table-card escala-table-card">
         <div class="chart-header"><h2>Candidatos${escala ? ` — ${escapeHtml(escala.nome)}` : ''}</h2></div>
         <div class="table-wrapper">
-          <table class="data-table" style="min-width:900px">
+          <table class="data-table escala-table" style="min-width:900px">
             <thead><tr><th>Nome</th><th>Email</th><th>Telefone</th><th>Ministério</th><th title="Total de check-ins">CI</th><th title="Participações aprovadas">Part.</th><th title="Desistências">Desist.</th><th title="Faltas">Faltas</th><th>Status</th><th>Ações</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>

@@ -1525,6 +1525,58 @@ body {
   }
 }
 
+/* ── Escalas: botões e ações responsivos ────────────────────────────────────── */
+.escala-actions-wrap,
+.escala-cand-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.escala-actions-cell {
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .escala-table .btn-sm,
+  .escala-table .escala-btn-main {
+    min-height: 44px;
+    padding: 10px 16px;
+    font-size: 0.95rem;
+  }
+  .escala-actions-wrap,
+  .escala-cand-actions {
+    gap: 10px;
+  }
+  .escala-actions-cell,
+  .escala-table td:last-child {
+    min-width: 140px;
+  }
+}
+
+@media (max-width: 480px) {
+  .escala-table .btn-sm,
+  .escala-table .escala-btn-main {
+    min-height: 46px;
+    padding: 12px 18px;
+  }
+  .escala-actions-wrap {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .escala-actions-wrap .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .escala-cand-actions {
+    flex-direction: column;
+  }
+  .escala-cand-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 /* ── Escalas: badges de status ──────────────────────────────────────────────── */
 .escala-badge {
   display: inline-block;
