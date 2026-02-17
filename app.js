@@ -2764,6 +2764,21 @@ async function loadEscalaPublic(escalaId) {
     if (subtitleEl) subtitleEl.textContent = 'Erro ao carregar dados da escala.';
   }
 
+  document.getElementById('btnEscalaPublicVerMinhas')?.addEventListener('click', () => {
+    const overlay = document.getElementById('escalaPublicOverlay');
+    if (overlay) overlay.style.display = 'none';
+    const url = new URL(window.location.href);
+    url.searchParams.delete('escala');
+    window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+    if (authToken && contentEl) {
+      contentEl.style.display = 'block';
+      if (authOverlay) authOverlay.style.display = 'none';
+      setView('escalas');
+    } else if (authOverlay) {
+      authOverlay.style.display = 'flex';
+    }
+  });
+
   document.getElementById('escalaPublicForm')?.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const nome = document.getElementById('escalaPublicNome')?.value?.trim();
@@ -2782,9 +2797,10 @@ async function loadEscalaPublic(escalaId) {
       });
       const data = await r.json();
       if (!r.ok && r.status !== 200) throw new Error(data.error || 'Erro ao enviar candidatura.');
-      if (successEl) { successEl.textContent = data.message || 'Candidatura registrada! Aguarde a aprovação do líder.'; successEl.style.display = ''; }
       const form = document.getElementById('escalaPublicForm');
+      const successWrap = document.getElementById('escalaPublicSuccessWrap');
       if (form) form.style.display = 'none';
+      if (successWrap) successWrap.style.display = '';
     } catch (err) {
       if (errorEl) errorEl.textContent = err.message || 'Erro ao enviar candidatura.';
       if (btn) btn.disabled = false;

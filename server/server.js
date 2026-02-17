@@ -1987,8 +1987,10 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
     }
     const newRole = role !== undefined ? role : user.role;
     const rawIds = Array.isArray(ministerioIds) ? ministerioIds : (ministerioId != null ? [ministerioId] : undefined);
-    if (rawIds !== undefined) {
-      updates.ministerioIds = (newRole === 'lider' || newRole === 'admin') ? rawIds.filter(Boolean) : [];
+    if (newRole === 'voluntario') {
+      updates.ministerioIds = [];
+    } else if (rawIds !== undefined && (newRole === 'lider' || newRole === 'admin')) {
+      updates.ministerioIds = rawIds.filter(Boolean);
     }
     const updated = await User.findByIdAndUpdate(req.params.id, updates, { new: true }).populate('ministerioIds', 'nome');
     if (newRole === 'voluntario') {
@@ -2273,6 +2275,55 @@ app.post('/api/candidaturas', async (req, res) => {
     });
     // Garante que o candidato apareça na lista de voluntários
     try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim() }); } catch (_) {}
+
+    // Email de confirmação de recebimento
+    const apiKey = process.env.RESEND_API_KEY;
+    if (apiKey && em) {
+      try {
+        const escalaNome = escala?.nome || 'Escala';
+        const escalaData = escala?.data ? new Date(escala.data).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '';
+        const nomeDisplay = (nome || '').toString().trim() || 'voluntário(a)';
+        const resend = new Resend(apiKey);
+        const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+        const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
+        await resend.emails.send({
+          from, to: em, reply_to: replyTo,
+          subject: `Recebemos sua candidatura — ${escalaNome}`,
+          html: `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Recebemos sua candidatura</title></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;">
+  <tr><td align="center">
+    <table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+      <tr><td style="background:#1a1a2e;padding:32px 40px;text-align:center;">
+        <p style="margin:0;font-size:13px;color:#f59e0b;text-transform:uppercase;letter-spacing:.1em;font-weight:600;">Igreja Celeiro São Paulo</p>
+        <h1 style="margin:8px 0 0;font-size:24px;color:#fff;font-weight:700;">Equipe de Voluntários</h1>
+      </td></tr>
+      <tr><td style="padding:40px 40px 32px;">
+        <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${nomeDisplay}</strong>!</p>
+        <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Recebemos o preenchimento da escala <strong>${escalaNome}</strong>${escalaData ? ` (${escalaData})` : ''}. Obrigado por se candidatar!</p>
+        <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Quando o líder do ministério aprovar todos os voluntários, você vai receber um email de confirmação.</p>
+        <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Ministério informado: <strong>${(ministerio || '').toString().trim() || '—'}</strong></p>
+        <p style="margin:0;font-size:15px;color:#374151;line-height:1.6;">Se tiver dúvidas, responda este email.</p>
+      </td></tr>
+      <tr><td style="padding:0 40px 40px;">
+        <table cellpadding="0" cellspacing="0"><tr>
+          <td style="border-left:3px solid #f59e0b;padding-left:16px;">
+            <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a2e;">Com gratidão,</p>
+            <p style="margin:4px 0 0;font-size:14px;color:#6b7280;">Equipe Voluntários Celeiro São Paulo</p>
+          </td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:20px 40px;text-align:center;">
+        <p style="margin:0;font-size:12px;color:#9ca3af;">Igreja Celeiro São Paulo · São Paulo, SP</p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>`,
+        });
+      } catch (_) {}
+    }
+
     res.status(201).json({ message: 'Candidatura registrada! Aguarde a aprovação do líder do seu ministério.', candidatura });
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
