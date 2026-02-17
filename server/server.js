@@ -2159,15 +2159,31 @@ app.post('/api/send-cadastro-incompleto', requireAuth, requireAdmin, async (req,
 // ──────────────────────────────────────────────────────────────────────────────
 
 // GET /api/escalas — lista escalas (admin: todas; lider: só ativas)
+// Admin: totalCandidaturas/totalAprovados = todos. Líder: só do(s) ministério(s) que lidera
 app.get('/api/escalas', requireAuth, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
+    const isLider = req.userRole === 'lider';
     const query = isAdmin ? {} : { ativo: true };
     const escalas = await Escala.find(query).sort({ createdAt: -1 }).lean();
-    // Conta candidaturas por escala
     const ids = escalas.map(e => e._id);
+    let countMatch = { escalaId: { $in: ids } };
+    if (isLider) {
+      const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length
+        ? req.userMinisterioNomes.map(String).map(s => s.trim()).filter(Boolean)
+        : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
+      if (nomes.length > 0) {
+        const orConditions = [
+          { ministerio: { $in: nomes } },
+          ...nomes.map((n) => ({ ministerio: new RegExp(escapeRegex(n), 'i') })),
+        ];
+        countMatch = { escalaId: { $in: ids }, $or: orConditions };
+      } else {
+        countMatch = { escalaId: { $in: ids }, ministerio: '__nenhum__' };
+      }
+    }
     const counts = await Candidatura.aggregate([
-      { $match: { escalaId: { $in: ids } } },
+      { $match: countMatch },
       { $group: { _id: '$escalaId', total: { $sum: 1 }, aprovados: { $sum: { $cond: [{ $eq: ['$status', 'aprovado'] }, 1, 0] } } } },
     ]);
     const countMap = new Map(counts.map(c => [String(c._id), c]));
