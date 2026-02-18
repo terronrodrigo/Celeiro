@@ -2729,7 +2729,35 @@ document.getElementById('modalEditarEscala')?.querySelector('.modal-backdrop')?.
 
 // ─── Candidatura pública via link ?escala=XXX ─────────────────────────────
 
+/** Modo formulário público: usa sessão limpa para evitar conflito com sessão anterior. */
+function preparePublicFormSession() {
+  authToken = '';
+  authUser = '';
+  authRole = 'admin';
+  authEmail = null;
+  authMinisterioId = null;
+  authMinisterioNome = null;
+  authMinisterioIds = [];
+  authMinisterioNomes = [];
+  authFotoUrl = null;
+  authMustChangePassword = false;
+  authIsMasterAdmin = false;
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch (_) {}
+  if (loadingEl) loadingEl.style.display = 'none';
+  if (errorEl) errorEl.style.display = 'none';
+  const dashboard = document.querySelector('.dashboard');
+  if (dashboard) dashboard.style.display = 'none';
+}
+
+function restoreDashboardFromPublicForm() {
+  const dashboard = document.querySelector('.dashboard');
+  if (dashboard) dashboard.style.display = '';
+}
+
 function showEscalaPublicOverlay() {
+  preparePublicFormSession();
   const overlay = document.getElementById('escalaPublicOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
@@ -2769,6 +2797,7 @@ async function loadEscalaPublic(escalaId) {
   document.getElementById('btnEscalaPublicVerMinhas')?.addEventListener('click', () => {
     const overlay = document.getElementById('escalaPublicOverlay');
     if (overlay) overlay.style.display = 'none';
+    restoreDashboardFromPublicForm();
     const url = new URL(window.location.href);
     url.searchParams.delete('escala');
     window.history.replaceState({}, '', url.pathname + url.search + url.hash);
@@ -2776,8 +2805,9 @@ async function loadEscalaPublic(escalaId) {
       contentEl.style.display = 'block';
       if (authOverlay) authOverlay.style.display = 'none';
       setView('escalas');
-    } else if (authOverlay) {
-      authOverlay.style.display = 'flex';
+    } else {
+      if (authOverlay) authOverlay.style.display = 'flex';
+      updateAuthUi();
     }
   });
 
@@ -3723,6 +3753,7 @@ window.addEventListener('hashchange', () => {
 let checkinPublicEventoId = null;
 
 function showCheckinPublicOverlay() {
+  preparePublicFormSession();
   const overlay = document.getElementById('checkinPublicOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
