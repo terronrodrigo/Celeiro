@@ -3092,29 +3092,42 @@ searchInput?.addEventListener('input', debouncedSearch);
 function toggleSidebar() {
   const sidebar = document.querySelector('.sidebar');
   const overlay = document.getElementById('sidebarOverlay');
+  const btn = document.getElementById('sidebarToggle');
+  const willBeOpen = !sidebar?.classList.contains('open');
   if (sidebar) sidebar.classList.toggle('open');
-  if (overlay) { overlay.classList.toggle('show'); overlay.setAttribute('aria-hidden', sidebar?.classList.contains('open') ? 'false' : 'true'); }
-  document.body.classList.toggle('sidebar-open', sidebar?.classList.contains('open') ?? false);
+  if (overlay) { overlay.classList.toggle('show'); overlay.setAttribute('aria-hidden', willBeOpen ? 'false' : 'true'); }
+  document.body.classList.toggle('sidebar-open', willBeOpen);
+  if (btn) {
+    btn.classList.toggle('is-open', willBeOpen);
+    btn.setAttribute('aria-expanded', String(willBeOpen));
+    btn.setAttribute('aria-label', willBeOpen ? 'Fechar menu' : 'Abrir menu');
+  }
+}
+function closeSidebar() {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar?.classList.contains('open')) return;
+  const overlay = document.getElementById('sidebarOverlay');
+  const btn = document.getElementById('sidebarToggle');
+  sidebar.classList.remove('open');
+  if (overlay) { overlay.classList.remove('show'); overlay.setAttribute('aria-hidden', 'true'); }
+  document.body.classList.remove('sidebar-open');
+  if (btn) {
+    btn.classList.remove('is-open');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('aria-label', 'Abrir menu');
+  }
 }
 document.getElementById('sidebarToggle')?.addEventListener('click', toggleSidebar);
 document.getElementById('sidebarOverlay')?.addEventListener('click', toggleSidebar);
 document.getElementById('userCardGoPerfil')?.addEventListener('click', () => {
   setView('perfil');
-  const sidebar = document.querySelector('.sidebar');
-  if (sidebar?.classList.contains('open')) {
-    sidebar.classList.remove('open');
-    document.getElementById('sidebarOverlay')?.setAttribute('aria-hidden', 'true');
-  }
+  closeSidebar();
 });
 document.getElementById('userCardGoPerfil')?.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault();
     setView('perfil');
-    const sidebar = document.querySelector('.sidebar');
-    if (sidebar?.classList.contains('open')) {
-      sidebar.classList.remove('open');
-      document.getElementById('sidebarOverlay')?.setAttribute('aria-hidden', 'true');
-    }
+    closeSidebar();
   }
 });
 
@@ -3628,13 +3641,7 @@ navItems.forEach(item => {
     e.preventDefault();
     const view = item.dataset.view || (authRole === 'voluntario' ? 'perfil' : (authRole === 'lider' ? 'checkin-ministerio' : 'resumo'));
     setView(view);
-    const sidebar = document.querySelector('.sidebar');
-    const overlay = document.getElementById('sidebarOverlay');
-    if (sidebar?.classList.contains('open')) {
-      sidebar.classList.remove('open');
-      if (overlay) { overlay.classList.remove('show'); overlay.setAttribute('aria-hidden', 'true'); }
-      document.body.classList.remove('sidebar-open');
-    }
+    closeSidebar();
   });
 });
 
