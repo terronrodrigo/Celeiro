@@ -226,6 +226,9 @@ function updateAuthUi() {
       if (mustChangePasswordCard) mustChangePasswordCard.style.display = 'none';
     }
   }
+  const dashboardEl = document.querySelector('.dashboard');
+  const showDashboard = isLogged && authVerified;
+  if (dashboardEl) dashboardEl.style.display = showDashboard ? '' : 'none';
   if (loadingEl) loadingEl.style.display = 'none';
   if (!isLogged || !authVerified) {
     if (contentEl) contentEl.style.display = 'none';
@@ -1919,15 +1922,16 @@ function escapeAttr(s) {
 function populateMinisterioPicker(containerEl, hiddenInputEl, ministerios) {
   if (!containerEl || !hiddenInputEl) return;
   containerEl.innerHTML = ministerios.map(m =>
-    `<button type="button" class="ministerio-picker-btn" data-value="${escapeAttr(m)}" role="option">${escapeHtml(m)}</button>`
+    `<button type="button" class="ministerio-picker-btn" data-value="${escapeAttr(m)}">${escapeHtml(m)}</button>`
   ).join('');
   hiddenInputEl.value = '';
+  const selectBtn = (btn) => {
+    containerEl.querySelectorAll('.ministerio-picker-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    hiddenInputEl.value = btn.dataset.value || '';
+  };
   containerEl.querySelectorAll('.ministerio-picker-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      containerEl.querySelectorAll('.ministerio-picker-btn').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-      hiddenInputEl.value = btn.dataset.value || '';
-    });
+    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); selectBtn(btn); });
   });
 }
 
@@ -2810,6 +2814,7 @@ async function loadEscalaPublic(escalaId) {
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       if (subtitleEl) subtitleEl.textContent = data.error || 'Escala não encontrada ou não está ativa.';
+      populateMinisterioPicker(ministerioList, ministerioInput, MINISTERIOS_PADRAO);
       return;
     }
     const nome = data.escala?.nome || 'Escala';
@@ -3814,6 +3819,7 @@ async function loadCheckinPublic(eventoId) {
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       if (eventLabel) eventLabel.textContent = data.error || 'Evento não encontrado ou check-in encerrado.';
+      populateMinisterioPicker(ministerioList, ministerioInput, MINISTERIOS_PADRAO);
       return;
     }
     checkinPublicEventoId = data.evento?._id || eventoId;

@@ -1107,9 +1107,14 @@ body {
 /* Seletor de ministério com botões (melhor UX em mobile) */
 .ministerio-picker {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
   margin-bottom: 4px;
+}
+@media (min-width: 480px) {
+  .ministerio-picker {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
 }
 .ministerio-picker-btn {
   display: block;
@@ -1125,6 +1130,10 @@ body {
   color: var(--text, #111827);
   cursor: pointer;
   touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(37, 99, 235, 0.2);
+  user-select: none;
+  position: relative;
+  z-index: 2;
   transition: border-color 0.15s, background 0.15s;
 }
 .ministerio-picker-btn:hover {
