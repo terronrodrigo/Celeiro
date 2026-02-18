@@ -225,9 +225,9 @@ function updateAuthUi() {
       if (mustChangePasswordCard) mustChangePasswordCard.style.display = 'none';
     }
   }
+  if (loadingEl) loadingEl.style.display = 'none';
   if (!isLogged) {
     if (contentEl) contentEl.style.display = 'none';
-    if (loadingEl) loadingEl.style.display = 'none';
     if (errorEl) errorEl.style.display = 'none';
   } else {
     if (contentEl) contentEl.style.display = authMustChangePassword ? 'none' : 'block';
@@ -2602,10 +2602,10 @@ async function fetchCandidaturasEscala(escalaId) {
         <td data-label="Email"><button type="button" class="link-voluntario" data-email="${escapeAttr((c.email || '').toLowerCase())}">${escapeHtml(c.email || '')}</button></td>
         <td data-label="Telefone">${escapeHtml(c.telefone || '—')}</td>
         <td data-label="Ministério">${escapeHtml(c.ministerio || '—')}</td>
-        <td class="escala-cand-stat">${c.totalCheckins || 0}</td>
-        <td class="escala-cand-stat">${c.totalParticipacoes || 0}</td>
-        <td class="escala-cand-stat">${c.totalDesistencias || 0}</td>
-        <td class="escala-cand-stat">${c.totalFaltas || 0}</td>
+        <td class="escala-cand-stat" data-label="Check-ins">${c.totalCheckins || 0}</td>
+        <td class="escala-cand-stat" data-label="Participações">${c.totalParticipacoes || 0}</td>
+        <td class="escala-cand-stat" data-label="Desistências">${c.totalDesistencias || 0}</td>
+        <td class="escala-cand-stat" data-label="Faltas">${c.totalFaltas || 0}</td>
         <td data-label="Status">${statusEscalaBadge(c.status)}</td>
         <td data-label="">${acoes}</td>
       </tr>`;
@@ -2787,11 +2787,16 @@ async function loadEscalaPublic(escalaId) {
     if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
     if (labelEl) labelEl.textContent = data.escala?.descricao || '';
     if (ministerioSel) {
+      const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
       ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' +
-        (data.ministerios || []).map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+        list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
     }
   } catch (_) {
     if (subtitleEl) subtitleEl.textContent = 'Erro ao carregar dados da escala.';
+    if (ministerioSel) {
+      ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' +
+        MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+    }
   }
 
   document.getElementById('btnEscalaPublicVerMinhas')?.addEventListener('click', () => {
@@ -3789,11 +3794,15 @@ async function loadCheckinPublic(eventoId) {
       const hfi = (data.evento?.horarioFim || '').trim();
       horarioEl.textContent = (hin || hfi) ? `Horário de check-in: das ${hin || '00:00'} às ${hfi || '23:59'} (horário de Brasília)` : 'Check-in disponível o dia todo (horário de Brasília).';
     }
-    if (select && Array.isArray(data.ministerios)) {
-      select.innerHTML = '<option value="">Selecione o ministério</option>' + data.ministerios.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+    if (select) {
+      const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
+      select.innerHTML = '<option value="">Selecione o ministério</option>' + list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
     }
   } catch (e) {
     if (eventLabel) eventLabel.textContent = 'Erro ao carregar. Tente novamente.';
+    if (select) {
+      select.innerHTML = '<option value="">Selecione o ministério</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+    }
   }
 }
 
@@ -3899,7 +3908,10 @@ window.addEventListener('pageshow', function(ev) {
     }
   }
   updateAuthUi();
-  verifyAuth().then(ok => {
+  Promise.race([
+    verifyAuth(),
+    new Promise(r => setTimeout(() => r(false), 8000))
+  ]).then(ok => {
     if (ok && authMustChangePassword) return;
     if (ok) {
       const isVol = authRole === 'voluntario';
@@ -3912,11 +3924,10 @@ window.addEventListener('pageshow', function(ev) {
       else if (isLiderRole && authRole !== 'admin') { fetchCheckinsMinisterio(); fetchMeusCheckins(); fetchPerfil(); }
       else { fetchEventosHoje(); fetchMeusCheckins(); fetchPerfil(); }
     } else {
-      const isVol = authRole === 'voluntario';
-      const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
-      const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
-      const isLiderRole = authRole === 'lider' || isLider;
-      setView(isVol ? 'perfil' : (isLiderRole && authRole !== 'admin' ? 'checkin-ministerio' : 'resumo'));
+      clearAuthSession();
+      return;
     }
+  }).catch(() => {
+    clearAuthSession();
   });
 })();

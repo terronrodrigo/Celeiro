@@ -779,7 +779,7 @@
         </div>
         <div class="form-group">
           <label for="escalaPublicMinisterio">Ministério</label>
-          <select id="escalaPublicMinisterio" required><option value="">Selecione o ministério</option></select>
+          <select id="escalaPublicMinisterio" required aria-label="Selecione o ministério"><option value="">Selecione o ministério</option></select>
         </div>
         <p id="escalaPublicError" class="auth-error"></p>
         <p id="escalaPublicSuccess" class="auth-success" style="display:none;"></p>
@@ -1118,7 +1118,7 @@
     </div>
   </div>
 
-  <!-- Script inline: esconde loading e mostra overlay de escala/check-in imediatamente (fix iOS) -->
+  <!-- Script inline: esconde loading e mostra overlay/form conforme URL (fix iOS e sessão) -->
   <script>
     (function() {
       var q = window.location.search || '';
@@ -1136,6 +1136,19 @@
         if (checkin) {
           var ov = document.getElementById('checkinPublicOverlay');
           if (ov) ov.style.display = 'flex';
+        }
+      } else if (window.location.hash !== '#cadastro') {
+        var loading = document.getElementById('loading');
+        if (loading) loading.style.display = 'none';
+        try {
+          var stored = localStorage.getItem('celeiro_admin_auth');
+          if (!stored) {
+            var auth = document.getElementById('authOverlay');
+            if (auth) auth.style.display = 'flex';
+          }
+        } catch (_) {
+          var auth = document.getElementById('authOverlay');
+          if (auth) auth.style.display = 'flex';
         }
       }
     })();
