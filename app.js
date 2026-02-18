@@ -64,6 +64,7 @@ let authMinisterioNomes = [];
 let authFotoUrl = null;
 let authMustChangePassword = false;
 let authIsMasterAdmin = false;
+let authVerified = false;
 let eventosCheckin = [];
 let eventoSelecionadoHoje = null;
 let allCheckins = []; // todos os check-ins sem filtro, para contagem histórica por pessoa
@@ -215,7 +216,7 @@ function updateAuthUi() {
       if (loginCard) loginCard.style.display = 'none';
       if (mustChangePasswordCard) mustChangePasswordCard.style.display = 'block';
       [forgotPasswordCard, resetPasswordCard, setupCard, registerCard].forEach(c => { if (c) c.style.display = 'none'; });
-    } else if (isLogged) {
+    } else if (isLogged && authVerified) {
       authOverlay.style.display = 'none';
       if (loginCard) loginCard.style.display = 'block';
       if (mustChangePasswordCard) mustChangePasswordCard.style.display = 'none';
@@ -226,10 +227,12 @@ function updateAuthUi() {
     }
   }
   if (loadingEl) loadingEl.style.display = 'none';
-  if (!isLogged) {
+  if (!isLogged || !authVerified) {
     if (contentEl) contentEl.style.display = 'none';
     if (errorEl) errorEl.style.display = 'none';
+    if (isLogged && !authVerified && loadingEl) loadingEl.style.display = 'flex';
   } else {
+    if (loadingEl) loadingEl.style.display = 'none';
     if (contentEl) contentEl.style.display = authMustChangePassword ? 'none' : 'block';
   }
   if (btnLogout) btnLogout.disabled = !isLogged;
@@ -298,6 +301,7 @@ function clearUserContent() {
 function setAuthSession(data) {
   clearUserContent();
   authToken = data?.token || '';
+  authVerified = true;
   const user = data?.user;
   authUser = typeof user === 'string' ? user : (user?.nome || user?.email || '');
   const rawRole = (user && user.role) != null ? user.role : (data?.role != null ? data.role : 'admin');
@@ -328,6 +332,7 @@ function clearAuthSession() {
   authFotoUrl = null;
   authMustChangePassword = false;
   authIsMasterAdmin = false;
+  authVerified = false;
   localStorage.removeItem(AUTH_STORAGE_KEY);
   clearUserContent();
   updateAuthUi();
@@ -392,6 +397,7 @@ async function verifyAuth() {
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
       } catch (_) {}
     }
+    authVerified = true;
     updateAuthUi();
     return true;
   } catch (e) {
@@ -1909,6 +1915,29 @@ function escapeAttr(s) {
   return String(s).replace(/"/g, '&quot;');
 }
 
+/** Popula seletor de ministério com botões (melhor UX em mobile que select). */
+function populateMinisterioPicker(containerEl, hiddenInputEl, ministerios) {
+  if (!containerEl || !hiddenInputEl) return;
+  containerEl.innerHTML = ministerios.map(m =>
+    `<button type="button" class="ministerio-picker-btn" data-value="${escapeAttr(m)}" role="option">${escapeHtml(m)}</button>`
+  ).join('');
+  hiddenInputEl.value = '';
+  containerEl.querySelectorAll('.ministerio-picker-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      containerEl.querySelectorAll('.ministerio-picker-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      hiddenInputEl.value = btn.dataset.value || '';
+    });
+  });
+}
+
+/** Remove seleção do picker de ministério e limpa o input oculto. */
+function clearMinisterioPicker(containerEl, hiddenInputEl) {
+  if (!containerEl || !hiddenInputEl) return;
+  containerEl.querySelectorAll('.ministerio-picker-btn').forEach(b => b.classList.remove('selected'));
+  hiddenInputEl.value = '';
+}
+
 function getFotoUrl(url) {
   if (!url) return '';
   return url.startsWith('http') ? url : `${API_BASE}${url}`;
@@ -2769,7 +2798,8 @@ function showEscalaPublicOverlay() {
 async function loadEscalaPublic(escalaId) {
   const labelEl = document.getElementById('escalaPublicLabel');
   const subtitleEl = document.getElementById('escalaPublicSubtitle');
-  const ministerioSel = document.getElementById('escalaPublicMinisterio');
+  const ministerioList = document.getElementById('escalaPublicMinisterioList');
+  const ministerioInput = document.getElementById('escalaPublicMinisterio');
   const errorEl = document.getElementById('escalaPublicError');
   const successEl = document.getElementById('escalaPublicSuccess');
 
@@ -2786,17 +2816,11 @@ async function loadEscalaPublic(escalaId) {
     const dt = data.escala?.data ? new Date(data.escala.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
     if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
     if (labelEl) labelEl.textContent = data.escala?.descricao || '';
-    if (ministerioSel) {
-      const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
-      ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' +
-        list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
-    }
+    const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
+    populateMinisterioPicker(ministerioList, ministerioInput, list);
   } catch (_) {
     if (subtitleEl) subtitleEl.textContent = 'Erro ao carregar dados da escala.';
-    if (ministerioSel) {
-      ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' +
-        MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
-    }
+    populateMinisterioPicker(ministerioList, ministerioInput, MINISTERIOS_PADRAO);
   }
 
   document.getElementById('btnEscalaPublicVerMinhas')?.addEventListener('click', () => {
@@ -3778,11 +3802,13 @@ async function loadCheckinPublic(eventoId) {
   const errEl = document.getElementById('checkinPublicError');
   const successEl = document.getElementById('checkinPublicSuccess');
   const eventLabel = document.getElementById('checkinPublicEventLabel');
-  const select = document.getElementById('checkinPublicMinisterio');
+  const ministerioList = document.getElementById('checkinPublicMinisterioList');
+  const ministerioInput = document.getElementById('checkinPublicMinisterio');
   if (errEl) errEl.textContent = '';
   if (successEl) successEl.style.display = 'none';
   if (eventLabel) eventLabel.textContent = 'Carregando...';
-  if (select) select.innerHTML = '<option value="">Selecione</option>';
+  if (ministerioList) ministerioList.innerHTML = '';
+  if (ministerioInput) ministerioInput.value = '';
   try {
     const r = await fetch(`${API_BASE}/api/checkin-public/${encodeURIComponent(eventoId)}`);
     const data = await r.json().catch(() => ({}));
@@ -3801,15 +3827,11 @@ async function loadCheckinPublic(eventoId) {
       const hfi = (data.evento?.horarioFim || '').trim();
       horarioEl.textContent = (hin || hfi) ? `Horário de check-in: das ${hin || '00:00'} às ${hfi || '23:59'} (horário de Brasília)` : 'Check-in disponível o dia todo (horário de Brasília).';
     }
-    if (select) {
-      const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
-      select.innerHTML = '<option value="">Selecione o ministério</option>' + list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
-    }
+    const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
+    populateMinisterioPicker(ministerioList, ministerioInput, list);
   } catch (e) {
     if (eventLabel) eventLabel.textContent = 'Erro ao carregar. Tente novamente.';
-    if (select) {
-      select.innerHTML = '<option value="">Selecione o ministério</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
-    }
+    populateMinisterioPicker(ministerioList, ministerioInput, MINISTERIOS_PADRAO);
   }
 }
 
@@ -3842,7 +3864,7 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
     if (errEl) errEl.textContent = '';
     document.getElementById('checkinPublicEmail').value = '';
     document.getElementById('checkinPublicNome').value = '';
-    document.getElementById('checkinPublicMinisterio').value = '';
+    clearMinisterioPicker(document.getElementById('checkinPublicMinisterioList'), document.getElementById('checkinPublicMinisterio'));
   } catch (err) {
     if (errEl) errEl.textContent = err.message || 'Erro de rede. Tente novamente.';
   } finally {
