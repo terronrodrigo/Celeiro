@@ -2443,12 +2443,12 @@ function renderEscalasAdmin() {
     const data = e.data ? new Date(e.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
     const ativo = e.ativo !== false;
     return `<tr>
-      <td>${escapeHtml(e.nome)}</td>
-      <td>${data}</td>
-      <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${ativo ? 'Ativa' : 'Inativa'}</span></td>
-      <td>${e.totalCandidaturas || 0} <span style="color:var(--text-muted);font-size:.8em">(${e.totalAprovados || 0} aprovados)</span></td>
-      <td class="escala-actions-cell"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-link="${escapeAttr(String(e._id))}" title="Copiar link de candidatura">Copiar link</button></td>
-      <td class="escala-actions-cell">
+      <td data-label="Nome">${escapeHtml(e.nome)}</td>
+      <td data-label="Data">${data}</td>
+      <td data-label="Status"><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${ativo ? 'Ativa' : 'Inativa'}</span></td>
+      <td data-label="Candidatos">${e.totalCandidaturas || 0} <span style="color:var(--text-muted);font-size:.8em">(${e.totalAprovados || 0} aprovados)</span></td>
+      <td class="escala-actions-cell" data-label="Link"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-link="${escapeAttr(String(e._id))}" title="Copiar link de candidatura">Copiar link</button></td>
+      <td class="escala-actions-cell" data-label="">
         <div class="escala-actions-wrap">
           <button class="btn btn-sm btn-ghost" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos</button>
           <button class="btn btn-sm btn-ghost" data-escala-edit="${escapeAttr(String(e._id))}">Editar</button>
@@ -2515,10 +2515,10 @@ function renderEscalasLider() {
   const rows = escalasList.map(e => {
     const data = e.data ? new Date(e.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
     return `<tr>
-      <td>${escapeHtml(e.nome)}</td>
-      <td>${data}</td>
-      <td>${e.totalCandidaturas || 0} candidatos</td>
-      <td class="escala-actions-cell"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos do meu ministério</button></td>
+      <td data-label="Nome">${escapeHtml(e.nome)}</td>
+      <td data-label="Data">${data}</td>
+      <td data-label="Candidatos">${e.totalCandidaturas || 0} candidatos</td>
+      <td class="escala-actions-cell" data-label=""><button class="btn btn-sm btn-primary escala-btn-main" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos do meu ministério</button></td>
     </tr>`;
   }).join('');
   container.innerHTML = `
@@ -2553,17 +2553,17 @@ async function renderEscalasVoluntario() {
     const rows = list.map(c => {
       const data = c.escalaData ? new Date(c.escalaData).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
       return `<tr>
-        <td>${escapeHtml(c.escalaNome || '—')}</td>
-        <td>${data}</td>
-        <td>${escapeHtml(c.ministerio || '—')}</td>
-        <td>${statusEscalaBadge(c.status)}</td>
+        <td data-label="Escala">${escapeHtml(c.escalaNome || '—')}</td>
+        <td data-label="Data">${data}</td>
+        <td data-label="Ministério">${escapeHtml(c.ministerio || '—')}</td>
+        <td data-label="Status">${statusEscalaBadge(c.status)}</td>
       </tr>`;
     }).join('');
     container.innerHTML = `
       <div class="table-card">
         <div class="chart-header"><h2>Minhas escalas</h2></div>
         <div class="table-wrapper">
-          <table class="data-table">
+          <table class="data-table escala-table">
             <thead><tr><th>Escala</th><th>Data</th><th>Ministério</th><th>Status</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
@@ -2598,23 +2598,23 @@ async function fetchCandidaturasEscala(escalaId) {
         : `<div class="escala-cand-actions"><button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
            <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button></div>`;
       return `<tr>
-        <td>${escapeHtml(c.nome || '—')}</td>
-        <td><button type="button" class="link-voluntario" data-email="${escapeAttr((c.email || '').toLowerCase())}">${escapeHtml(c.email || '')}</button></td>
-        <td>${escapeHtml(c.telefone || '—')}</td>
-        <td>${escapeHtml(c.ministerio || '—')}</td>
-        <td>${c.totalCheckins || 0}</td>
-        <td>${c.totalParticipacoes || 0}</td>
-        <td>${c.totalDesistencias || 0}</td>
-        <td>${c.totalFaltas || 0}</td>
-        <td>${statusEscalaBadge(c.status)}</td>
-        <td>${acoes}</td>
+        <td data-label="Nome">${escapeHtml(c.nome || '—')}</td>
+        <td data-label="Email"><button type="button" class="link-voluntario" data-email="${escapeAttr((c.email || '').toLowerCase())}">${escapeHtml(c.email || '')}</button></td>
+        <td data-label="Telefone">${escapeHtml(c.telefone || '—')}</td>
+        <td data-label="Ministério">${escapeHtml(c.ministerio || '—')}</td>
+        <td class="escala-cand-stat">${c.totalCheckins || 0}</td>
+        <td class="escala-cand-stat">${c.totalParticipacoes || 0}</td>
+        <td class="escala-cand-stat">${c.totalDesistencias || 0}</td>
+        <td class="escala-cand-stat">${c.totalFaltas || 0}</td>
+        <td data-label="Status">${statusEscalaBadge(c.status)}</td>
+        <td data-label="">${acoes}</td>
       </tr>`;
     }).join('');
     panel.innerHTML = `
       <div class="table-card escala-table-card">
         <div class="chart-header"><h2>Candidatos${escala ? ` — ${escapeHtml(escala.nome)}` : ''}</h2></div>
         <div class="table-wrapper">
-          <table class="data-table escala-table" style="min-width:900px">
+          <table class="data-table escala-table">
             <thead><tr><th>Nome</th><th>Email</th><th>Telefone</th><th>Ministério</th><th title="Total de check-ins">CI</th><th title="Participações aprovadas">Part.</th><th title="Desistências">Desist.</th><th title="Faltas">Faltas</th><th>Status</th><th>Ações</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
