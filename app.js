@@ -2775,6 +2775,13 @@ function showEscalaPublicOverlay() {
   if (content) content.style.display = 'none';
 }
 
+/** Atualiza opções do select de ministério (API) ou mantém as do HTML (fallback). */
+function setMinisterioSelectOptions(selectEl, list) {
+  if (!selectEl || !Array.isArray(list) || list.length === 0) return;
+  const placeholder = selectEl.querySelector('option[value=""]')?.textContent || 'Selecione';
+  selectEl.innerHTML = '<option value="">' + placeholder + '</option>' + list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+}
+
 async function loadEscalaPublic(escalaId) {
   const labelEl = document.getElementById('escalaPublicLabel');
   const subtitleEl = document.getElementById('escalaPublicSubtitle');
@@ -2783,13 +2790,13 @@ async function loadEscalaPublic(escalaId) {
   const successEl = document.getElementById('escalaPublicSuccess');
 
   if (subtitleEl) subtitleEl.textContent = 'Carregando…';
+  if (ministerioSel) ministerioSel.selectedIndex = 0;
 
   try {
     const r = await fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(escalaId)}`);
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       if (subtitleEl) subtitleEl.textContent = data.error || 'Escala não encontrada ou não está ativa.';
-      if (ministerioSel) ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
       return;
     }
     const nome = data.escala?.nome || 'Escala';
@@ -2797,10 +2804,9 @@ async function loadEscalaPublic(escalaId) {
     if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
     if (labelEl) labelEl.textContent = data.escala?.descricao || '';
     const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
-    if (ministerioSel) ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' + list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+    setMinisterioSelectOptions(ministerioSel, list);
   } catch (_) {
     if (subtitleEl) subtitleEl.textContent = 'Erro ao carregar dados da escala.';
-    if (ministerioSel) ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
   }
 
   document.getElementById('btnEscalaPublicVerMinhas')?.addEventListener('click', () => {
@@ -3782,17 +3788,16 @@ async function loadCheckinPublic(eventoId) {
   const errEl = document.getElementById('checkinPublicError');
   const successEl = document.getElementById('checkinPublicSuccess');
   const eventLabel = document.getElementById('checkinPublicEventLabel');
-  const select = document.getElementById('checkinPublicMinisterio');
+  const ministerioSel = document.getElementById('checkinPublicMinisterio');
   if (errEl) errEl.textContent = '';
   if (successEl) successEl.style.display = 'none';
   if (eventLabel) eventLabel.textContent = 'Carregando...';
-  if (select) select.innerHTML = '<option value="">Selecione</option>';
+  if (ministerioSel) ministerioSel.selectedIndex = 0;
   try {
     const r = await fetch(`${API_BASE}/api/checkin-public/${encodeURIComponent(eventoId)}`);
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       if (eventLabel) eventLabel.textContent = data.error || 'Evento não encontrado ou check-in encerrado.';
-      if (select) select.innerHTML = '<option value="">Selecione o ministério</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
       return;
     }
     checkinPublicEventoId = data.evento?._id || eventoId;
@@ -3807,10 +3812,9 @@ async function loadCheckinPublic(eventoId) {
       horarioEl.textContent = (hin || hfi) ? `Horário de check-in: das ${hin || '00:00'} às ${hfi || '23:59'} (horário de Brasília)` : 'Check-in disponível o dia todo (horário de Brasília).';
     }
     const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
-    if (select) select.innerHTML = '<option value="">Selecione o ministério</option>' + list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+    setMinisterioSelectOptions(ministerioSel, list);
   } catch (e) {
     if (eventLabel) eventLabel.textContent = 'Erro ao carregar. Tente novamente.';
-    if (select) select.innerHTML = '<option value="">Selecione o ministério</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
   }
 }
 
