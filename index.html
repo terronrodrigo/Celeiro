@@ -780,12 +780,8 @@
           <input type="tel" id="escalaPublicTelefone" placeholder="(11) 99999-9999" autocomplete="tel">
         </div>
         <div class="form-group">
-          <label class="block-label">Ministério</label>
-          <div id="escalaPublicMinisterioWrap" class="ministerio-picker-wrap">
-            <button type="button" class="ministerio-picker-trigger" id="escalaPublicMinisterioTrigger" aria-haspopup="listbox" aria-expanded="false">Selecione o ministério</button>
-            <div id="escalaPublicMinisterioList" class="ministerio-picker-dropdown" role="listbox" hidden></div>
-          </div>
-          <input type="hidden" id="escalaPublicMinisterio" name="ministerio" required>
+          <label for="escalaPublicMinisterio">Ministério</label>
+          <select id="escalaPublicMinisterio" required aria-label="Selecione o ministério"><option value="">Selecione o ministério</option></select>
         </div>
         <p id="escalaPublicError" class="auth-error"></p>
         <p id="escalaPublicSuccess" class="auth-success" style="display:none;"></p>
@@ -816,12 +812,8 @@
           <input type="text" id="checkinPublicNome" placeholder="Seu nome">
         </div>
         <div class="form-group">
-          <label class="block-label">Ministério</label>
-          <div id="checkinPublicMinisterioWrap" class="ministerio-picker-wrap">
-            <button type="button" class="ministerio-picker-trigger" id="checkinPublicMinisterioTrigger" aria-haspopup="listbox" aria-expanded="false">Selecione o ministério</button>
-            <div id="checkinPublicMinisterioList" class="ministerio-picker-dropdown" role="listbox" hidden></div>
-          </div>
-          <input type="hidden" id="checkinPublicMinisterio" name="ministerio">
+          <label for="checkinPublicMinisterio">Ministério</label>
+          <select id="checkinPublicMinisterio"><option value="">Selecione</option></select>
         </div>
         <p id="checkinPublicError" class="auth-error"></p>
         <p id="checkinPublicSuccess" class="auth-success" style="display: none;"></p>

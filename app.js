@@ -1918,67 +1918,6 @@ function escapeAttr(s) {
   return String(s).replace(/"/g, '&quot;');
 }
 
-/** Popula seletor de ministério com dropdown expansível (UX compacta). */
-function populateMinisterioPicker(listEl, hiddenInputEl, ministerios) {
-  if (!listEl || !hiddenInputEl) return;
-  const wrap = listEl.closest('.ministerio-picker-wrap');
-  const trigger = wrap?.querySelector('.ministerio-picker-trigger');
-  const placeholder = 'Selecione o ministério';
-  listEl.innerHTML = ministerios.map(m =>
-    `<button type="button" class="ministerio-picker-option" data-value="${escapeAttr(m)}">${escapeHtml(m)}</button>`
-  ).join('');
-  hiddenInputEl.value = '';
-  if (trigger) trigger.textContent = placeholder;
-  listEl.hidden = true;
-  if (trigger) trigger.setAttribute('aria-expanded', 'false');
-  const close = () => {
-    listEl.hidden = true;
-    if (trigger) trigger.setAttribute('aria-expanded', 'false');
-  };
-  const select = (value, label) => {
-    hiddenInputEl.value = value || '';
-    if (trigger) trigger.textContent = label || placeholder;
-    listEl.querySelectorAll('.ministerio-picker-option').forEach(b => b.classList.toggle('selected', b.dataset.value === value));
-    close();
-  };
-  if (trigger) {
-    trigger.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const open = listEl.hidden;
-      listEl.hidden = !open;
-      trigger.setAttribute('aria-expanded', String(open));
-      if (open) {
-        const outside = (ev) => {
-          if (wrap && !wrap.contains(ev.target)) {
-            close();
-            document.removeEventListener('click', outside);
-          }
-        };
-        setTimeout(() => document.addEventListener('click', outside), 0);
-      }
-    };
-  }
-  listEl.querySelectorAll('.ministerio-picker-option').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      select(btn.dataset.value, btn.textContent);
-    });
-  });
-}
-
-/** Remove seleção do picker de ministério e limpa o input oculto. */
-function clearMinisterioPicker(listEl, hiddenInputEl) {
-  if (!listEl || !hiddenInputEl) return;
-  const trigger = listEl.closest('.ministerio-picker-wrap')?.querySelector('.ministerio-picker-trigger');
-  if (trigger) trigger.textContent = 'Selecione o ministério';
-  listEl.hidden = true;
-  if (trigger) trigger.setAttribute('aria-expanded', 'false');
-  listEl.querySelectorAll('.ministerio-picker-option').forEach(b => b.classList.remove('selected'));
-  hiddenInputEl.value = '';
-}
-
 function getFotoUrl(url) {
   if (!url) return '';
   return url.startsWith('http') ? url : `${API_BASE}${url}`;
@@ -2839,8 +2778,7 @@ function showEscalaPublicOverlay() {
 async function loadEscalaPublic(escalaId) {
   const labelEl = document.getElementById('escalaPublicLabel');
   const subtitleEl = document.getElementById('escalaPublicSubtitle');
-  const ministerioList = document.getElementById('escalaPublicMinisterioList');
-  const ministerioInput = document.getElementById('escalaPublicMinisterio');
+  const ministerioSel = document.getElementById('escalaPublicMinisterio');
   const errorEl = document.getElementById('escalaPublicError');
   const successEl = document.getElementById('escalaPublicSuccess');
 
@@ -2851,7 +2789,7 @@ async function loadEscalaPublic(escalaId) {
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       if (subtitleEl) subtitleEl.textContent = data.error || 'Escala não encontrada ou não está ativa.';
-      populateMinisterioPicker(ministerioList, ministerioInput, MINISTERIOS_PADRAO);
+      if (ministerioSel) ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
       return;
     }
     const nome = data.escala?.nome || 'Escala';
@@ -2859,10 +2797,10 @@ async function loadEscalaPublic(escalaId) {
     if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
     if (labelEl) labelEl.textContent = data.escala?.descricao || '';
     const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
-    populateMinisterioPicker(ministerioList, ministerioInput, list);
+    if (ministerioSel) ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' + list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
   } catch (_) {
     if (subtitleEl) subtitleEl.textContent = 'Erro ao carregar dados da escala.';
-    populateMinisterioPicker(ministerioList, ministerioInput, MINISTERIOS_PADRAO);
+    if (ministerioSel) ministerioSel.innerHTML = '<option value="">Selecione o ministério</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
   }
 
   document.getElementById('btnEscalaPublicVerMinhas')?.addEventListener('click', () => {
@@ -3844,19 +3782,17 @@ async function loadCheckinPublic(eventoId) {
   const errEl = document.getElementById('checkinPublicError');
   const successEl = document.getElementById('checkinPublicSuccess');
   const eventLabel = document.getElementById('checkinPublicEventLabel');
-  const ministerioList = document.getElementById('checkinPublicMinisterioList');
-  const ministerioInput = document.getElementById('checkinPublicMinisterio');
+  const select = document.getElementById('checkinPublicMinisterio');
   if (errEl) errEl.textContent = '';
   if (successEl) successEl.style.display = 'none';
   if (eventLabel) eventLabel.textContent = 'Carregando...';
-  if (ministerioList) ministerioList.innerHTML = '';
-  if (ministerioInput) ministerioInput.value = '';
+  if (select) select.innerHTML = '<option value="">Selecione</option>';
   try {
     const r = await fetch(`${API_BASE}/api/checkin-public/${encodeURIComponent(eventoId)}`);
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       if (eventLabel) eventLabel.textContent = data.error || 'Evento não encontrado ou check-in encerrado.';
-      populateMinisterioPicker(ministerioList, ministerioInput, MINISTERIOS_PADRAO);
+      if (select) select.innerHTML = '<option value="">Selecione o ministério</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
       return;
     }
     checkinPublicEventoId = data.evento?._id || eventoId;
@@ -3871,10 +3807,10 @@ async function loadCheckinPublic(eventoId) {
       horarioEl.textContent = (hin || hfi) ? `Horário de check-in: das ${hin || '00:00'} às ${hfi || '23:59'} (horário de Brasília)` : 'Check-in disponível o dia todo (horário de Brasília).';
     }
     const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
-    populateMinisterioPicker(ministerioList, ministerioInput, list);
+    if (select) select.innerHTML = '<option value="">Selecione o ministério</option>' + list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
   } catch (e) {
     if (eventLabel) eventLabel.textContent = 'Erro ao carregar. Tente novamente.';
-    populateMinisterioPicker(ministerioList, ministerioInput, MINISTERIOS_PADRAO);
+    if (select) select.innerHTML = '<option value="">Selecione o ministério</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
   }
 }
 
@@ -3907,7 +3843,7 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
     if (errEl) errEl.textContent = '';
     document.getElementById('checkinPublicEmail').value = '';
     document.getElementById('checkinPublicNome').value = '';
-    clearMinisterioPicker(document.getElementById('checkinPublicMinisterioList'), document.getElementById('checkinPublicMinisterio'));
+    document.getElementById('checkinPublicMinisterio').value = '';
   } catch (err) {
     if (errEl) errEl.textContent = err.message || 'Erro de rede. Tente novamente.';
   } finally {
