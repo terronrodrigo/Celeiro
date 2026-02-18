@@ -48,6 +48,8 @@ const userSchema = new mongoose.Schema({
   resetTokenExpires: { type: Date, default: null },
   /** Exigir troca de senha no primeiro acesso (ex.: usuário criado por admin). */
   mustChangePassword: { type: Boolean, default: false },
+  /** Telefone WhatsApp normalizado (ex: 5511999999999) para login/vínculo com agente. */
+  whatsapp: { type: String, default: null, trim: true },
 }, {
   timestamps: false,
 });
@@ -56,6 +58,7 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ role: 1 });
 userSchema.index({ ministerioIds: 1, ativo: 1 });
 userSchema.index({ resetToken: 1 });
+userSchema.index({ whatsapp: 1 });
 
 // Hash da senha antes de salvar
 userSchema.pre('save', async function(next) {

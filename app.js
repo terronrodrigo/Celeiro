@@ -275,6 +275,8 @@ function updateAuthUi() {
   if (btnRefresh && filtersSection) btnRefresh.style.display = isLogged && (isAdmin || isLider || authRole === 'lider') ? '' : 'none';
   const cadastroLinkSection = document.getElementById('cadastroLinkSection');
   if (cadastroLinkSection) cadastroLinkSection.style.display = isLogged && isAdmin ? '' : 'none';
+  const brdidSection = document.getElementById('brdidVerificacaoSection');
+  if (brdidSection) brdidSection.style.display = isLogged && isAdmin ? '' : 'none';
 }
 
 /** Limpa dados em memória e DOM de conteúdo por usuário, para não exibir tela do login anterior ao trocar de perfil. */
@@ -3750,6 +3752,24 @@ document.getElementById('btnCopiarLinkCadastro')?.addEventListener('click', () =
     const btn = document.getElementById('btnCopiarLinkCadastro');
     if (btn) { const t = btn.textContent; btn.textContent = 'Copiado!'; setTimeout(() => { btn.textContent = t; }, 2000); }
   }).catch(() => {});
+});
+
+document.getElementById('btnVerCodigoWhatsApp')?.addEventListener('click', async () => {
+  const resultEl = document.getElementById('brdidCodigoResult');
+  if (!resultEl) return;
+  resultEl.textContent = 'Carregando...';
+  try {
+    const r = await authFetch(`${API_BASE}/api/brdid/whatsapp-verification/latest`);
+    const data = await r.json();
+    if (!r.ok) { resultEl.textContent = data.error || 'Erro'; return; }
+    if (data.codigo) {
+      resultEl.textContent = `Código: ${data.codigo} ${data.recebidoEm ? '(recebido ' + new Date(data.recebidoEm).toLocaleTimeString('pt-BR') + ')' : ''}`;
+    } else {
+      resultEl.textContent = data.mensagem || 'Nenhum código recebido.';
+    }
+  } catch (e) {
+    resultEl.textContent = 'Erro ao buscar.';
+  }
 });
 
 document.getElementById('cadastroMinisterio')?.addEventListener('change', () => toggleMinisterioOutroVisibility('cadastroMinisterio'));

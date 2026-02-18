@@ -21,6 +21,8 @@ import RoleHistory from './models/RoleHistory.js';
 import Escala from './models/Escala.js';
 import Candidatura from './models/Candidatura.js';
 import { normalizarEstado, normalizarCidade } from './utils/normalize-locale.js';
+import { createWhatsAppHandler } from './whatsapp/handler.js';
+import { processBrdidWebhook, getLastVerification } from './brdid/whatsapp-verification.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -62,6 +64,33 @@ const SETUP_SECRET = (process.env.SETUP_SECRET || '').trim();
 
 app.use(compression());
 app.use(cors());
+
+// WhatsApp webhook precisa do body raw para verificar assinatura (antes de express.json)
+const createAuthTokenForUser = async (user) => {
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
+  let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
+  if (ministerioIds.length === 0 && user.ministerioId) ministerioIds = [user.ministerioId];
+  const ministerioNomes = [];
+  if (ministerioIds.length > 0) {
+    const mins = await Ministerio.find({ _id: { $in: ministerioIds } }).select('nome').lean();
+    mins.forEach(m => { if (m?.nome) ministerioNomes.push(m.nome); });
+  }
+  const ministerioId = ministerioIds[0] || null;
+  const ministerioNome = ministerioNomes[0] || null;
+  const roleNorm = String(user.role || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') || 'voluntario';
+  const roleFinal = roleNorm === 'lider' || roleNorm.includes('lider') ? 'lider' : roleNorm;
+  authTokens.set(token, {
+    user: user.nome, userId: user._id, role: roleFinal, email: user.email,
+    ministerioId, ministerioNome, ministerioIds, ministerioNomes, expiresAt,
+    mustChangePassword: !!user.mustChangePassword,
+  });
+  return token;
+};
+const whatsappHandler = createWhatsAppHandler({ createAuthTokenForUser });
+app.get('/api/whatsapp/webhook', (req, res) => whatsappHandler.handleVerify(req, res));
+app.post('/api/whatsapp/webhook', express.raw({ type: 'application/json' }), (req, res) => whatsappHandler.handleWebhook(req, res));
+
 app.use(express.json());
 app.use('/uploads', express.static(join(__dirname, 'uploads')));
 
@@ -118,7 +147,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// POST /api/cadastro - Cadastro público de voluntários (sem auth). Padroniza estado (UF) e cidade.
+// POST /api/cadastro - Cadastro público de voluntários (sem auth). Quem se cadastra é considerado voluntário. Padroniza estado (UF) e cidade.
 function parseNascimento(val) {
   if (val == null) return undefined;
   if (val instanceof Date) return val;
@@ -268,6 +297,30 @@ function requireAdminOrLider(req, res, next) {
   next();
 }
 
+// ─── BR DID – Webhook verificação WhatsApp (https://brdid.com.br/api-docs/) ───
+// POST: recebe dados da chamada/áudio quando WhatsApp envia código de verificação
+app.post('/api/brdid/whatsapp-verification', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const result = await processBrdidWebhook(payload);
+    res.status(200).json({ status: 'ok', recebido: true, codigo: result.codigo_extraido || null });
+  } catch (err) {
+    console.error('BR DID webhook erro:', err);
+    res.status(500).json({ status: 'erro', message: err.message });
+  }
+});
+// GET: admin consulta último código recebido (para digitar no WhatsApp Business)
+app.get('/api/brdid/whatsapp-verification/latest', requireAuth, requireAdmin, (req, res) => {
+  const last = getLastVerification();
+  if (!last) return res.json({ codigo: null, mensagem: 'Nenhum código recebido ainda. Configure o webhook no BR DID e inicie a verificação no WhatsApp Business.' });
+  res.json({
+    codigo: last.codigo_extraido || null,
+    numero: last.numero || null,
+    recebidoEm: last.recebidoEm || null,
+    url_audio: last.url_audio || null,
+  });
+});
+
 // Funções de cache
 function invalidateCache() {
   cache.voluntarios = null;
@@ -295,6 +348,43 @@ async function ensureVoluntarioInList({ email, nome, ministerio }) {
     { upsert: true, new: true }
   ).lean();
   return doc;
+}
+
+/** Vincula ao usuário os check-ins feitos pelo mesmo email antes de criar conta (ex.: link público). Válido para legado. */
+async function vincularCheckinsAoUsuario(userId, email) {
+  if (!userId || !email || !String(email).includes('@')) return;
+  const em = String(email).trim().toLowerCase();
+  const result = await Checkin.updateMany(
+    { email: em, $or: [{ userId: null }, { userId: { $exists: false } }] },
+    { $set: { userId } }
+  );
+  if (result.modifiedCount > 0) invalidateCache();
+}
+
+/** Legado: garante que todos os usuários (conta) tenham check-ins vinculados e estejam na lista de voluntários. */
+async function syncLegadoVoluntarios() {
+  try {
+    const users = await User.find({}).select('email nome').lean();
+    let linked = 0;
+    for (const u of users) {
+      const em = (u.email || '').toString().trim().toLowerCase();
+      if (!em || !em.includes('@')) continue;
+      try {
+        const r = await Checkin.updateMany(
+          { email: em, $or: [{ userId: null }, { userId: { $exists: false } }] },
+          { $set: { userId: u._id } }
+        );
+        if (r.modifiedCount > 0) { linked += r.modifiedCount; }
+        await ensureVoluntarioInList({ email: em, nome: (u.nome || '').toString().trim() });
+      } catch (_) {}
+    }
+    if (linked > 0) {
+      invalidateCache();
+      console.log(`✅ syncLegadoVoluntarios: ${linked} check-in(s) vinculados a usuários existentes.`);
+    }
+  } catch (err) {
+    console.warn('syncLegadoVoluntarios:', err?.message || err);
+  }
 }
 
 function isCacheValid(key) {
@@ -938,9 +1028,14 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
 
     let query = {};
     if (!isAdmin) {
-      if (req.userId) query.userId = req.userId;
-      else if (req.userEmail) query.email = req.userEmail.toLowerCase();
-      else return res.json({ checkins: [], resumo: { total: 0, ministerios: [] } });
+      const userEmail = (req.userEmail || (req.userId && (await User.findById(req.userId).select('email').lean())?.email) || '').toString().trim().toLowerCase();
+      if (!req.userId && !userEmail) return res.json({ checkins: [], resumo: { total: 0, ministerios: [] } });
+      // Mostra check-ins vinculados ao userId OU ao mesmo email (feitos antes de criar conta, ex.: link público)
+      query.$or = [
+        ...(req.userId ? [{ userId: req.userId }] : []),
+        ...(userEmail ? [{ email: userEmail }] : []),
+      ];
+      if (query.$or.length === 0) return res.json({ checkins: [], resumo: { total: 0, ministerios: [] } });
     }
     if (dataFiltro) {
       const dateCondition = queryDataCheckinDiaBrasilia(String(dataFiltro).trim());
@@ -1313,7 +1408,7 @@ app.get('/api/checkin-public/:eventoId', async (req, res) => {
   }
 });
 
-// Check-in público por link (sem login): envia email + ministério
+// Check-in público por link (sem login): envia email + ministério. Quem faz check-in é considerado voluntário.
 app.post('/api/checkin-public', async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
@@ -1328,7 +1423,10 @@ app.post('/api/checkin-public', async (req, res) => {
     const eventDateStr = getEventDateStringSaoPaulo(evento) || new Date(evento.data).toISOString().slice(0, 10);
     const dataCheckin = getDayRangeBrasilia(eventDateStr).start;
     const existing = await Checkin.findOne({ eventoId, email: em, dataCheckin });
-    if (existing) return res.status(200).json({ message: 'Check-in já realizado.', checkin: existing });
+    if (existing) {
+      try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim() }); } catch (_) {}
+      return res.status(200).json({ message: 'Check-in já realizado.', checkin: existing });
+    }
     const checkin = await Checkin.create({
       email: em,
       nome: (nome || '').toString().trim() || '',
@@ -1626,11 +1724,12 @@ app.post('/api/auth/register', async (req, res) => {
     const user = new User({ email: email.toLowerCase(), nome, senha, role: 'voluntario' });
     await user.save();
     try { await ensureVoluntarioInList({ email: user.email, nome: user.nome }); } catch (_) {}
+    try { await vincularCheckinsAoUsuario(user._id, user.email); } catch (_) {}
     invalidateCache();
 
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
-    authTokens.set(token, { user: email, userId: user._id, role: user.role, expiresAt });
+    authTokens.set(token, { user: user.nome || user.email, userId: user._id, role: user.role, email: user.email, expiresAt });
     
     res.status(201).json({ token, user: user.toJSON(), expiresAt });
   } catch (err) {
@@ -1734,11 +1833,12 @@ app.post('/api/auth/login-email', async (req, res) => {
     // Atualizar último acesso
     user.ultimoAcesso = new Date();
     await user.save();
-    
+    try { await vincularCheckinsAoUsuario(user._id, user.email); } catch (_) {}
+
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
-    authTokens.set(token, { user: email, userId: user._id, role: user.role, expiresAt });
-    
+    authTokens.set(token, { user: user.nome || user.email, userId: user._id, role: user.role, email: user.email, expiresAt });
+
     res.json({ token, user: user.toJSON(), expiresAt });
   } catch (err) {
     console.error(err);
@@ -2256,7 +2356,7 @@ app.get('/api/escala-publica/:id', async (req, res) => {
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
-// POST /api/candidaturas — candidatura pública (sem auth)
+// POST /api/candidaturas — candidatura pública (sem auth). Quem se candidata é considerado voluntário.
 app.post('/api/candidaturas', async (req, res) => {
   try {
     const { escalaId, nome, email, telefone, ministerio } = req.body || {};
@@ -2267,7 +2367,10 @@ app.post('/api/candidaturas', async (req, res) => {
     const escala = await Escala.findById(escalaId).lean();
     if (!escala || !escala.ativo) return sendError(res, 404, 'Escala não encontrada ou não está ativa.');
     const existing = await Candidatura.findOne({ escalaId, email: em });
-    if (existing) return res.status(200).json({ message: 'Você já se candidatou para esta escala.', candidatura: existing });
+    if (existing) {
+      try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim() }); } catch (_) {}
+      return res.status(200).json({ message: 'Você já se candidatou para esta escala.', candidatura: existing });
+    }
     const candidatura = await Candidatura.create({
       escalaId,
       nome: (nome || '').toString().trim(),
@@ -2547,6 +2650,7 @@ async function start() {
       await mongoose.connect(process.env.MONGODB_URI);
       console.log('✅ MongoDB conectado');
       await fixDataCheckinOnce();
+      setImmediate(() => syncLegadoVoluntarios()); // Legado: vincular check-ins e garantir voluntários
     } catch (err) {
       console.error('❌ MongoDB erro:', err);
       process.exit(1);
