@@ -1918,27 +1918,64 @@ function escapeAttr(s) {
   return String(s).replace(/"/g, '&quot;');
 }
 
-/** Popula seletor de ministério com botões (melhor UX em mobile que select). */
-function populateMinisterioPicker(containerEl, hiddenInputEl, ministerios) {
-  if (!containerEl || !hiddenInputEl) return;
-  containerEl.innerHTML = ministerios.map(m =>
-    `<button type="button" class="ministerio-picker-btn" data-value="${escapeAttr(m)}">${escapeHtml(m)}</button>`
+/** Popula seletor de ministério com dropdown expansível (UX compacta). */
+function populateMinisterioPicker(listEl, hiddenInputEl, ministerios) {
+  if (!listEl || !hiddenInputEl) return;
+  const wrap = listEl.closest('.ministerio-picker-wrap');
+  const trigger = wrap?.querySelector('.ministerio-picker-trigger');
+  const placeholder = 'Selecione o ministério';
+  listEl.innerHTML = ministerios.map(m =>
+    `<button type="button" class="ministerio-picker-option" data-value="${escapeAttr(m)}">${escapeHtml(m)}</button>`
   ).join('');
   hiddenInputEl.value = '';
-  const selectBtn = (btn) => {
-    containerEl.querySelectorAll('.ministerio-picker-btn').forEach(b => b.classList.remove('selected'));
-    btn.classList.add('selected');
-    hiddenInputEl.value = btn.dataset.value || '';
+  if (trigger) trigger.textContent = placeholder;
+  listEl.hidden = true;
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  const close = () => {
+    listEl.hidden = true;
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
   };
-  containerEl.querySelectorAll('.ministerio-picker-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); selectBtn(btn); });
+  const select = (value, label) => {
+    hiddenInputEl.value = value || '';
+    if (trigger) trigger.textContent = label || placeholder;
+    listEl.querySelectorAll('.ministerio-picker-option').forEach(b => b.classList.toggle('selected', b.dataset.value === value));
+    close();
+  };
+  if (trigger) {
+    trigger.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const open = listEl.hidden;
+      listEl.hidden = !open;
+      trigger.setAttribute('aria-expanded', String(open));
+      if (open) {
+        const outside = (ev) => {
+          if (wrap && !wrap.contains(ev.target)) {
+            close();
+            document.removeEventListener('click', outside);
+          }
+        };
+        setTimeout(() => document.addEventListener('click', outside), 0);
+      }
+    };
+  }
+  listEl.querySelectorAll('.ministerio-picker-option').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      select(btn.dataset.value, btn.textContent);
+    });
   });
 }
 
 /** Remove seleção do picker de ministério e limpa o input oculto. */
-function clearMinisterioPicker(containerEl, hiddenInputEl) {
-  if (!containerEl || !hiddenInputEl) return;
-  containerEl.querySelectorAll('.ministerio-picker-btn').forEach(b => b.classList.remove('selected'));
+function clearMinisterioPicker(listEl, hiddenInputEl) {
+  if (!listEl || !hiddenInputEl) return;
+  const trigger = listEl.closest('.ministerio-picker-wrap')?.querySelector('.ministerio-picker-trigger');
+  if (trigger) trigger.textContent = 'Selecione o ministério';
+  listEl.hidden = true;
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  listEl.querySelectorAll('.ministerio-picker-option').forEach(b => b.classList.remove('selected'));
   hiddenInputEl.value = '';
 }
 

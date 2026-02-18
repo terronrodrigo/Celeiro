@@ -781,8 +781,10 @@
         </div>
         <div class="form-group">
           <label class="block-label">Ministério</label>
-          <p class="form-hint" style="margin-bottom:8px">Toque para selecionar</p>
-          <div id="escalaPublicMinisterioList" class="ministerio-picker" role="listbox" aria-label="Selecione o ministério"></div>
+          <div id="escalaPublicMinisterioWrap" class="ministerio-picker-wrap">
+            <button type="button" class="ministerio-picker-trigger" id="escalaPublicMinisterioTrigger" aria-haspopup="listbox" aria-expanded="false">Selecione o ministério</button>
+            <div id="escalaPublicMinisterioList" class="ministerio-picker-dropdown" role="listbox" hidden></div>
+          </div>
           <input type="hidden" id="escalaPublicMinisterio" name="ministerio" required>
         </div>
         <p id="escalaPublicError" class="auth-error"></p>
@@ -815,8 +817,10 @@
         </div>
         <div class="form-group">
           <label class="block-label">Ministério</label>
-          <p class="form-hint" style="margin-bottom:8px">Toque para selecionar</p>
-          <div id="checkinPublicMinisterioList" class="ministerio-picker" role="listbox" aria-label="Selecione o ministério"></div>
+          <div id="checkinPublicMinisterioWrap" class="ministerio-picker-wrap">
+            <button type="button" class="ministerio-picker-trigger" id="checkinPublicMinisterioTrigger" aria-haspopup="listbox" aria-expanded="false">Selecione o ministério</button>
+            <div id="checkinPublicMinisterioList" class="ministerio-picker-dropdown" role="listbox" hidden></div>
+          </div>
           <input type="hidden" id="checkinPublicMinisterio" name="ministerio">
         </div>
         <p id="checkinPublicError" class="auth-error"></p>
