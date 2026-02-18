@@ -53,6 +53,7 @@ const uploadFoto = multer({
 const TZ_BRASILIA = process.env.TZ || process.env.APP_TIMEZONE || 'America/Sao_Paulo';
 
 const app = express();
+app.set('trust proxy', 1); // Necessário quando atrás de reverse proxy (Railway, Render, etc.)
 const PORT = process.env.PORT || 3001;
 const AUTH_TOKEN_TTL_HOURS = Number(process.env.AUTH_TOKEN_TTL_HOURS || 24);
 const ADMIN_USER = (process.env.ADMIN_USER || '').trim();
