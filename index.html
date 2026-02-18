@@ -1118,6 +1118,28 @@
     </div>
   </div>
 
+  <!-- Script inline: esconde loading e mostra overlay de escala/check-in imediatamente (fix iOS) -->
+  <script>
+    (function() {
+      var q = window.location.search || '';
+      var escala = q.indexOf('escala=') >= 0;
+      var checkin = q.indexOf('checkin=') >= 0;
+      if (escala || checkin) {
+        var loading = document.getElementById('loading');
+        var dashboard = document.querySelector('.dashboard');
+        if (loading) loading.style.display = 'none';
+        if (dashboard) dashboard.style.display = 'none';
+        if (escala) {
+          var ov = document.getElementById('escalaPublicOverlay');
+          if (ov) ov.style.display = 'flex';
+        }
+        if (checkin) {
+          var ov = document.getElementById('checkinPublicOverlay');
+          if (ov) ov.style.display = 'flex';
+        }
+      }
+    })();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="app.js"></script>
 </body>

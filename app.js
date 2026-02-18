@@ -3834,20 +3834,47 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
   }
 });
 
-(() => {
+function initPublicFormOrDashboard() {
   const urlSearchParams = new URLSearchParams(window.location.search);
   const checkinParam = urlSearchParams.get('checkin');
   if (checkinParam) {
     showCheckinPublicOverlay();
     loadCheckinPublic(checkinParam);
-    return;
+    return true;
   }
   const escalaParam = urlSearchParams.get('escala');
   if (escalaParam) {
     showEscalaPublicOverlay();
     loadEscalaPublic(escalaParam);
-    return;
+    return true;
   }
+  return false;
+}
+
+window.addEventListener('pageshow', function(ev) {
+  if (ev.persisted) {
+    var params = new URLSearchParams(window.location.search);
+    var escalaId = params.get('escala');
+    var checkinId = params.get('checkin');
+    if (escalaId || checkinId) {
+      var loading = document.getElementById('loading');
+      var dashboard = document.querySelector('.dashboard');
+      if (loading) loading.style.display = 'none';
+      if (dashboard) dashboard.style.display = 'none';
+      if (escalaId) {
+        var ov = document.getElementById('escalaPublicOverlay');
+        if (ov) ov.style.display = 'flex';
+      }
+      if (checkinId) {
+        var ov = document.getElementById('checkinPublicOverlay');
+        if (ov) ov.style.display = 'flex';
+      }
+    }
+  }
+});
+
+(() => {
+  if (initPublicFormOrDashboard()) return;
   if (window.location.hash === '#cadastro') {
     showCadastroPublico();
     return;
