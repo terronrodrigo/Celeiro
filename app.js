@@ -2481,6 +2481,7 @@ async function fetchEscalas() {
   }
   if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando escalas…</p></div>';
   try {
+    if (authRole === 'lider') await verifyAuth();
     const r = await authFetch(`${API_BASE}/api/escalas?light=1`);
     if (!r.ok) {
       escalasList = [];
@@ -2870,6 +2871,11 @@ function renderEscalasCandidatosAdmin() {
 function renderEscalasCandidatosLider() {
   const container = document.getElementById('escalasContent');
   if (!container) return;
+  const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || (authMinisterioNome && String(authMinisterioNome).trim());
+  if (!hasMinisterios) {
+    container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Seu usuário ainda não tem ministério(s) vinculado(s). Peça a um administrador para definir seus ministérios em <strong>Ministros</strong> &gt; <strong>Definir líderes</strong>. Depois, atualize a página (F5) para carregar os candidatos.</p></div>';
+    return;
+  }
   if (!escalasList.length) {
     container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Nenhuma escala disponível no momento.</p></div>';
     return;

@@ -2627,10 +2627,19 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
         ? req.userMinisterioNomes.map(String).map(s => s.trim()).filter(Boolean)
         : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
       if (!nomes.length) return res.json([]);
+      const partsSet = new Set();
       const orConditions = [
         { ministerio: { $in: nomes } },
         ...nomes.map((n) => ({ ministerio: new RegExp(escapeRegex(n), 'i') })),
       ];
+      nomes.forEach((n) => {
+        n.split(/\s*\/\s*/).map((p) => p.trim()).filter(Boolean).forEach((part) => {
+          if (part && !partsSet.has(part.toLowerCase())) {
+            partsSet.add(part.toLowerCase());
+            orConditions.push({ ministerio: new RegExp(`^${escapeRegex(part)}$`, 'i') });
+          }
+        });
+      });
       query = { escalaId, $or: orConditions };
     }
     const candidaturas = await Candidatura.find(query).sort({ createdAt: -1 }).lean();
