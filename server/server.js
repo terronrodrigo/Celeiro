@@ -2299,6 +2299,129 @@ app.get('/api/escalas', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
+// GET /api/escalas/candidaturas-all — todas as candidaturas com info de escala (admin: todas; líder: seus ministérios)
+app.get('/api/escalas/candidaturas-all', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = req.userRole === 'admin';
+    const isLider = req.userRole === 'lider';
+    if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
+
+    const escalas = await Escala.find(isAdmin ? {} : { ativo: true }).sort({ createdAt: -1 }).lean();
+    const ids = escalas.map((e) => e._id);
+    let query = { escalaId: { $in: ids } };
+    if (isLider) {
+      const nomes = req.userMinisterioNomes?.length ? req.userMinisterioNomes.map((n) => String(n).trim()).filter(Boolean) : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
+      if (!nomes.length) return res.json([]);
+      const orConditions = [
+        { ministerio: { $in: nomes } },
+        ...nomes.map((n) => ({ ministerio: new RegExp(escapeRegex(n), 'i') })),
+      ];
+      query = { escalaId: { $in: ids }, $or: orConditions };
+    }
+    const candidaturas = await Candidatura.find(query).sort({ createdAt: -1 }).lean();
+    if (!candidaturas.length) return res.json([]);
+
+    const escalaMap = new Map(escalas.map((e) => [String(e._id), e]));
+    const emails = [...new Set(candidaturas.map((c) => (c.email || '').toLowerCase()).filter(Boolean))];
+
+    const [statsAgg, checkinsAgg] = await Promise.all([
+      Candidatura.aggregate([
+        { $match: { email: { $in: emails } } },
+        { $group: { _id: '$email', totalParticipacoes: { $sum: { $cond: [{ $eq: ['$status', 'aprovado'] }, 1, 0] } }, totalDesistencias: { $sum: { $cond: [{ $eq: ['$status', 'desistencia'] }, 1, 0] } }, totalFaltas: { $sum: { $cond: [{ $eq: ['$status', 'falta'] }, 1, 0] } } },
+      ]),
+      Checkin.aggregate([{ $match: { email: { $in: emails } } }, { $group: { _id: { $toLower: '$email' }, totalCheckins: { $sum: 1 }, ministerios: { $addToSet: '$ministerio' } } }]),
+    ]);
+    const statsMap = new Map(statsAgg.map((s) => [s._id, s]));
+    const checkinsMap = new Map(checkinsAgg.map((c) => [c._id, { total: c.totalCheckins, ministerios: (c.ministerios || []).filter(Boolean) }]));
+
+    const liderMinisterios = isLider ? (req.userMinisterioNomes || []).map(String).trim().filter(Boolean) : [];
+    const result = candidaturas.map((c) => {
+      const stats = statsMap.get(c.email) || {};
+      const ci = checkinsMap.get((c.email || '').toLowerCase()) || { total: 0, ministerios: [] };
+      const jaServiuMinLider = liderMinisterios.length > 0 && ci.ministerios.some((m) => liderMinisterios.some((lm) => (m || '').toLowerCase().includes((lm || '').toLowerCase())));
+      const escala = escalaMap.get(String(c.escalaId));
+      return {
+        ...c,
+        escalaNome: escala?.nome,
+        escalaData: escala?.data,
+        totalCheckins: ci.total,
+        totalParticipacoes: stats.totalParticipacoes || 0,
+        totalDesistencias: stats.totalDesistencias || 0,
+        totalFaltas: stats.totalFaltas || 0,
+        jaServiuAlgum: (ci.total || 0) + (stats.totalParticipacoes || 0) > 0,
+        jaServiuMinLider,
+      };
+    });
+    result.sort((a, b) => {
+      const aAp = a.status === 'aprovado' ? 1 : 0;
+      const bAp = b.status === 'aprovado' ? 1 : 0;
+      if (bAp !== aAp) return bAp - aAp;
+      if ((b.totalCheckins || 0) !== (a.totalCheckins || 0)) return (b.totalCheckins || 0) - (a.totalCheckins || 0);
+      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+    });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message);
+  }
+});
+
+// POST /api/candidaturas/bulk-status — atualiza status de várias candidaturas de uma vez
+app.post('/api/candidaturas/bulk-status', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = req.userRole === 'admin';
+    const isLider = req.userRole === 'lider';
+    if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
+
+    const { ids, status } = req.body || {};
+    const validStatus = ['aprovado', 'desistencia', 'falta'];
+    if (!status || !validStatus.includes(status)) return sendError(res, 400, `Status inválido. Use: ${validStatus.join(', ')}`);
+    const idList = Array.isArray(ids) ? ids.filter((id) => id && String(id).trim()).map(String) : [];
+    if (!idList.length) return sendError(res, 400, 'Informe ao menos um id.');
+
+    const candidaturas = await Candidatura.find({ _id: { $in: idList } }).lean();
+    const nomes = isLider ? (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean) : [];
+    if (isLider && nomes.length) {
+      const validas = candidaturas.filter((c) => {
+        const m = (c.ministerio || '').trim();
+        return nomes.includes(m) || nomes.some((n) => new RegExp(escapeRegex(n), 'i').test(m));
+      });
+      if (validas.length !== candidaturas.length) return sendError(res, 403, 'Algumas candidaturas não são do seu ministério.');
+    }
+
+    const update = { status };
+    if (status === 'aprovado') update.aprovadoPor = req.userId;
+    if (status === 'aprovado') update.aprovadoEm = new Date();
+
+    const result = await Candidatura.updateMany({ _id: { $in: idList } }, { $set: update });
+    if (status === 'aprovado' && result.modifiedCount > 0) {
+      for (const c of candidaturas) {
+        if (c.status !== 'aprovado' && c.email && !c.emailEnviado) {
+          try {
+            const escala = await Escala.findById(c.escalaId).lean();
+            const resend = new Resend(process.env.RESEND_API_KEY);
+            if (process.env.RESEND_API_KEY && escala) {
+              await resend.emails.send({
+                from: process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>',
+                to: c.email,
+                reply_to: process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com',
+                subject: `Participação confirmada — ${escala.nome || 'Escala'}`,
+                html: `<p>Olá! Sua participação na escala <strong>${escala.nome}</strong> foi confirmada. Obrigado por servir!</p>`,
+              });
+              await Candidatura.updateOne({ _id: c._id }, { emailEnviado: true });
+            }
+          } catch (_) {}
+        }
+      }
+    }
+    invalidateCache();
+    res.json({ ok: true, modified: result.modifiedCount });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message);
+  }
+});
+
 // GET /api/escalas/export-csv — exporta todas as escalas com candidaturas em CSV (admin only)
 function escapeCsv(val) {
   const s = String(val ?? '').replace(/"/g, '""');

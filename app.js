@@ -436,7 +436,9 @@ let usersList = [];
 let checkinsMinisterio = [];
 let checkinMinisterioResumo = {};
 let escalasList = [];
-let escalaAtiva = null; // escala cujas candidaturas estão sendo exibidas
+let escalaAtiva = null;
+let candidaturasAll = [];
+let candidaturasAnaliseFilters = {};
 
 function setViewLoading(viewName, loading) {
   const section = document.querySelector(`.view[data-view="${viewName}"]`);
@@ -2424,18 +2426,43 @@ function statusEscalaBadge(s) {
 async function fetchEscalas() {
   if (!authToken) { updateAuthUi(); return; }
   try {
-    const r = await authFetch(`${API_BASE}/api/escalas`);
-    if (!r.ok) {
+    const isAdminOrLider = authRole === 'admin' || authRole === 'lider';
+    const [rEscalas, rCand] = await Promise.all([
+      authFetch(`${API_BASE}/api/escalas`),
+      isAdminOrLider ? authFetch(`${API_BASE}/api/escalas/candidaturas-all`).catch(() => ({ ok: false })) : Promise.resolve({ ok: false }),
+    ]);
+    if (!rEscalas.ok) {
       escalasList = [];
+      candidaturasAll = [];
       renderEscalas();
       return;
     }
-    escalasList = await r.json();
+    escalasList = await rEscalas.json();
+    candidaturasAll = rCand.ok ? await rCand.json() : [];
     renderEscalas();
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
     escalasList = [];
+    candidaturasAll = [];
     renderEscalas();
+  }
+}
+
+async function fetchCandidaturasAll() {
+  if (!authToken) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/candidaturas-all`);
+    if (!r.ok) {
+      candidaturasAll = [];
+      if (document.getElementById('escalasTabAnalise')?.style.display !== 'none') renderAnaliseTab();
+      return;
+    }
+    candidaturasAll = await r.json();
+    if (document.getElementById('escalasTabAnalise')?.style.display !== 'none') renderAnaliseTab();
+  } catch (e) {
+    if (e.message === 'AUTH_REQUIRED') return;
+    candidaturasAll = [];
+    if (document.getElementById('escalasTabAnalise')?.style.display !== 'none') renderAnaliseTab();
   }
 }
 
@@ -2445,6 +2472,102 @@ function renderEscalas() {
   if (isAdmin) renderEscalasAdmin();
   else if (isVol) renderEscalasVoluntario();
   else renderEscalasLider();
+}
+
+function getFilteredCandidaturasAnalise() {
+  const list = Array.isArray(candidaturasAll) ? candidaturasAll : [];
+  const f = candidaturasAnaliseFilters || {};
+  const q = (f.nome || '').trim().toLowerCase();
+  return list.filter((c) => {
+    if (q) {
+      const match = (c.nome || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q) || (c.escalaNome || '').toLowerCase().includes(q);
+      if (!match) return false;
+    }
+    if (f.escalaId && c.escalaId) {
+      if (String(c.escalaId) !== String(f.escalaId)) return false;
+    }
+    if (f.data) {
+      if (!c.escalaData) return false;
+      const candData = c.escalaData instanceof Date ? c.escalaData : new Date(c.escalaData);
+      const filterData = String(f.data).slice(0, 10);
+      const candDataStr = candData.toISOString().slice(0, 10);
+      if (candDataStr !== filterData) return false;
+    }
+    if (f.ministerio && (c.ministerio || '').trim() !== f.ministerio) return false;
+    if (f.historicoServico) {
+      const nuncaServiu = !c.jaServiuAlgum;
+      const jaServiu = c.jaServiuAlgum;
+      const jaServiuMinLider = !!c.jaServiuMinLider;
+      if (f.historicoServico === 'nunca' && !nuncaServiu) return false;
+      if (f.historicoServico === 'ja-serviu' && !jaServiu) return false;
+      if (f.historicoServico === 'ja-serviu-ministerio' && !jaServiuMinLider) return false;
+    }
+    return true;
+  });
+}
+
+function escapeCsv(val) {
+  const s = String(val ?? '').replace(/"/g, '""');
+  return /[,"\n\r]/.test(s) ? `"${s}"` : s;
+}
+
+function exportCandidaturasCsv(list) {
+  const header = ['Escala', 'Data', 'Nome', 'Email', 'Telefone', 'Ministério', 'CI', 'Part.', 'Status'];
+  const rows = list.map((c) => {
+    const dataStr = c.escalaData ? new Date(c.escalaData).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+    return [c.escalaNome || '', dataStr, c.nome || '', c.email || '', c.telefone || '', c.ministerio || '', c.totalCheckins || 0, c.totalParticipacoes || 0, c.status || ''].map(escapeCsv).join(',');
+  });
+  const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'candidaturas-export.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function renderAnaliseTab() {
+  const panel = document.getElementById('escalasAnalisePanel');
+  if (!panel) return;
+  const filtered = getFilteredCandidaturasAnalise();
+  const selectedIds = new Set((document.querySelectorAll('#escalasAnaliseBody input.row-check-cand:checked') || []).map((cb) => cb.getAttribute('data-cand-id')));
+  const pendentes = filtered.filter((c) => c.status !== 'aprovado');
+
+  const rows = filtered.map((c) => {
+    const dataStr = c.escalaData ? new Date(c.escalaData).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
+    const checked = selectedIds.has(String(c._id));
+    const podeSelecionar = c.status !== 'aprovado';
+    return `<tr>
+      <td class="col-check"><input type="checkbox" class="row-check-cand" data-cand-id="${escapeAttr(String(c._id))}" ${podeSelecionar ? '' : 'disabled'} ${checked ? 'checked' : ''}></td>
+      <td data-label="Escala">${escapeHtml(c.escalaNome || '—')}</td>
+      <td data-label="Data">${dataStr}</td>
+      <td data-label="Nome">${escapeHtml(c.nome || '—')}</td>
+      <td data-label="Email"><button type="button" class="link-voluntario" data-email="${escapeAttr((c.email || '').toLowerCase())}">${escapeHtml(c.email || '')}</button></td>
+      <td data-label="Ministério">${escapeHtml(c.ministerio || '—')}</td>
+      <td class="escala-cand-stat" data-label="CI">${c.totalCheckins || 0}</td>
+      <td class="escala-cand-stat" data-label="Part.">${c.totalParticipacoes || 0}</td>
+      <td data-label="Histórico">${c.jaServiuAlgum ? (c.jaServiuMinLider ? 'Ministério' : 'Sim') : 'Nunca'}</td>
+      <td data-label="Status">${statusEscalaBadge(c.status)}</td>
+    </tr>`;
+  }).join('');
+
+  const tbody = panel.querySelector('#escalasAnaliseBody');
+  if (tbody) tbody.innerHTML = rows || '<tr><td colspan="10">Nenhuma candidatura corresponde aos filtros.</td></tr>';
+
+  const countEl = document.getElementById('escalasAnaliseCount');
+  if (countEl) countEl.textContent = filtered.length;
+  const selectedCount = panel.querySelectorAll('input.row-check-cand:checked').length;
+  const countSelectedEl = document.getElementById('escalasAnaliseCountSelected');
+  if (countSelectedEl) countSelectedEl.textContent = selectedCount;
+  const btnAprovar = document.getElementById('btnAnaliseAprovar');
+  if (btnAprovar) btnAprovar.disabled = selectedCount === 0;
+
+  panel.querySelectorAll('.link-voluntario').forEach((btn) => {
+    btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email')));
+  });
+  panel.querySelectorAll('input.row-check-cand').forEach((cb) => {
+    cb.addEventListener('change', () => renderAnaliseTab());
+  });
 }
 
 function renderEscalasAdmin() {
@@ -2470,22 +2593,106 @@ function renderEscalasAdmin() {
     </tr>`;
   }).join('') || '<tr><td colspan="6">Nenhuma escala. Clique em "Nova escala" para criar.</td></tr>';
 
+  const escalasOptions = escalasList.map((e) => {
+    const data = e.data ? new Date(e.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+    return `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome)}${data ? ` (${data})` : ''}</option>`;
+  }).join('');
+  const ministeriosUnicos = [...new Set(candidaturasAll.map((c) => (c.ministerio || '').trim()).filter(Boolean))].sort();
+  const ministeriosOptions = ministeriosUnicos.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+  const datasUnicas = [...new Set(candidaturasAll.map((c) => {
+    if (!c.escalaData) return '';
+    const d = c.escalaData instanceof Date ? c.escalaData : new Date(c.escalaData);
+    return d.toISOString().slice(0, 10);
+  }).filter(Boolean))].sort().reverse();
+
   container.innerHTML = `
-    <div class="filters-card" style="margin-bottom:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
-      <button type="button" class="btn btn-primary" id="btnNovaEscala">+ Nova escala</button>
-      <button type="button" class="btn btn-ghost" id="btnExportarCsvEscalas" title="Exportar todas as escalas e candidaturas em CSV">Exportar CSV</button>
+    <div class="escalas-tabs" style="display:flex;gap:0;margin-bottom:20px;border-bottom:1px solid var(--border-color)">
+      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="escalas" style="border-radius:0;border-bottom:2px solid var(--accent)">Escalas (criar/gerenciar)</button>
+      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="analise" style="border-radius:0;border-bottom:2px solid transparent">Análise de candidaturas</button>
     </div>
-    <div class="table-card escala-table-card">
-      <div class="chart-header"><h2>Escalas</h2></div>
-      <div class="table-wrapper">
-        <table class="data-table escala-table">
-          <thead><tr><th>Nome</th><th>Data</th><th>Status</th><th>Candidaturas</th><th>Link</th><th>Ações</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
+    <div id="escalasTabEscalas" class="escalas-tab-panel">
+      <div class="filters-card" style="margin-bottom:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+        <button type="button" class="btn btn-primary" id="btnNovaEscala">+ Nova escala</button>
+        <button type="button" class="btn btn-ghost" id="btnExportarCsvEscalas" title="Exportar todas as escalas e candidaturas em CSV">Exportar CSV (todos)</button>
+      </div>
+      <div class="table-card escala-table-card">
+        <div class="chart-header"><h2>Escalas</h2></div>
+        <div class="table-wrapper">
+          <table class="data-table escala-table">
+            <thead><tr><th>Nome</th><th>Data</th><th>Status</th><th>Candidaturas</th><th>Link</th><th>Ações</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+      <div id="escalaCandidaturasPanel" class="escala-candidaturas-panel" style="margin-top:24px;display:none"></div>
+    </div>
+    <div id="escalasTabAnalise" class="escalas-tab-panel" style="display:none">
+      <section class="filters-row">
+        <div class="filters-card">
+          <div class="filters-left" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+            <div class="form-group compact">
+              <label for="analiseFilterNome">Buscar</label>
+              <input type="text" id="analiseFilterNome" placeholder="Nome, email ou escala..." style="min-width:180px">
+            </div>
+            <div class="form-group compact">
+              <label for="analiseFilterEscala">Escala</label>
+              <select id="analiseFilterEscala"><option value="">Todas</option>${escalasOptions}</select>
+            </div>
+            <div class="form-group compact">
+              <label for="analiseFilterData">Data</label>
+              <select id="analiseFilterData"><option value="">Todas</option>${datasUnicas.map((d) => `<option value="${escapeAttr(d)}">${new Date(d + 'T12:00:00').toLocaleDateString('pt-BR')}</option>`).join('')}</select>
+            </div>
+            <div class="form-group compact">
+              <label for="analiseFilterMinisterio">Ministério</label>
+              <select id="analiseFilterMinisterio"><option value="">Todos</option>${ministeriosOptions}</select>
+            </div>
+            <div class="form-group compact">
+              <label for="analiseFilterHistorico">Histórico de serviço</label>
+              <select id="analiseFilterHistorico">
+                <option value="">Todos</option>
+                <option value="nunca">Nunca serviu</option>
+                <option value="ja-serviu">Já serviu em algum ministério</option>
+                <option value="ja-serviu-ministerio">Já serviu no meu ministério</option>
+              </select>
+            </div>
+            <div class="form-group compact">
+              <button type="button" class="btn btn-primary btn-sm" id="btnAnaliseApply">Aplicar filtros</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="btnAnaliseClear">Limpar</button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <div class="table-card escala-table-card" id="escalasAnalisePanel">
+        <div class="chart-header">
+          <h2>Candidaturas <span id="escalasAnaliseCount">0</span></h2>
+          <div class="table-actions">
+            <label class="checkbox-label"><input type="checkbox" id="analiseSelectAll" title="Selecionar todos (apenas pendentes)"><span>Selecionar pendentes</span></label>
+            <button type="button" class="btn btn-primary btn-sm" id="btnAnaliseAprovar" disabled>Aprovar selecionados (<span id="escalasAnaliseCountSelected">0</span>)</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnAnaliseExportCsv">Exportar CSV (resultado filtrado)</button>
+          </div>
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table escala-table">
+            <thead><tr><th class="col-check"><input type="checkbox" id="analiseSelectAllHeader" title="Selecionar todos pendentes"></th><th>Escala</th><th>Data</th><th>Nome</th><th>Email</th><th>Ministério</th><th>CI</th><th>Part.</th><th>Histórico</th><th>Status</th></tr></thead>
+            <tbody id="escalasAnaliseBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
-    <div id="escalaCandidaturasPanel" class="escala-candidaturas-panel" style="margin-top:24px;display:none"></div>
   `;
+
+  container.querySelectorAll('.escalas-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tab = btn.getAttribute('data-escala-tab');
+      container.querySelectorAll('.escalas-tab').forEach((b) => { b.style.borderBottomColor = 'transparent'; });
+      btn.style.borderBottomColor = 'var(--accent)';
+      document.getElementById('escalasTabEscalas').style.display = tab === 'escalas' ? '' : 'none';
+      const analisePanel = document.getElementById('escalasTabAnalise');
+      analisePanel.style.display = tab === 'analise' ? '' : 'none';
+      if (tab === 'analise' && candidaturasAll.length === 0) fetchCandidaturasAll();
+      else if (tab === 'analise') renderAnaliseTab();
+    });
+  });
 
   document.getElementById('btnNovaEscala')?.addEventListener('click', () => {
     const m = document.getElementById('modalNovaEscala');
@@ -2493,16 +2700,8 @@ function renderEscalasAdmin() {
   });
 
   document.getElementById('btnExportarCsvEscalas')?.addEventListener('click', () => {
-    const url = `${API_BASE}/api/escalas/export-csv`;
-    authFetch(url).then((r) => {
-      if (!r.ok) throw new Error('Falha ao exportar');
-      return r.blob();
-    }).then((blob) => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'escalas-export.csv';
-      a.click();
-      URL.revokeObjectURL(a.href);
+    authFetch(`${API_BASE}/api/escalas/export-csv`).then((r) => { if (!r.ok) throw new Error('Falha'); return r.blob(); }).then((blob) => {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'escalas-export.csv'; a.click(); URL.revokeObjectURL(a.href);
     }).catch((e) => alert(e.message || 'Erro ao exportar CSV.'));
   });
 
@@ -2518,16 +2717,65 @@ function renderEscalasAdmin() {
     btn.addEventListener('click', () => fetchCandidaturasEscala(btn.getAttribute('data-escala-candidaturas')));
   });
 
-  container.querySelectorAll('[data-escala-edit]').forEach(btn => {
-    btn.addEventListener('click', () => openModalEditarEscala(btn.getAttribute('data-escala-edit')));
+  container.querySelectorAll('[data-escala-edit]').forEach(btn => { btn.addEventListener('click', () => openModalEditarEscala(btn.getAttribute('data-escala-edit'))); });
+  container.querySelectorAll('[data-escala-toggle]').forEach(btn => { btn.addEventListener('click', () => toggleEscalaAtivo(btn.getAttribute('data-escala-toggle'))); });
+  container.querySelectorAll('[data-escala-delete]').forEach(btn => { btn.addEventListener('click', () => excluirEscala(btn.getAttribute('data-escala-delete'))); });
+
+  const applyAnaliseFilters = () => {
+    candidaturasAnaliseFilters = {
+      nome: document.getElementById('analiseFilterNome')?.value || '',
+      escalaId: document.getElementById('analiseFilterEscala')?.value || '',
+      data: document.getElementById('analiseFilterData')?.value || '',
+      ministerio: document.getElementById('analiseFilterMinisterio')?.value || '',
+      historicoServico: document.getElementById('analiseFilterHistorico')?.value || '',
+    };
+    renderAnaliseTab();
+  };
+
+  document.getElementById('btnAnaliseApply')?.addEventListener('click', applyAnaliseFilters);
+  document.getElementById('btnAnaliseClear')?.addEventListener('click', () => {
+    candidaturasAnaliseFilters = {};
+    document.getElementById('analiseFilterNome').value = '';
+    document.getElementById('analiseFilterEscala').value = '';
+    document.getElementById('analiseFilterData').value = '';
+    document.getElementById('analiseFilterMinisterio').value = '';
+    document.getElementById('analiseFilterHistorico').value = '';
+    renderAnaliseTab();
   });
 
-  container.querySelectorAll('[data-escala-toggle]').forEach(btn => {
-    btn.addEventListener('click', () => toggleEscalaAtivo(btn.getAttribute('data-escala-toggle')));
+  document.getElementById('analiseSelectAll')?.addEventListener('change', (e) => {
+    const panel = document.getElementById('escalasAnalisePanel');
+    panel?.querySelectorAll('input.row-check-cand:not(:disabled)').forEach((cb) => { cb.checked = e.target.checked; });
+    renderAnaliseTab();
+  });
+  document.getElementById('analiseSelectAllHeader')?.addEventListener('change', (e) => {
+    document.getElementById('analiseSelectAll').checked = e.target.checked;
+    document.getElementById('escalasAnalisePanel')?.querySelectorAll('input.row-check-cand:not(:disabled)').forEach((cb) => { cb.checked = e.target.checked; });
+    renderAnaliseTab();
   });
 
-  container.querySelectorAll('[data-escala-delete]').forEach(btn => {
-    btn.addEventListener('click', () => excluirEscala(btn.getAttribute('data-escala-delete')));
+  document.getElementById('btnAnaliseAprovar')?.addEventListener('click', async () => {
+    const panel = document.getElementById('escalasAnalisePanel');
+    const ids = [...(panel?.querySelectorAll('input.row-check-cand:checked') || [])].map((cb) => cb.getAttribute('data-cand-id')).filter(Boolean);
+    if (!ids.length) { alert('Selecione ao menos uma candidatura.'); return; }
+    try {
+      const r = await authFetch(`${API_BASE}/api/candidaturas/bulk-status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, status: 'aprovado' }) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+      await fetchCandidaturasAll();
+      await fetchEscalas();
+      renderAnaliseTab();
+      renderEscalasAdmin();
+    } catch (e) { alert(e.message || 'Erro ao aprovar.'); }
+  });
+
+  document.getElementById('btnAnaliseExportCsv')?.addEventListener('click', () => {
+    const filtered = getFilteredCandidaturasAnalise();
+    if (!filtered.length) { alert('Nenhuma candidatura para exportar.'); return; }
+    exportCandidaturasCsv(filtered);
+  });
+
+  ['analiseFilterNome', 'analiseFilterEscala', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('change', applyAnaliseFilters);
   });
 }
 
@@ -2547,20 +2795,133 @@ function renderEscalasLider() {
       <td class="escala-actions-cell" data-label=""><button class="btn btn-sm btn-primary escala-btn-main" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos do meu ministério</button></td>
     </tr>`;
   }).join('');
+
+  const escalasOptions = escalasList.map((e) => {
+    const data = e.data ? new Date(e.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+    return `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome)}${data ? ` (${data})` : ''}</option>`;
+  }).join('');
+  const ministeriosUnicos = [...new Set(candidaturasAll.map((c) => (c.ministerio || '').trim()).filter(Boolean))].sort();
+  const ministeriosOptions = ministeriosUnicos.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+  const datasUnicas = [...new Set(candidaturasAll.map((c) => {
+    if (!c.escalaData) return '';
+    const d = c.escalaData instanceof Date ? c.escalaData : new Date(c.escalaData);
+    return d.toISOString().slice(0, 10);
+  }).filter(Boolean))].sort().reverse();
+
   container.innerHTML = `
-    <div class="table-card escala-table-card">
-      <div class="chart-header"><h2>Escalas</h2></div>
-      <div class="table-wrapper">
-        <table class="data-table escala-table">
-          <thead><tr><th>Nome</th><th>Data</th><th>Candidatos</th><th>Ação</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
+    <div class="escalas-tabs" style="display:flex;gap:0;margin-bottom:20px;border-bottom:1px solid var(--border-color)">
+      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="escalas" style="border-radius:0;border-bottom:2px solid var(--accent)">Escalas</button>
+      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="analise" style="border-radius:0;border-bottom:2px solid transparent">Análise de candidaturas</button>
+    </div>
+    <div id="escalasTabEscalas" class="escalas-tab-panel">
+      <div class="table-card escala-table-card">
+        <div class="chart-header"><h2>Escalas</h2></div>
+        <div class="table-wrapper">
+          <table class="data-table escala-table">
+            <thead><tr><th>Nome</th><th>Data</th><th>Candidatos</th><th>Ação</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+      <div id="escalaCandidaturasPanel" class="escala-candidaturas-panel" style="margin-top:24px;display:none"></div>
+    </div>
+    <div id="escalasTabAnalise" class="escalas-tab-panel" style="display:none">
+      <section class="filters-row">
+        <div class="filters-card">
+          <div class="filters-left" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+            <div class="form-group compact"><label for="analiseFilterNome">Buscar</label><input type="text" id="analiseFilterNome" placeholder="Nome, email ou escala..." style="min-width:180px"></div>
+            <div class="form-group compact"><label for="analiseFilterEscala">Escala</label><select id="analiseFilterEscala"><option value="">Todas</option>${escalasOptions}</select></div>
+            <div class="form-group compact"><label for="analiseFilterData">Data</label><select id="analiseFilterData"><option value="">Todas</option>${datasUnicas.map((d) => `<option value="${escapeAttr(d)}">${new Date(d + 'T12:00:00').toLocaleDateString('pt-BR')}</option>`).join('')}</select></div>
+            <div class="form-group compact"><label for="analiseFilterMinisterio">Ministério</label><select id="analiseFilterMinisterio"><option value="">Todos</option>${ministeriosOptions}</select></div>
+            <div class="form-group compact"><label for="analiseFilterHistorico">Histórico</label><select id="analiseFilterHistorico"><option value="">Todos</option><option value="nunca">Nunca serviu</option><option value="ja-serviu">Já serviu</option><option value="ja-serviu-ministerio">Já serviu no meu ministério</option></select></div>
+            <button type="button" class="btn btn-primary btn-sm" id="btnAnaliseApply">Aplicar</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnAnaliseClear">Limpar</button>
+          </div>
+        </div>
+      </section>
+      <div class="table-card escala-table-card" id="escalasAnalisePanel">
+        <div class="chart-header">
+          <h2>Candidaturas <span id="escalasAnaliseCount">0</span></h2>
+          <div class="table-actions">
+            <label class="checkbox-label"><input type="checkbox" id="analiseSelectAll"><span>Selecionar pendentes</span></label>
+            <button type="button" class="btn btn-primary btn-sm" id="btnAnaliseAprovar" disabled>Aprovar selecionados (<span id="escalasAnaliseCountSelected">0</span>)</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnAnaliseExportCsv">Exportar CSV (filtrado)</button>
+          </div>
+        </div>
+        <div class="table-wrapper">
+          <table class="data-table escala-table">
+            <thead><tr><th class="col-check"><input type="checkbox" id="analiseSelectAllHeader"></th><th>Escala</th><th>Data</th><th>Nome</th><th>Email</th><th>Ministério</th><th>CI</th><th>Part.</th><th>Histórico</th><th>Status</th></tr></thead>
+            <tbody id="escalasAnaliseBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
-    <div id="escalaCandidaturasPanel" class="escala-candidaturas-panel" style="margin-top:24px;display:none"></div>
   `;
+
+  container.querySelectorAll('.escalas-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tab = btn.getAttribute('data-escala-tab');
+      container.querySelectorAll('.escalas-tab').forEach((b) => { b.style.borderBottomColor = 'transparent'; });
+      btn.style.borderBottomColor = 'var(--accent)';
+      document.getElementById('escalasTabEscalas').style.display = tab === 'escalas' ? '' : 'none';
+      const analisePanel = document.getElementById('escalasTabAnalise');
+      analisePanel.style.display = tab === 'analise' ? '' : 'none';
+      if (tab === 'analise' && candidaturasAll.length === 0) fetchCandidaturasAll();
+      else if (tab === 'analise') renderAnaliseTab();
+    });
+  });
+
   container.querySelectorAll('[data-escala-candidaturas]').forEach(btn => {
     btn.addEventListener('click', () => fetchCandidaturasEscala(btn.getAttribute('data-escala-candidaturas')));
+  });
+
+  const applyAnaliseFilters = () => {
+    candidaturasAnaliseFilters = {
+      nome: document.getElementById('analiseFilterNome')?.value || '',
+      escalaId: document.getElementById('analiseFilterEscala')?.value || '',
+      data: document.getElementById('analiseFilterData')?.value || '',
+      ministerio: document.getElementById('analiseFilterMinisterio')?.value || '',
+      historicoServico: document.getElementById('analiseFilterHistorico')?.value || '',
+    };
+    renderAnaliseTab();
+  };
+  document.getElementById('btnAnaliseApply')?.addEventListener('click', applyAnaliseFilters);
+  document.getElementById('btnAnaliseClear')?.addEventListener('click', () => {
+    candidaturasAnaliseFilters = {};
+    ['analiseFilterNome', 'analiseFilterEscala', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = el.tagName === 'SELECT' ? '' : '';
+    });
+    renderAnaliseTab();
+  });
+  document.getElementById('analiseSelectAll')?.addEventListener('change', (e) => {
+    document.getElementById('escalasAnalisePanel')?.querySelectorAll('input.row-check-cand:not(:disabled)').forEach((cb) => { cb.checked = e.target.checked; });
+    renderAnaliseTab();
+  });
+  document.getElementById('analiseSelectAllHeader')?.addEventListener('change', (e) => {
+    document.getElementById('analiseSelectAll').checked = e.target.checked;
+    document.getElementById('escalasAnalisePanel')?.querySelectorAll('input.row-check-cand:not(:disabled)').forEach((cb) => { cb.checked = e.target.checked; });
+    renderAnaliseTab();
+  });
+  document.getElementById('btnAnaliseAprovar')?.addEventListener('click', async () => {
+    const ids = [...(document.getElementById('escalasAnalisePanel')?.querySelectorAll('input.row-check-cand:checked') || [])].map((cb) => cb.getAttribute('data-cand-id')).filter(Boolean);
+    if (!ids.length) { alert('Selecione ao menos uma candidatura.'); return; }
+    try {
+      const r = await authFetch(`${API_BASE}/api/candidaturas/bulk-status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, status: 'aprovado' }) });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+      await fetchCandidaturasAll();
+      await fetchEscalas();
+      renderAnaliseTab();
+      renderEscalasLider();
+    } catch (e) { alert(e.message || 'Erro ao aprovar.'); }
+  });
+  document.getElementById('btnAnaliseExportCsv')?.addEventListener('click', () => {
+    const filtered = getFilteredCandidaturasAnalise();
+    if (!filtered.length) { alert('Nenhuma candidatura para exportar.'); return; }
+    exportCandidaturasCsv(filtered);
+  });
+  ['analiseFilterNome', 'analiseFilterEscala', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('change', applyAnaliseFilters);
   });
 }
 
