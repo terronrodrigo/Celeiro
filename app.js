@@ -3155,9 +3155,22 @@ async function loadEscalaPublic(escalaId) {
   const formEl = document.getElementById('escalaPublicForm');
   const concluidaWrap = document.getElementById('escalaPublicConcluidaWrap');
 
+  const escalaIdClean = (escalaId || '').toString().trim();
+  if (!escalaIdClean) {
+    if (subtitleEl) subtitleEl.textContent = 'Link inválido. Verifique o endereço.';
+    return;
+  }
+
   try {
-    const r = await fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(escalaId)}`);
-    const data = await r.json().catch(() => ({}));
+    const r = await fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(escalaIdClean)}`);
+    let data = {};
+    try {
+      const text = await r.text();
+      data = text ? JSON.parse(text) : {};
+    } catch (_) {
+      if (subtitleEl) subtitleEl.textContent = 'Erro ao carregar dados da escala.';
+      return;
+    }
     if (!r.ok) {
       if (subtitleEl) subtitleEl.textContent = data.error || 'Escala não encontrada ou não está ativa.';
       return;
@@ -3179,8 +3192,9 @@ async function loadEscalaPublic(escalaId) {
     setMinisterioSelectOptions(ministerioSel, list);
     if (formEl) formEl.style.display = '';
     if (concluidaWrap) concluidaWrap.style.display = 'none';
-  } catch (_) {
-    if (subtitleEl) subtitleEl.textContent = 'Erro ao carregar dados da escala.';
+  } catch (e) {
+    console.error('loadEscalaPublic:', e);
+    if (subtitleEl) subtitleEl.textContent = 'Erro ao carregar dados da escala. Verifique a conexão e tente novamente.';
   }
 
   document.getElementById('btnEscalaPublicVerMinhas')?.addEventListener('click', () => {
@@ -3214,7 +3228,7 @@ async function loadEscalaPublic(escalaId) {
       const r = await fetch(`${API_BASE}/api/candidaturas`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ escalaId, nome, email, telefone, ministerio }),
+        body: JSON.stringify({ escalaId: escalaIdClean, nome, email, telefone, ministerio }),
       });
       const data = await r.json();
       if (!r.ok && r.status !== 200) throw new Error(data.error || 'Erro ao enviar candidatura.');

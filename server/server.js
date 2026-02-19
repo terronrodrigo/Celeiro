@@ -2502,7 +2502,11 @@ app.delete('/api/escalas/:id', requireAuth, requireAdmin, async (req, res) => {
 // GET /api/escala-publica/:id — info pública da escala para o form de candidatura
 app.get('/api/escala-publica/:id', async (req, res) => {
   try {
-    const escala = await Escala.findById(req.params.id).select('nome data descricao ativo').lean();
+    const id = (req.params.id || '').trim();
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return sendError(res, 400, 'ID da escala inválido.');
+    }
+    const escala = await Escala.findById(id).select('nome data descricao ativo').lean();
     if (!escala) return sendError(res, 404, 'Escala não encontrada.');
     if (!escala.ativo) {
       return res.status(200).json({
