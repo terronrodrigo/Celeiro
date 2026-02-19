@@ -2471,8 +2471,9 @@ function renderEscalasAdmin() {
   }).join('') || '<tr><td colspan="6">Nenhuma escala. Clique em "Nova escala" para criar.</td></tr>';
 
   container.innerHTML = `
-    <div class="filters-card" style="margin-bottom:20px">
+    <div class="filters-card" style="margin-bottom:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
       <button type="button" class="btn btn-primary" id="btnNovaEscala">+ Nova escala</button>
+      <button type="button" class="btn btn-ghost" id="btnExportarCsvEscalas" title="Exportar todas as escalas e candidaturas em CSV">Exportar CSV</button>
     </div>
     <div class="table-card escala-table-card">
       <div class="chart-header"><h2>Escalas</h2></div>
@@ -2489,6 +2490,20 @@ function renderEscalasAdmin() {
   document.getElementById('btnNovaEscala')?.addEventListener('click', () => {
     const m = document.getElementById('modalNovaEscala');
     if (m) { document.getElementById('escalaNovoNome').value = ''; document.getElementById('escalaNovaData').value = ''; document.getElementById('escalaNovaDescricao').value = ''; document.getElementById('escalaNovoAtivo').checked = true; m.classList.add('open'); m.setAttribute('aria-hidden', 'false'); }
+  });
+
+  document.getElementById('btnExportarCsvEscalas')?.addEventListener('click', () => {
+    const url = `${API_BASE}/api/escalas/export-csv`;
+    authFetch(url).then((r) => {
+      if (!r.ok) throw new Error('Falha ao exportar');
+      return r.blob();
+    }).then((blob) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'escalas-export.csv';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }).catch((e) => alert(e.message || 'Erro ao exportar CSV.'));
   });
 
   container.querySelectorAll('[data-escala-link]').forEach(btn => {

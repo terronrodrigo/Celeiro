@@ -2299,6 +2299,35 @@ app.get('/api/escalas', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
+// GET /api/escalas/export-csv — exporta todas as escalas com candidaturas em CSV (admin only)
+function escapeCsv(val) {
+  const s = String(val ?? '').replace(/"/g, '""');
+  return /[,"\n\r]/.test(s) ? `"${s}"` : s;
+}
+app.get('/api/escalas/export-csv', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const mongoReady = mongoose.connection.readyState === 1;
+    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    const escalas = await Escala.find({}).sort({ createdAt: -1 }).lean();
+    const ids = escalas.map((e) => e._id);
+    const candidaturas = await Candidatura.find({ escalaId: { $in: ids } }).sort({ ministerio: 1, nome: 1 }).lean();
+    const escalaMap = new Map(escalas.map((e) => [String(e._id), e]));
+    const header = ['Escala', 'Data', 'Nome', 'Email', 'Telefone', 'Ministério', 'Status'];
+    const rows = candidaturas.map((c) => {
+      const escala = escalaMap.get(String(c.escalaId));
+      const dataStr = escala?.data ? new Date(escala.data).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '';
+      return [escala?.nome || '', dataStr, c.nome || '', c.email || '', c.telefone || '', c.ministerio || '', c.status || ''].map(escapeCsv).join(',');
+    });
+    const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="escalas-export.csv"');
+    res.send(csv);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao exportar.');
+  }
+});
+
 // POST /api/escalas — cria escala (admin only)
 app.post('/api/escalas', requireAuth, requireAdmin, async (req, res) => {
   try {
