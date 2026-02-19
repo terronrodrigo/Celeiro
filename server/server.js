@@ -2324,17 +2324,23 @@ app.get('/api/escalas/candidaturas-all', requireAuth, async (req, res) => {
     const escalaMap = new Map(escalas.map((e) => [String(e._id), e]));
     const emails = [...new Set(candidaturas.map((c) => (c.email || '').toLowerCase()).filter(Boolean))];
 
+    const condAprovado = { $cond: { if: { $eq: ['$status', 'aprovado'] }, then: 1, else: 0 } };
+    const condDesistencia = { $cond: { if: { $eq: ['$status', 'desistencia'] }, then: 1, else: 0 } };
+    const condFalta = { $cond: { if: { $eq: ['$status', 'falta'] }, then: 1, else: 0 } };
     const [statsAgg, checkinsAgg] = await Promise.all([
       Candidatura.aggregate([
         { $match: { email: { $in: emails } } },
-        { $group: { _id: '$email', totalParticipacoes: { $sum: { $cond: [{ $eq: ['$status', 'aprovado'] }, 1, 0] } }, totalDesistencias: { $sum: { $cond: [{ $eq: ['$status', 'desistencia'] }, 1, 0] } }, totalFaltas: { $sum: { $cond: [{ $eq: ['$status', 'falta'] }, 1, 0] } } },
+        { $group: { _id: '$email', totalParticipacoes: { $sum: condAprovado }, totalDesistencias: { $sum: condDesistencia }, totalFaltas: { $sum: condFalta } } },
       ]),
-      Checkin.aggregate([{ $match: { email: { $in: emails } } }, { $group: { _id: { $toLower: '$email' }, totalCheckins: { $sum: 1 }, ministerios: { $addToSet: '$ministerio' } } }]),
+      Checkin.aggregate([
+        { $match: { email: { $in: emails } } },
+        { $group: { _id: { $toLower: '$email' }, totalCheckins: { $sum: 1 }, ministerios: { $addToSet: '$ministerio' } } },
+      ]),
     ]);
     const statsMap = new Map(statsAgg.map((s) => [s._id, s]));
     const checkinsMap = new Map(checkinsAgg.map((c) => [c._id, { total: c.totalCheckins, ministerios: (c.ministerios || []).filter(Boolean) }]));
 
-    const liderMinisterios = isLider ? (req.userMinisterioNomes || []).map(String).trim().filter(Boolean) : [];
+    const liderMinisterios = isLider ? (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean) : [];
     const result = candidaturas.map((c) => {
       const stats = statsMap.get(c.email) || {};
       const ci = checkinsMap.get((c.email || '').toLowerCase()) || { total: 0, ministerios: [] };
