@@ -2601,6 +2601,52 @@ async function renderEscalasVoluntario() {
   }
 }
 
+let candidaturasEscalaList = [];
+let candidaturasEscalaId = null;
+
+function renderCandidaturasTable(list, escalaId, ministerioFilter) {
+  const panel = document.getElementById('escalaCandidaturasPanel');
+  if (!panel) return;
+  const filtered = ministerioFilter && ministerioFilter !== ''
+    ? list.filter(c => (c.ministerio || '').trim() === ministerioFilter)
+    : list;
+  const escala = escalasList.find(e => String(e._id) === escalaId);
+  const isAdmin = authRole === 'admin';
+  const acoesTpl = (c) => isAdmin
+    ? `<div class="escala-cand-actions"><button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
+       <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="desistencia">Desist.</button>
+       <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button></div>`
+    : `<div class="escala-cand-actions"><button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
+       <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button></div>`;
+  const rows = filtered.map(c => `<tr>
+    <td data-label="Nome">${escapeHtml(c.nome || '—')}</td>
+    <td data-label="Email"><button type="button" class="link-voluntario" data-email="${escapeAttr((c.email || '').toLowerCase())}">${escapeHtml(c.email || '')}</button></td>
+    <td data-label="Telefone">${escapeHtml(c.telefone || '—')}</td>
+    <td data-label="Ministério">${escapeHtml(c.ministerio || '—')}</td>
+    <td class="escala-cand-stat" data-label="Check-ins">${c.totalCheckins || 0}</td>
+    <td class="escala-cand-stat" data-label="Participações">${c.totalParticipacoes || 0}</td>
+    <td class="escala-cand-stat" data-label="Desistências">${c.totalDesistencias || 0}</td>
+    <td class="escala-cand-stat" data-label="Faltas">${c.totalFaltas || 0}</td>
+    <td data-label="Status">${statusEscalaBadge(c.status)}</td>
+    <td data-label="">${acoesTpl(c)}</td>
+  </tr>`).join('');
+  const tbody = panel.querySelector('.escala-cand-tbody');
+  if (tbody) tbody.innerHTML = rows;
+  panel.querySelectorAll('[data-cand-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-cand-id');
+      const action = btn.getAttribute('data-cand-action');
+      await atualizarStatusCandidatura(id, action);
+      fetchCandidaturasEscala(escalaId);
+    });
+  });
+  panel.querySelectorAll('.link-voluntario').forEach(btn => {
+    btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email')));
+  });
+  const countEl = panel.querySelector('.escala-cand-filter-count');
+  if (countEl) countEl.textContent = `${filtered.length}${ministerioFilter ? ` de ${list.length}` : ''}`;
+}
+
 async function fetchCandidaturasEscala(escalaId) {
   const panel = document.getElementById('escalaCandidaturasPanel');
   if (!panel) return;
@@ -2610,54 +2656,46 @@ async function fetchCandidaturasEscala(escalaId) {
     const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(escalaId)}/candidaturas`);
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
     const list = await r.json();
+    candidaturasEscalaList = list;
+    candidaturasEscalaId = escalaId;
     const escala = escalasList.find(e => String(e._id) === escalaId);
     const isAdmin = authRole === 'admin';
     if (!list.length) {
       panel.innerHTML = `<div class="filters-card"><div class="chart-header"><h2>Candidatos${escala ? ` — ${escapeHtml(escala.nome)}` : ''}</h2></div><p class="auth-subtitle">Nenhum candidato ainda.</p></div>`;
       return;
     }
-    const rows = list.map(c => {
-      const acoes = isAdmin
-        ? `<div class="escala-cand-actions"><button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
-           <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="desistencia">Desist.</button>
-           <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button></div>`
-        : `<div class="escala-cand-actions"><button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
-           <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button></div>`;
-      return `<tr>
-        <td data-label="Nome">${escapeHtml(c.nome || '—')}</td>
-        <td data-label="Email"><button type="button" class="link-voluntario" data-email="${escapeAttr((c.email || '').toLowerCase())}">${escapeHtml(c.email || '')}</button></td>
-        <td data-label="Telefone">${escapeHtml(c.telefone || '—')}</td>
-        <td data-label="Ministério">${escapeHtml(c.ministerio || '—')}</td>
-        <td class="escala-cand-stat" data-label="Check-ins">${c.totalCheckins || 0}</td>
-        <td class="escala-cand-stat" data-label="Participações">${c.totalParticipacoes || 0}</td>
-        <td class="escala-cand-stat" data-label="Desistências">${c.totalDesistencias || 0}</td>
-        <td class="escala-cand-stat" data-label="Faltas">${c.totalFaltas || 0}</td>
-        <td data-label="Status">${statusEscalaBadge(c.status)}</td>
-        <td data-label="">${acoes}</td>
-      </tr>`;
-    }).join('');
+    const ministeriosUnicos = [...new Set(list.map(c => (c.ministerio || '').trim()).filter(Boolean))].sort();
+    const mostraFiltro = ministeriosUnicos.length > 1;
+    const filterHtml = mostraFiltro
+      ? `<div class="filters-card" style="margin-bottom:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <label for="escalaCandMinisterioFilter" style="font-weight:600">Filtrar por ministério:</label>
+          <select id="escalaCandMinisterioFilter" style="max-width:280px;padding:8px 12px;border-radius:6px;border:1px solid var(--border-color,#e5e7eb)">
+            <option value="">Todos (${list.length})</option>
+            ${ministeriosUnicos.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('')}
+          </select>
+          <span class="escala-cand-filter-count" style="color:var(--text-muted);font-size:.9em"></span>
+        </div>`
+      : '';
     panel.innerHTML = `
+      ${filterHtml}
       <div class="table-card escala-table-card">
         <div class="chart-header"><h2>Candidatos${escala ? ` — ${escapeHtml(escala.nome)}` : ''}</h2></div>
         <div class="table-wrapper">
           <table class="data-table escala-table">
             <thead><tr><th>Nome</th><th>Email</th><th>Telefone</th><th>Ministério</th><th title="Total de check-ins">CI</th><th title="Participações aprovadas">Part.</th><th title="Desistências">Desist.</th><th title="Faltas">Faltas</th><th>Status</th><th>Ações</th></tr></thead>
-            <tbody>${rows}</tbody>
+            <tbody class="escala-cand-tbody"></tbody>
           </table>
         </div>
       </div>
     `;
-    panel.querySelectorAll('[data-cand-id]').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const id = btn.getAttribute('data-cand-id');
-        const action = btn.getAttribute('data-cand-action');
-        await atualizarStatusCandidatura(id, action);
-        fetchCandidaturasEscala(escalaId);
+    renderCandidaturasTable(list, escalaId, '');
+    if (mostraFiltro) {
+      const countEl = panel.querySelector('.escala-cand-filter-count');
+      if (countEl) countEl.textContent = list.length;
+      panel.querySelector('#escalaCandMinisterioFilter')?.addEventListener('change', (e) => {
+        renderCandidaturasTable(candidaturasEscalaList, candidaturasEscalaId, (e.target.value || '').trim());
       });
-    });
-    panel.querySelectorAll('.link-voluntario').forEach(btn => {
-      btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email')));
-    });
+    }
   } catch (e) {
     panel.innerHTML = `<div class="filters-card"><p class="auth-subtitle">Erro: ${escapeHtml(e.message)}</p></div>`;
   }
