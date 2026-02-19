@@ -2614,37 +2614,41 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
     const candidaturas = await Candidatura.find(query).sort({ createdAt: -1 }).lean();
     if (!candidaturas.length) return res.json([]);
 
+    const escala = await Escala.findById(req.params.id).lean();
     const emails = [...new Set(candidaturas.map(c => c.email).filter(Boolean))];
+    const liderMinisterios = isLider ? (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean) : [];
 
-    // Stats históricos de candidaturas por email (todas as escalas)
+    // Stats históricos de candidaturas por email
     const statsAgg = await Candidatura.aggregate([
       { $match: { email: { $in: emails } } },
-      {
-        $group: {
-          _id: '$email',
-          totalParticipacoes: { $sum: { $cond: [{ $eq: ['$status', 'aprovado'] }, 1, 0] } },
-          totalDesistencias: { $sum: { $cond: [{ $eq: ['$status', 'desistencia'] }, 1, 0] } },
-          totalFaltas: { $sum: { $cond: [{ $eq: ['$status', 'falta'] }, 1, 0] } },
-        },
-      },
+      { $group: { _id: '$email', totalParticipacoes: { $sum: { $cond: [{ $eq: ['$status', 'aprovado'] }, 1, 0] } }, totalDesistencias: { $sum: { $cond: [{ $eq: ['$status', 'desistencia'] }, 1, 0] } }, totalFaltas: { $sum: { $cond: [{ $eq: ['$status', 'falta'] }, 1, 0] } } } },
     ]);
     const statsMap = new Map(statsAgg.map(s => [s._id, s]));
 
-    // Total de check-ins por email
+    // Check-ins por email (total + ministerios para jaServiuMinLider)
     const checkinsAgg = await Checkin.aggregate([
       { $match: { email: { $in: emails } } },
-      { $group: { _id: { $toLower: '$email' }, totalCheckins: { $sum: 1 } } },
+      { $group: { _id: { $toLower: '$email' }, totalCheckins: { $sum: 1 }, ministerios: { $addToSet: '$ministerio' } } },
     ]);
-    const checkinsMap = new Map(checkinsAgg.map(c => [c._id, c.totalCheckins]));
+    const checkinsMap = new Map(checkinsAgg.map(c => [c._id, { total: c.totalCheckins || 0, ministerios: (c.ministerios || []).filter(Boolean) }]));
 
     const result = candidaturas.map(c => {
       const stats = statsMap.get(c.email) || {};
+      const ci = checkinsMap.get((c.email || '').toLowerCase()) || { total: 0, ministerios: [] };
+      const jaServiuMinLider = liderMinisterios.length > 0 && ci.ministerios.some((m) => liderMinisterios.some((lm) => (m || '').toLowerCase().includes((lm || '').toLowerCase())));
+      const totalPart = stats.totalParticipacoes || 0;
+      const totalCi = ci.total || 0;
       return {
         ...c,
-        totalCheckins: checkinsMap.get((c.email || '').toLowerCase()) || 0,
-        totalParticipacoes: stats.totalParticipacoes || 0,
+        escalaNome: escala?.nome,
+        escalaData: escala?.data,
+        escalaId: escala?._id,
+        totalCheckins: totalCi,
+        totalParticipacoes: totalPart,
         totalDesistencias: stats.totalDesistencias || 0,
         totalFaltas: stats.totalFaltas || 0,
+        jaServiuAlgum: totalCi + totalPart > 0,
+        jaServiuMinLider,
       };
     });
     // Ordenação para curadoria: 1) aprovados primeiro; 2) não aprovados com check-ins anteriores primeiro

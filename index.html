@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=1.0.3">
 </head>
 <body>
   <div class="dashboard">
@@ -49,9 +49,13 @@
           <span class="nav-icon">✅</span>
           <span>Check-ins dos meus ministérios</span>
         </a>
+        <a href="#" class="nav-item" data-view="escalas-criar">
+          <span class="nav-icon">➕</span>
+          <span>Criar escalas</span>
+        </a>
         <a href="#" class="nav-item" data-view="escalas">
           <span class="nav-icon">📋</span>
-          <span>Escalas</span>
+          <span>Escala</span>
         </a>
         <a href="#" class="nav-item" data-view="perfil">
           <span class="nav-icon">👤</span>
@@ -65,7 +69,7 @@
         </a>
         <a href="#" class="nav-item" data-view="escalas">
           <span class="nav-icon">📋</span>
-          <span>Escalas</span>
+          <span>Escala</span>
         </a>
         <a href="#" class="nav-item" data-view="perfil">
           <span class="nav-icon">👤</span>
@@ -645,7 +649,11 @@
           </section>
         </section>
 
-        <!-- Escalas (admin / lider / voluntario) -->
+        <!-- Criar escalas (admin only) -->
+        <section class="view" data-view="escalas-criar">
+          <div id="escalasCriarContent"><!-- renderizado por JS --></div>
+        </section>
+        <!-- Escala: candidatos (admin/lider) ou minhas escalas (voluntario) -->
         <section class="view" data-view="escalas">
           <div id="escalasContent"><!-- renderizado por JS --></div>
         </section>
@@ -1200,6 +1208,6 @@
     })();
   </script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=1.0.3"></script>
 </body>
 </html>
