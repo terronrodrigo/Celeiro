@@ -2477,14 +2477,13 @@ function renderEscalas() {
 function getFilteredCandidaturasAnalise() {
   const list = Array.isArray(candidaturasAll) ? candidaturasAll : [];
   const f = candidaturasAnaliseFilters || {};
+  if (!(f.escalaId || '').trim()) return [];
   const q = (f.nome || '').trim().toLowerCase();
   return list.filter((c) => {
+    if (f.escalaId && c.escalaId && String(c.escalaId) !== String(f.escalaId)) return false;
     if (q) {
       const match = (c.nome || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q) || (c.escalaNome || '').toLowerCase().includes(q);
       if (!match) return false;
-    }
-    if (f.escalaId && c.escalaId) {
-      if (String(c.escalaId) !== String(f.escalaId)) return false;
     }
     if (f.data) {
       if (!c.escalaData) return false;
@@ -2552,7 +2551,10 @@ function renderAnaliseTab() {
   }).join('');
 
   const tbody = panel.querySelector('#escalasAnaliseBody');
-  if (tbody) tbody.innerHTML = rows || '<tr><td colspan="10">Nenhuma candidatura corresponde aos filtros.</td></tr>';
+  const selEscala = document.getElementById('analiseFilterEscala');
+  const escalaSelected = selEscala && (selEscala.value || '').trim();
+  const emptyMsg = !escalaSelected ? 'Selecione uma escala para ver os candidatos.' : 'Nenhuma candidatura corresponde aos filtros.';
+  if (tbody) tbody.innerHTML = rows || `<tr><td colspan="10">${emptyMsg}</td></tr>`;
 
   const countEl = document.getElementById('escalasAnaliseCount');
   if (countEl) countEl.textContent = filtered.length;
@@ -2584,7 +2586,7 @@ function renderEscalasAdmin() {
       <td class="escala-actions-cell" data-label="Link"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-link="${escapeAttr(String(e._id))}" title="Copiar link de candidatura">Copiar link</button></td>
       <td class="escala-actions-cell" data-label="">
         <div class="escala-actions-wrap">
-          <button class="btn btn-sm btn-ghost" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos</button>
+          <button class="btn btn-sm btn-primary escala-btn-main" data-escala-ver-candidatos="${escapeAttr(String(e._id))}">Ver candidatos</button>
           <button class="btn btn-sm btn-ghost" data-escala-edit="${escapeAttr(String(e._id))}">Editar</button>
           <button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(String(e._id))}">${ativo ? 'Desligar' : 'Ligar'}</button>
           <button class="btn btn-sm btn-ghost" data-escala-delete="${escapeAttr(String(e._id))}">Excluir</button>
@@ -2607,16 +2609,16 @@ function renderEscalasAdmin() {
 
   container.innerHTML = `
     <div class="escalas-tabs" style="display:flex;gap:0;margin-bottom:20px;border-bottom:1px solid var(--border-color)">
-      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="escalas" style="border-radius:0;border-bottom:2px solid var(--accent)">Escalas (criar/gerenciar)</button>
-      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="analise" style="border-radius:0;border-bottom:2px solid transparent">Análise de candidaturas</button>
+      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="criar" style="border-radius:0;border-bottom:2px solid var(--accent)">Criar e editar escalas</button>
+      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="candidatos" style="border-radius:0;border-bottom:2px solid transparent">Ver escala e candidatos</button>
     </div>
     <div id="escalasTabEscalas" class="escalas-tab-panel">
       <div class="filters-card" style="margin-bottom:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
         <button type="button" class="btn btn-primary" id="btnNovaEscala">+ Nova escala</button>
-        <button type="button" class="btn btn-ghost" id="btnExportarCsvEscalas" title="Exportar todas as escalas e candidaturas em CSV">Exportar CSV (todos)</button>
       </div>
       <div class="table-card escala-table-card">
         <div class="chart-header"><h2>Escalas</h2></div>
+        <p class="auth-subtitle" style="margin-bottom:12px">Crie novas escalas, edite ou copie o link para os voluntários se candidatarem.</p>
         <div class="table-wrapper">
           <table class="data-table escala-table">
             <thead><tr><th>Nome</th><th>Data</th><th>Status</th><th>Candidaturas</th><th>Link</th><th>Ações</th></tr></thead>
@@ -2624,19 +2626,19 @@ function renderEscalasAdmin() {
           </table>
         </div>
       </div>
-      <div id="escalaCandidaturasPanel" class="escala-candidaturas-panel" style="margin-top:24px;display:none"></div>
     </div>
     <div id="escalasTabAnalise" class="escalas-tab-panel" style="display:none">
       <section class="filters-row">
         <div class="filters-card">
+          <p class="auth-subtitle" style="margin-bottom:16px">Selecione uma escala para ver os candidatos e analisar/aprovar.</p>
           <div class="filters-left" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
             <div class="form-group compact">
-              <label for="analiseFilterNome">Buscar</label>
-              <input type="text" id="analiseFilterNome" placeholder="Nome, email ou escala..." style="min-width:180px">
+              <label for="analiseFilterEscala"><strong>Escala</strong></label>
+              <select id="analiseFilterEscala" style="min-width:260px"><option value="">— Selecione a escala —</option>${escalasOptions}</select>
             </div>
             <div class="form-group compact">
-              <label for="analiseFilterEscala">Escala</label>
-              <select id="analiseFilterEscala"><option value="">Todas</option>${escalasOptions}</select>
+              <label for="analiseFilterNome">Buscar</label>
+              <input type="text" id="analiseFilterNome" placeholder="Nome ou email..." style="min-width:160px">
             </div>
             <div class="form-group compact">
               <label for="analiseFilterData">Data</label>
@@ -2699,12 +2701,6 @@ function renderEscalasAdmin() {
     if (m) { document.getElementById('escalaNovoNome').value = ''; document.getElementById('escalaNovaData').value = ''; document.getElementById('escalaNovaDescricao').value = ''; document.getElementById('escalaNovoAtivo').checked = true; m.classList.add('open'); m.setAttribute('aria-hidden', 'false'); }
   });
 
-  document.getElementById('btnExportarCsvEscalas')?.addEventListener('click', () => {
-    authFetch(`${API_BASE}/api/escalas/export-csv`).then((r) => { if (!r.ok) throw new Error('Falha'); return r.blob(); }).then((blob) => {
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'escalas-export.csv'; a.click(); URL.revokeObjectURL(a.href);
-    }).catch((e) => alert(e.message || 'Erro ao exportar CSV.'));
-  });
-
   container.querySelectorAll('[data-escala-link]').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-escala-link');
@@ -2713,8 +2709,17 @@ function renderEscalasAdmin() {
     });
   });
 
-  container.querySelectorAll('[data-escala-candidaturas]').forEach(btn => {
-    btn.addEventListener('click', () => fetchCandidaturasEscala(btn.getAttribute('data-escala-candidaturas')));
+  container.querySelectorAll('[data-escala-ver-candidatos]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const escalaId = btn.getAttribute('data-escala-ver-candidatos');
+      document.getElementById('analiseFilterEscala').value = escalaId;
+      candidaturasAnaliseFilters = { ...candidaturasAnaliseFilters, escalaId };
+      container.querySelectorAll('.escalas-tab').forEach((b) => { b.style.borderBottomColor = 'transparent'; });
+      container.querySelector('[data-escala-tab="candidatos"]').style.borderBottomColor = 'var(--accent)';
+      document.getElementById('escalasTabEscalas').style.display = 'none';
+      document.getElementById('escalasTabAnalise').style.display = '';
+      if (candidaturasAll.length === 0) fetchCandidaturasAll(); else renderAnaliseTab();
+    });
   });
 
   container.querySelectorAll('[data-escala-edit]').forEach(btn => { btn.addEventListener('click', () => openModalEditarEscala(btn.getAttribute('data-escala-edit'))); });
@@ -2792,7 +2797,7 @@ function renderEscalasLider() {
       <td data-label="Nome">${escapeHtml(e.nome)}</td>
       <td data-label="Data">${data}</td>
       <td data-label="Candidatos">${e.totalCandidaturas || 0} candidatos</td>
-      <td class="escala-actions-cell" data-label=""><button class="btn btn-sm btn-primary escala-btn-main" data-escala-candidaturas="${escapeAttr(String(e._id))}">Ver candidatos do meu ministério</button></td>
+      <td class="escala-actions-cell" data-label=""><button class="btn btn-sm btn-primary escala-btn-main" data-escala-ver-candidatos="${escapeAttr(String(e._id))}">Ver candidatos</button></td>
     </tr>`;
   }).join('');
 
@@ -2810,12 +2815,13 @@ function renderEscalasLider() {
 
   container.innerHTML = `
     <div class="escalas-tabs" style="display:flex;gap:0;margin-bottom:20px;border-bottom:1px solid var(--border-color)">
-      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="escalas" style="border-radius:0;border-bottom:2px solid var(--accent)">Escalas</button>
-      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="analise" style="border-radius:0;border-bottom:2px solid transparent">Análise de candidaturas</button>
+      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="criar" style="border-radius:0;border-bottom:2px solid var(--accent)">Escalas</button>
+      <button type="button" class="escalas-tab btn btn-ghost" data-escala-tab="candidatos" style="border-radius:0;border-bottom:2px solid transparent">Ver escala e candidatos</button>
     </div>
     <div id="escalasTabEscalas" class="escalas-tab-panel">
       <div class="table-card escala-table-card">
         <div class="chart-header"><h2>Escalas</h2></div>
+        <p class="auth-subtitle" style="margin-bottom:12px">Selecione uma escala para ver os candidatos do seu ministério.</p>
         <div class="table-wrapper">
           <table class="data-table escala-table">
             <thead><tr><th>Nome</th><th>Data</th><th>Candidatos</th><th>Ação</th></tr></thead>
@@ -2823,14 +2829,17 @@ function renderEscalasLider() {
           </table>
         </div>
       </div>
-      <div id="escalaCandidaturasPanel" class="escala-candidaturas-panel" style="margin-top:24px;display:none"></div>
     </div>
     <div id="escalasTabAnalise" class="escalas-tab-panel" style="display:none">
       <section class="filters-row">
         <div class="filters-card">
+          <p class="auth-subtitle" style="margin-bottom:16px">Selecione uma escala para ver os candidatos e analisar/aprovar.</p>
           <div class="filters-left" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
-            <div class="form-group compact"><label for="analiseFilterNome">Buscar</label><input type="text" id="analiseFilterNome" placeholder="Nome, email ou escala..." style="min-width:180px"></div>
-            <div class="form-group compact"><label for="analiseFilterEscala">Escala</label><select id="analiseFilterEscala"><option value="">Todas</option>${escalasOptions}</select></div>
+            <div class="form-group compact">
+              <label for="analiseFilterEscala"><strong>Escala</strong></label>
+              <select id="analiseFilterEscala" style="min-width:260px"><option value="">— Selecione a escala —</option>${escalasOptions}</select>
+            </div>
+            <div class="form-group compact"><label for="analiseFilterNome">Buscar</label><input type="text" id="analiseFilterNome" placeholder="Nome ou email..." style="min-width:160px"></div>
             <div class="form-group compact"><label for="analiseFilterData">Data</label><select id="analiseFilterData"><option value="">Todas</option>${datasUnicas.map((d) => `<option value="${escapeAttr(d)}">${new Date(d + 'T12:00:00').toLocaleDateString('pt-BR')}</option>`).join('')}</select></div>
             <div class="form-group compact"><label for="analiseFilterMinisterio">Ministério</label><select id="analiseFilterMinisterio"><option value="">Todos</option>${ministeriosOptions}</select></div>
             <div class="form-group compact"><label for="analiseFilterHistorico">Histórico</label><select id="analiseFilterHistorico"><option value="">Todos</option><option value="nunca">Nunca serviu</option><option value="ja-serviu">Já serviu</option><option value="ja-serviu-ministerio">Já serviu no meu ministério</option></select></div>
@@ -2863,16 +2872,25 @@ function renderEscalasLider() {
       const tab = btn.getAttribute('data-escala-tab');
       container.querySelectorAll('.escalas-tab').forEach((b) => { b.style.borderBottomColor = 'transparent'; });
       btn.style.borderBottomColor = 'var(--accent)';
-      document.getElementById('escalasTabEscalas').style.display = tab === 'escalas' ? '' : 'none';
-      const analisePanel = document.getElementById('escalasTabAnalise');
-      analisePanel.style.display = tab === 'analise' ? '' : 'none';
-      if (tab === 'analise' && candidaturasAll.length === 0) fetchCandidaturasAll();
-      else if (tab === 'analise') renderAnaliseTab();
+      document.getElementById('escalasTabEscalas').style.display = tab === 'criar' ? '' : 'none';
+      const candidatosPanel = document.getElementById('escalasTabAnalise');
+      candidatosPanel.style.display = tab === 'candidatos' ? '' : 'none';
+      if (tab === 'candidatos' && candidaturasAll.length === 0) fetchCandidaturasAll();
+      else if (tab === 'candidatos') renderAnaliseTab();
     });
   });
 
-  container.querySelectorAll('[data-escala-candidaturas]').forEach(btn => {
-    btn.addEventListener('click', () => fetchCandidaturasEscala(btn.getAttribute('data-escala-candidaturas')));
+  container.querySelectorAll('[data-escala-ver-candidatos]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const escalaId = btn.getAttribute('data-escala-ver-candidatos');
+      document.getElementById('analiseFilterEscala').value = escalaId;
+      candidaturasAnaliseFilters = { ...candidaturasAnaliseFilters, escalaId };
+      container.querySelectorAll('.escalas-tab').forEach((b) => { b.style.borderBottomColor = 'transparent'; });
+      container.querySelector('[data-escala-tab="candidatos"]').style.borderBottomColor = 'var(--accent)';
+      document.getElementById('escalasTabEscalas').style.display = 'none';
+      document.getElementById('escalasTabAnalise').style.display = '';
+      if (candidaturasAll.length === 0) fetchCandidaturasAll(); else renderAnaliseTab();
+    });
   });
 
   const applyAnaliseFilters = () => {
