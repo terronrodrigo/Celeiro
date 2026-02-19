@@ -11,6 +11,15 @@ function getHojeDateString() {
 
 const UFS_BR = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
 
+/** Debounce: executa fn após delay ms sem novas chamadas */
+function debounce(fn, delayMs) {
+  let t;
+  return function (...args) {
+    clearTimeout(t);
+    t = setTimeout(() => fn.apply(this, args), delayMs);
+  };
+}
+
 // Ministérios para lives e cadastro (lista revisada – ortografia e gramática)
 const MINISTERIOS_PADRAO = [
   'Suporte Geral',
@@ -2445,22 +2454,31 @@ async function fetchEscalasCriar() {
 /** Escala (candidatos): admin/lider carrega só escalas; voluntário carrega minhas-candidaturas */
 async function fetchEscalas() {
   if (!authToken) { updateAuthUi(); return; }
+  const container = document.getElementById('escalasContent');
   const isVol = String(authRole || '').toLowerCase() === 'voluntario';
   if (isVol) {
+    if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando suas escalas…</p></div>';
     try {
       const r = await authFetch(`${API_BASE}/api/minhas-candidaturas`);
       if (!r.ok) throw new Error('Falha');
       renderEscalasVoluntario(await r.json());
     } catch (e) {
       if (e.message === 'AUTH_REQUIRED') return;
-      renderEscalasVoluntario([]);
+      if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Erro ao carregar. Tente novamente.</p></div>';
     }
     return;
   }
+  if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando escalas…</p></div>';
   try {
     const r = await authFetch(`${API_BASE}/api/escalas`);
-    if (!r.ok) { escalasList = []; candidaturasAll = []; renderEscalasCandidatos(); return; }
-    escalasList = await r.json();
+    if (!r.ok) {
+      escalasList = [];
+      candidaturasAll = [];
+      if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Erro ao carregar escalas. Tente novamente.</p></div>';
+      return;
+    }
+    const data = await r.json();
+    escalasList = Array.isArray(data) ? data : [];
     candidaturasAll = [];
     renderEscalasCandidatos();
     if (escalasPreSelectId) {
@@ -2474,11 +2492,11 @@ async function fetchEscalas() {
     if (e.message === 'AUTH_REQUIRED') return;
     escalasList = [];
     candidaturasAll = [];
-    renderEscalasCandidatos();
+    if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Erro ao carregar escalas. Tente novamente.</p></div>';
   }
 }
 
-/** Atualiza opções dos filtros ministério e data quando candidaturasAll muda */
+/** Atualiza opções dos filtros ministério e data quando candidaturasAll muda (preserva seleção) */
 function updateAnaliseFilterOptions() {
   const ministerios = [...new Set(candidaturasAll.map((c) => (c.ministerio || '').trim()).filter(Boolean))].sort();
   const datas = [...new Set(candidaturasAll.map((c) => {
@@ -2488,17 +2506,24 @@ function updateAnaliseFilterOptions() {
   }).filter(Boolean))].sort().reverse();
   const selMin = document.getElementById('analiseFilterMinisterio');
   const selData = document.getElementById('analiseFilterData');
+  const valMin = selMin?.value || '';
+  const valData = selData?.value || '';
   if (selMin) selMin.innerHTML = '<option value="">Todos</option>' + ministerios.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
   if (selData) selData.innerHTML = '<option value="">Todas</option>' + datas.map((d) => `<option value="${escapeAttr(d)}">${new Date(d + 'T12:00:00').toLocaleDateString('pt-BR')}</option>`).join('');
+  if (selMin && valMin && ministerios.includes(valMin)) selMin.value = valMin;
+  if (selData && valData && datas.includes(valData)) selData.value = valData;
 }
 
 /** Lazy: busca candidaturas de uma escala específica (mais leve que candidaturas-all) */
 async function fetchCandidaturasPorEscala(escalaId) {
   if (!authToken || !escalaId) return;
+  const tbody = document.getElementById('escalasAnaliseBody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="10"><p class="auth-subtitle" style="margin:16px 0">Carregando candidatos…</p></td></tr>';
   try {
     const r = await authFetch(`${API_BASE}/api/escalas/${escalaId}/candidaturas`);
     if (!r.ok) { candidaturasAll = []; renderAnaliseTab(); return; }
-    candidaturasAll = await r.json();
+    const data = await r.json();
+    candidaturasAll = Array.isArray(data) ? data : [];
     updateAnaliseFilterOptions();
     renderAnaliseTab();
   } catch (e) {
@@ -2684,9 +2709,9 @@ function renderEscalasCriar() {
 
 function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) {
   return `
+  <p class="auth-subtitle" style="margin-bottom:16px;margin-top:0">Selecione uma escala para ver os candidatos e analisar/aprovar.</p>
   <section class="filters-row">
     <div class="filters-card">
-      <p class="auth-subtitle" style="margin-bottom:16px">Selecione uma escala para ver os candidatos e analisar/aprovar.</p>
       <div class="filters-left" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
         <div class="form-group compact">
           <label for="analiseFilterEscala"><strong>Escala</strong></label>
@@ -2779,6 +2804,7 @@ function bindAnalisePanelEvents(container) {
     if (!filtered.length) { alert('Nenhuma candidatura para exportar.'); return; }
     exportCandidaturasCsv(filtered);
   });
+  document.getElementById('analiseFilterNome')?.addEventListener('input', debounce(applyAnaliseFilters, 250));
   ['analiseFilterNome', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico'].forEach((id) => {
     document.getElementById(id)?.addEventListener('change', applyAnaliseFilters);
   });
@@ -2788,6 +2814,10 @@ function bindAnalisePanelEvents(container) {
 function renderEscalasCandidatosAdmin() {
   const container = document.getElementById('escalasContent');
   if (!container) return;
+  if (!escalasList.length) {
+    container.innerHTML = '<p class="auth-subtitle" style="margin-bottom:16px">Nenhuma escala cadastrada. Vá em <strong>Criar escalas</strong> para criar a primeira.</p>';
+    return;
+  }
   const escalasOptions = escalasList.map((e) => {
     const data = e.data ? new Date(e.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
     return `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome)}${data ? ` (${data})` : ''}</option>`;
@@ -3519,7 +3549,7 @@ filterDisp?.addEventListener('change', () => setFilter('disponibilidade', filter
 filterEstado?.addEventListener('change', () => setFilter('estado', filterEstado.value));
 filterCidade?.addEventListener('change', () => setFilter('cidade', filterCidade.value));
 filterComCheckin?.addEventListener('change', () => setFilter('comCheckin', filterComCheckin.value));
-document.getElementById('usuariosSearch')?.addEventListener('input', () => { if (currentView === 'usuarios') fetchUsers(); });
+document.getElementById('usuariosSearch')?.addEventListener('input', debounce(() => { if (currentView === 'usuarios') fetchUsers(); }, 350));
 document.getElementById('usuariosSearch')?.addEventListener('change', () => { if (currentView === 'usuarios') fetchUsers(); });
 document.getElementById('usuariosFilterAtivo')?.addEventListener('change', () => { if (currentView === 'usuarios') fetchUsers(); });
 btnClearFilters?.addEventListener('click', clearFilters);
@@ -3528,7 +3558,7 @@ document.getElementById('btnVerMaisVoluntarios')?.addEventListener('click', () =
   renderTable(getFilteredVoluntarios());
 });
 checkinMinisterio?.addEventListener('change', () => { checkinFilters.ministerio = checkinMinisterio?.value || ''; fetchCheckinsWithFilters(); });
-checkinSearch?.addEventListener('input', () => renderCheckins());
+checkinSearch?.addEventListener('input', debounce(() => renderCheckins(), 300));
 checkinQtdCheckins?.addEventListener('change', () => { checkinFilters.qtdCheckins = checkinQtdCheckins?.value || ''; renderCheckins(); });
 btnClearCheckinFilters?.addEventListener('click', () => {
   if (checkinData) checkinData.value = '';
