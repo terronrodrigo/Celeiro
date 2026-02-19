@@ -2504,7 +2504,13 @@ app.get('/api/escala-publica/:id', async (req, res) => {
   try {
     const escala = await Escala.findById(req.params.id).select('nome data descricao ativo').lean();
     if (!escala) return sendError(res, 404, 'Escala não encontrada.');
-    if (!escala.ativo) return sendError(res, 404, 'Esta escala não está aceitando candidaturas no momento.');
+    if (!escala.ativo) {
+      return res.status(200).json({
+        concluida: true,
+        mensagem: 'A escala deste culto já foi concluída.',
+        escala: { _id: escala._id, nome: escala.nome, data: escala.data, descricao: escala.descricao },
+      });
+    }
     const ministerios = await Ministerio.find({ ativo: true }).sort({ nome: 1 }).select('nome').lean();
     const ministeriosList = ministerios.length > 0 ? ministerios.map(m => m.nome).filter(Boolean) : MINISTERIOS_PADRAO_PUBLIC;
     res.json({

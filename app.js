@@ -2678,14 +2678,13 @@ function renderEscalasCriar() {
     return `<tr>
       <td data-label="Nome">${escapeHtml(e.nome)}</td>
       <td data-label="Data">${data}</td>
-      <td data-label="Status"><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${ativo ? 'Ativa' : 'Inativa'}</span></td>
+      <td data-label="Status"><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${ativo ? 'Aberta' : 'Inscrições fechadas'}</span></td>
       <td data-label="Candidatos">${e.totalCandidaturas || 0} <span style="color:var(--text-muted);font-size:.8em">(${e.totalAprovados || 0} aprovados)</span></td>
       <td class="escala-actions-cell" data-label="Link"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-link="${escapeAttr(String(e._id))}" title="Copiar link">Copiar link</button></td>
       <td class="escala-actions-cell" data-label="">
         <div class="escala-actions-wrap">
-          <button class="btn btn-sm btn-primary escala-btn-main" data-escala-ver-candidatos="${escapeAttr(String(e._id))}">Ver candidatos</button>
           <button class="btn btn-sm btn-ghost" data-escala-edit="${escapeAttr(String(e._id))}">Editar</button>
-          <button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(String(e._id))}">${ativo ? 'Desligar' : 'Ligar'}</button>
+          <button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(String(e._id))}">${ativo ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
           <button class="btn btn-sm btn-ghost" data-escala-delete="${escapeAttr(String(e._id))}">Excluir</button>
         </div>
       </td>
@@ -2718,9 +2717,6 @@ function renderEscalasCriar() {
       const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}?escala=${encodeURIComponent(id)}`;
       navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie:', url));
     });
-  });
-  container.querySelectorAll('[data-escala-ver-candidatos]').forEach(btn => {
-    btn.addEventListener('click', () => setView('escalas', { escalaId: btn.getAttribute('data-escala-ver-candidatos') }));
   });
   container.querySelectorAll('[data-escala-edit]').forEach(btn => { btn.addEventListener('click', () => openModalEditarEscala(btn.getAttribute('data-escala-edit'))); });
   container.querySelectorAll('[data-escala-toggle]').forEach(btn => { btn.addEventListener('click', () => toggleEscalaAtivo(btn.getAttribute('data-escala-toggle'))); });
@@ -3156,6 +3152,8 @@ async function loadEscalaPublic(escalaId) {
 
   if (subtitleEl) subtitleEl.textContent = 'Carregando…';
   if (ministerioSel) ministerioSel.selectedIndex = 0;
+  const formEl = document.getElementById('escalaPublicForm');
+  const concluidaWrap = document.getElementById('escalaPublicConcluidaWrap');
 
   try {
     const r = await fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(escalaId)}`);
@@ -3164,12 +3162,23 @@ async function loadEscalaPublic(escalaId) {
       if (subtitleEl) subtitleEl.textContent = data.error || 'Escala não encontrada ou não está ativa.';
       return;
     }
+    if (data.concluida) {
+      const nome = data.escala?.nome || 'Escala';
+      const dt = data.escala?.data ? new Date(data.escala.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+      if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
+      if (formEl) formEl.style.display = 'none';
+      if (concluidaWrap) concluidaWrap.style.display = 'block';
+      if (concluidaWrap) concluidaWrap.querySelector('p').textContent = data.mensagem || 'A escala deste culto já foi concluída.';
+      return;
+    }
     const nome = data.escala?.nome || 'Escala';
     const dt = data.escala?.data ? new Date(data.escala.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
     if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
     if (labelEl) labelEl.textContent = data.escala?.descricao || '';
     const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
     setMinisterioSelectOptions(ministerioSel, list);
+    if (formEl) formEl.style.display = '';
+    if (concluidaWrap) concluidaWrap.style.display = 'none';
   } catch (_) {
     if (subtitleEl) subtitleEl.textContent = 'Erro ao carregar dados da escala.';
   }
