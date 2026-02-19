@@ -2512,11 +2512,23 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
       const stats = statsMap.get(c.email) || {};
       return {
         ...c,
-        totalCheckins: checkinsMap.get(c.email) || 0,
+        totalCheckins: checkinsMap.get((c.email || '').toLowerCase()) || 0,
         totalParticipacoes: stats.totalParticipacoes || 0,
         totalDesistencias: stats.totalDesistencias || 0,
         totalFaltas: stats.totalFaltas || 0,
       };
+    });
+    // Ordenação para curadoria: 1) aprovados primeiro; 2) não aprovados com check-ins anteriores primeiro
+    result.sort((a, b) => {
+      const aAprovado = a.status === 'aprovado' ? 1 : 0;
+      const bAprovado = b.status === 'aprovado' ? 1 : 0;
+      if (bAprovado !== aAprovado) return bAprovado - aAprovado;
+      const aCheckins = a.totalCheckins || 0;
+      const bCheckins = b.totalCheckins || 0;
+      if (bCheckins !== aCheckins) return bCheckins - aCheckins;
+      const aTime = new Date(a.createdAt || 0).getTime();
+      const bTime = new Date(b.createdAt || 0).getTime();
+      return bTime - aTime;
     });
     res.json(result);
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
