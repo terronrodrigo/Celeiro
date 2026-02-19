@@ -2599,7 +2599,12 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
     const isLider = req.userRole === 'lider';
     if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
 
-    let query = { escalaId: req.params.id };
+    const escalaId = req.params.id;
+    if (!escalaId || !mongoose.Types.ObjectId.isValid(escalaId)) {
+      return sendError(res, 400, 'ID da escala inválido.');
+    }
+
+    let query = { escalaId };
     if (isLider) {
       const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length
         ? req.userMinisterioNomes.map(String).map(s => s.trim()).filter(Boolean)
@@ -2609,12 +2614,12 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
         { ministerio: { $in: nomes } },
         ...nomes.map((n) => ({ ministerio: new RegExp(escapeRegex(n), 'i') })),
       ];
-      query = { escalaId: req.params.id, $or: orConditions };
+      query = { escalaId, $or: orConditions };
     }
     const candidaturas = await Candidatura.find(query).sort({ createdAt: -1 }).lean();
     if (!candidaturas.length) return res.json([]);
 
-    const escala = await Escala.findById(req.params.id).lean();
+    const escala = await Escala.findById(escalaId).lean();
     const emails = [...new Set(candidaturas.map(c => c.email).filter(Boolean))];
     const liderMinisterios = isLider ? (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean) : [];
 

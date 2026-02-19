@@ -2439,15 +2439,23 @@ function statusEscalaBadge(s) {
 /** Criar escalas: só carrega lista de escalas (leve) */
 async function fetchEscalasCriar() {
   if (!authToken) { updateAuthUi(); return; }
+  const container = document.getElementById('escalasCriarContent');
+  if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando…</p></div>';
   try {
     const r = await authFetch(`${API_BASE}/api/escalas`);
-    if (!r.ok) { escalasList = []; renderEscalasCriar(); return; }
-    escalasList = await r.json();
+    if (!r.ok) {
+      escalasList = [];
+      const errMsg = (await r.json().catch(() => ({}))).error || `Erro ${r.status}`;
+      if (container) container.innerHTML = `<div class="filters-card"><p class="auth-subtitle">Erro: ${escapeHtml(errMsg)}. Tente novamente.</p></div>`;
+      return;
+    }
+    const data = await r.json().catch(() => null);
+    escalasList = Array.isArray(data) ? data : [];
     renderEscalasCriar();
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
     escalasList = [];
-    renderEscalasCriar();
+    if (container) container.innerHTML = `<div class="filters-card"><p class="auth-subtitle">Erro: ${escapeHtml((e.message || 'Erro de rede').toString())}. Verifique a conexão.</p></div>`;
   }
 }
 
@@ -2474,10 +2482,11 @@ async function fetchEscalas() {
     if (!r.ok) {
       escalasList = [];
       candidaturasAll = [];
-      if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Erro ao carregar escalas. Tente novamente.</p></div>';
+      const errMsg = (await r.json().catch(() => ({}))).error || `Erro ${r.status}`;
+      if (container) container.innerHTML = `<div class="filters-card"><p class="auth-subtitle">Erro ao carregar escalas: ${escapeHtml(errMsg)}. Tente novamente.</p></div>`;
       return;
     }
-    const data = await r.json();
+    const data = await r.json().catch(() => null);
     escalasList = Array.isArray(data) ? data : [];
     candidaturasAll = [];
     renderEscalasCandidatos();
@@ -2492,7 +2501,8 @@ async function fetchEscalas() {
     if (e.message === 'AUTH_REQUIRED') return;
     escalasList = [];
     candidaturasAll = [];
-    if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Erro ao carregar escalas. Tente novamente.</p></div>';
+    const msg = (e.message || 'Erro de rede').toString();
+    if (container) container.innerHTML = `<div class="filters-card"><p class="auth-subtitle">Erro ao carregar escalas: ${escapeHtml(msg)}. Verifique a conexão e tente novamente.</p></div>`;
   }
 }
 
@@ -2516,19 +2526,29 @@ function updateAnaliseFilterOptions() {
 
 /** Lazy: busca candidaturas de uma escala específica (mais leve que candidaturas-all) */
 async function fetchCandidaturasPorEscala(escalaId) {
-  if (!authToken || !escalaId) return;
+  if (!authToken || !(escalaId || '').trim()) return;
+  escalaId = String(escalaId).trim();
   const tbody = document.getElementById('escalasAnaliseBody');
   if (tbody) tbody.innerHTML = '<tr><td colspan="10"><p class="auth-subtitle" style="margin:16px 0">Carregando candidatos…</p></td></tr>';
   try {
-    const r = await authFetch(`${API_BASE}/api/escalas/${escalaId}/candidaturas`);
-    if (!r.ok) { candidaturasAll = []; renderAnaliseTab(); return; }
-    const data = await r.json();
+    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(escalaId)}/candidaturas`);
+    if (!r.ok) {
+      candidaturasAll = [];
+      const errData = await r.json().catch(() => ({}));
+      const errMsg = errData?.error || `Erro ${r.status}`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="10"><p class="auth-subtitle" style="margin:16px 0;color:var(--error-color,#c00)">${escapeHtml(errMsg)}</p></td></tr>`;
+      renderAnaliseTab();
+      return;
+    }
+    const data = await r.json().catch(() => null);
     candidaturasAll = Array.isArray(data) ? data : [];
     updateAnaliseFilterOptions();
     renderAnaliseTab();
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
     candidaturasAll = [];
+    const msg = (e.message || 'Erro de rede').toString();
+    if (tbody) tbody.innerHTML = `<tr><td colspan="10"><p class="auth-subtitle" style="margin:16px 0;color:var(--error-color,#c00)">${escapeHtml(msg)}</p></td></tr>`;
     renderAnaliseTab();
   }
 }
