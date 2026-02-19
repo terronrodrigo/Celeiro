@@ -2625,7 +2625,7 @@ function renderAnaliseTab() {
   const panel = document.getElementById('escalasAnalisePanel');
   if (!panel) return;
   const filtered = getFilteredCandidaturasAnalise();
-  const selectedIds = new Set((document.querySelectorAll('#escalasAnaliseBody input.row-check-cand:checked') || []).map((cb) => cb.getAttribute('data-cand-id')));
+  const selectedIds = new Set(Array.from(document.querySelectorAll('#escalasAnaliseBody input.row-check-cand:checked')).map((cb) => cb.getAttribute('data-cand-id')));
   const pendentes = filtered.filter((c) => c.status !== 'aprovado');
 
   const rows = filtered.map((c) => {
