@@ -1,6 +1,6 @@
 {
   "name": "celeiro-dashboard-api",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "API para dashboard Celeiro São Paulo - voluntários e envio via Resend",
   "main": "server.js",
   "type": "module",
