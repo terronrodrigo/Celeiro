@@ -2262,14 +2262,21 @@ app.post('/api/send-cadastro-incompleto', requireAuth, requireAdmin, async (req,
 // ──────────────────────────────────────────────────────────────────────────────
 
 // GET /api/escalas — lista escalas (admin: todas; lider: só ativas)
-// Admin: totalCandidaturas/totalAprovados = todos. Líder: só do(s) ministério(s) que lidera
+// ?light=1 — retorna escalas sem aggregation (rápido); frontend pode carregar contagens depois
+const ESCALAS_LIST_LIMIT = 80;
 app.get('/api/escalas', requireAuth, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
+    const light = req.query.light === '1' || req.query.light === 'true';
     const query = isAdmin ? {} : { ativo: true };
-    const escalas = await Escala.find(query).sort({ createdAt: -1 }).lean();
+    const escalas = await Escala.find(query).sort({ createdAt: -1 }).limit(ESCALAS_LIST_LIMIT).select('nome data descricao ativo createdAt').lean();
     const ids = escalas.map(e => e._id);
+    if (ids.length === 0) return res.json([]);
+    if (light) {
+      return res.json(escalas.map(e => ({ ...e, totalCandidaturas: 0, totalAprovados: 0 })));
+    }
+
     let countMatch = { escalaId: { $in: ids } };
     if (isLider) {
       const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length

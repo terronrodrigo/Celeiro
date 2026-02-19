@@ -2436,13 +2436,13 @@ function statusEscalaBadge(s) {
   return `<span class="escala-badge escala-badge-${s}">${statusEscalaLabel(s)}</span>`;
 }
 
-/** Criar escalas: só carrega lista de escalas (leve) */
+/** Criar escalas: carrega lista leve primeiro, depois contagens em background */
 async function fetchEscalasCriar() {
   if (!authToken) { updateAuthUi(); return; }
   const container = document.getElementById('escalasCriarContent');
   if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando…</p></div>';
   try {
-    const r = await authFetch(`${API_BASE}/api/escalas`);
+    const r = await authFetch(`${API_BASE}/api/escalas?light=1`);
     if (!r.ok) {
       escalasList = [];
       const errMsg = (await r.json().catch(() => ({}))).error || `Erro ${r.status}`;
@@ -2452,6 +2452,9 @@ async function fetchEscalasCriar() {
     const data = await r.json().catch(() => null);
     escalasList = Array.isArray(data) ? data : [];
     renderEscalasCriar();
+    authFetch(`${API_BASE}/api/escalas`).then(r2 => r2.ok ? r2.json() : null).then(full => {
+      if (Array.isArray(full)) { escalasList = full; renderEscalasCriar(); }
+    }).catch(() => {});
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
     escalasList = [];
@@ -2478,7 +2481,7 @@ async function fetchEscalas() {
   }
   if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando escalas…</p></div>';
   try {
-    const r = await authFetch(`${API_BASE}/api/escalas`);
+    const r = await authFetch(`${API_BASE}/api/escalas?light=1`);
     if (!r.ok) {
       escalasList = [];
       candidaturasAll = [];
@@ -2497,6 +2500,17 @@ async function fetchEscalas() {
       escalasPreSelectId = null;
       fetchCandidaturasPorEscala(candidaturasAnaliseFilters.escalaId);
     }
+    authFetch(`${API_BASE}/api/escalas`).then(r2 => r2.ok ? r2.json() : null).then(full => {
+      if (Array.isArray(full)) {
+        const prevEscalaId = candidaturasAnaliseFilters?.escalaId || document.getElementById('analiseFilterEscala')?.value;
+        escalasList = full;
+        renderEscalasCandidatos();
+        if (prevEscalaId) {
+          const sel = document.getElementById('analiseFilterEscala');
+          if (sel) { sel.value = prevEscalaId; candidaturasAnaliseFilters = { ...candidaturasAnaliseFilters, escalaId: prevEscalaId }; }
+        }
+      }
+    }).catch(() => {});
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
     escalasList = [];
