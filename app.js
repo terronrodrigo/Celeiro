@@ -2544,14 +2544,14 @@ async function fetchCandidaturasPorEscala(escalaId) {
   if (!authToken || !(escalaId || '').trim()) return;
   escalaId = String(escalaId).trim();
   const tbody = document.getElementById('escalasAnaliseBody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="10"><p class="auth-subtitle" style="margin:16px 0">Carregando candidatos…</p></td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="11"><p class="auth-subtitle" style="margin:16px 0">Carregando candidatos…</p></td></tr>';
   try {
     const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(escalaId)}/candidaturas`);
     if (!r.ok) {
       candidaturasAll = [];
       const errData = await r.json().catch(() => ({}));
       const errMsg = errData?.error || `Erro ${r.status}`;
-      if (tbody) tbody.innerHTML = `<tr><td colspan="10"><p class="auth-subtitle" style="margin:16px 0;color:var(--error-color,#c00)">${escapeHtml(errMsg)}</p></td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="11"><p class="auth-subtitle" style="margin:16px 0;color:var(--error-color,#c00)">${escapeHtml(errMsg)}</p></td></tr>`;
       renderAnaliseTab();
       return;
     }
@@ -2563,7 +2563,7 @@ async function fetchCandidaturasPorEscala(escalaId) {
     if (e.message === 'AUTH_REQUIRED') return;
     candidaturasAll = [];
     const msg = (e.message || 'Erro de rede').toString();
-    if (tbody) tbody.innerHTML = `<tr><td colspan="10"><p class="auth-subtitle" style="margin:16px 0;color:var(--error-color,#c00)">${escapeHtml(msg)}</p></td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="11"><p class="auth-subtitle" style="margin:16px 0;color:var(--error-color,#c00)">${escapeHtml(msg)}</p></td></tr>`;
     renderAnaliseTab();
   }
 }
@@ -2643,10 +2643,17 @@ function renderAnaliseTab() {
   const selectedIds = new Set(Array.from(document.querySelectorAll('#escalasAnaliseBody input.row-check-cand:checked')).map((cb) => cb.getAttribute('data-cand-id')));
   const pendentes = filtered.filter((c) => c.status !== 'aprovado');
 
+  const statusOptions = [
+    { v: 'pendente', l: 'Pendente' },
+    { v: 'aprovado', l: 'Aprovado' },
+    { v: 'desistencia', l: 'Desistência / Cancelar' },
+    { v: 'falta', l: 'Falta' },
+  ];
   const rows = filtered.map((c) => {
     const dataStr = c.escalaData ? new Date(c.escalaData).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
     const checked = selectedIds.has(String(c._id));
     const podeSelecionar = c.status !== 'aprovado';
+    const statusOpts = statusOptions.map((o) => `<option value="${escapeAttr(o.v)}" ${c.status === o.v ? 'selected' : ''}>${escapeHtml(o.l)}</option>`).join('');
     return `<tr>
       <td class="col-check"><input type="checkbox" class="row-check-cand" data-cand-id="${escapeAttr(String(c._id))}" ${podeSelecionar ? '' : 'disabled'} ${checked ? 'checked' : ''}></td>
       <td data-label="Escala">${escapeHtml(c.escalaNome || '—')}</td>
@@ -2658,6 +2665,7 @@ function renderAnaliseTab() {
       <td class="escala-cand-stat" data-label="Part.">${c.totalParticipacoes || 0}</td>
       <td data-label="Histórico">${c.jaServiuAlgum ? (c.jaServiuMinLider ? 'Ministério' : 'Sim') : 'Nunca'}</td>
       <td data-label="Status">${statusEscalaBadge(c.status)}</td>
+      <td data-label="Ações"><select class="escala-status-select" data-cand-id="${escapeAttr(String(c._id))}" aria-label="Alterar status">${statusOpts}</select></td>
     </tr>`;
   }).join('');
 
@@ -2665,7 +2673,7 @@ function renderAnaliseTab() {
   const selEscala = document.getElementById('analiseFilterEscala');
   const escalaSelected = selEscala && (selEscala.value || '').trim();
   const emptyMsg = !escalaSelected ? 'Selecione uma escala para ver os candidatos.' : 'Nenhuma candidatura corresponde aos filtros.';
-  if (tbody) tbody.innerHTML = rows || `<tr><td colspan="10">${emptyMsg}</td></tr>`;
+  if (tbody) tbody.innerHTML = rows || `<tr><td colspan="11">${emptyMsg}</td></tr>`;
 
   const countEl = document.getElementById('escalasAnaliseCount');
   if (countEl) countEl.textContent = filtered.length;
@@ -2680,6 +2688,22 @@ function renderAnaliseTab() {
   });
   panel.querySelectorAll('input.row-check-cand').forEach((cb) => {
     cb.addEventListener('change', () => renderAnaliseTab());
+  });
+  panel.querySelectorAll('select.escala-status-select').forEach((sel) => {
+    sel.addEventListener('change', async (e) => {
+      const id = e.target.getAttribute('data-cand-id');
+      const status = e.target.value;
+      if (!id || !status) return;
+      const cand = filtered.find((c) => String(c._id) === id);
+      const prevStatus = cand?.status;
+      try {
+        await atualizarStatusCandidatura(id, status);
+        const escalaId = candidaturasAnaliseFilters?.escalaId || document.getElementById('analiseFilterEscala')?.value;
+        if (escalaId) await fetchCandidaturasPorEscala(escalaId);
+      } catch (_) {
+        if (prevStatus) e.target.value = prevStatus;
+      }
+    });
   });
 }
 
@@ -2741,19 +2765,21 @@ function renderEscalasCriar() {
 function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) {
   return `
   <p class="auth-subtitle" style="margin-bottom:16px;margin-top:0">Selecione uma escala para ver os candidatos e analisar/aprovar.</p>
-  <section class="filters-row">
-    <div class="filters-card">
-      <div class="filters-left" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
-        <div class="form-group compact">
+  <section class="filters-row escala-analise-filters-wrap">
+    <div class="filters-card escala-analise-filters">
+      <div class="escala-analise-filters-inner">
+        <div class="form-group compact escala-filter-field">
           <label for="analiseFilterEscala"><strong>Escala</strong></label>
-          <select id="analiseFilterEscala" style="min-width:260px"><option value="">— Selecione a escala —</option>${escalasOptions}</select>
+          <select id="analiseFilterEscala"><option value="">— Selecione a escala —</option>${escalasOptions}</select>
         </div>
-        <div class="form-group compact"><label for="analiseFilterNome">Buscar</label><input type="text" id="analiseFilterNome" placeholder="Nome ou email..." style="min-width:160px"></div>
-        <div class="form-group compact"><label for="analiseFilterData">Data</label><select id="analiseFilterData"><option value="">Todas</option>${datasUnicas}</select></div>
-        <div class="form-group compact"><label for="analiseFilterMinisterio">Ministério</label><select id="analiseFilterMinisterio"><option value="">Todos</option>${ministeriosOptions}</select></div>
-        <div class="form-group compact"><label for="analiseFilterHistorico">Histórico</label><select id="analiseFilterHistorico"><option value="">Todos</option><option value="nunca">Nunca serviu</option><option value="ja-serviu">Já serviu</option><option value="ja-serviu-ministerio">Já serviu no meu ministério</option></select></div>
-        <button type="button" class="btn btn-primary btn-sm" id="btnAnaliseApply">Aplicar</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="btnAnaliseClear">Limpar</button>
+        <div class="form-group compact escala-filter-field"><label for="analiseFilterNome">Buscar</label><input type="text" id="analiseFilterNome" placeholder="Nome ou email..."></div>
+        <div class="form-group compact escala-filter-field"><label for="analiseFilterData">Data</label><select id="analiseFilterData"><option value="">Todas</option>${datasUnicas}</select></div>
+        <div class="form-group compact escala-filter-field"><label for="analiseFilterMinisterio">Ministério</label><select id="analiseFilterMinisterio"><option value="">Todos</option>${ministeriosOptions}</select></div>
+        <div class="form-group compact escala-filter-field"><label for="analiseFilterHistorico">Histórico</label><select id="analiseFilterHistorico"><option value="">Todos</option><option value="nunca">Nunca serviu</option><option value="ja-serviu">Já serviu</option><option value="ja-serviu-ministerio">Já serviu no meu ministério</option></select></div>
+        <div class="escala-analise-filters-btns">
+          <button type="button" class="btn btn-primary btn-sm" id="btnAnaliseApply">Aplicar</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="btnAnaliseClear">Limpar</button>
+        </div>
       </div>
     </div>
   </section>
@@ -2768,7 +2794,7 @@ function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) 
     </div>
     <div class="table-wrapper">
       <table class="data-table escala-table">
-        <thead><tr><th class="col-check"><input type="checkbox" id="analiseSelectAllHeader"></th><th>Escala</th><th>Data</th><th>Nome</th><th>Email</th><th>Ministério</th><th>CI</th><th>Part.</th><th>Histórico</th><th>Status</th></tr></thead>
+        <thead><tr><th class="col-check"><input type="checkbox" id="analiseSelectAllHeader"></th><th>Escala</th><th>Data</th><th>Nome</th><th>Email</th><th>Ministério</th><th>CI</th><th>Part.</th><th>Histórico</th><th>Status</th><th>Ações</th></tr></thead>
         <tbody id="escalasAnaliseBody"></tbody>
       </table>
     </div>
