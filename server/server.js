@@ -54,6 +54,19 @@ const uploadFoto = multer({
 
 const TZ_BRASILIA = process.env.TZ || process.env.APP_TIMEZONE || 'America/Sao_Paulo';
 
+/** Converte string data-only (YYYY-MM-DD ou ISO com time) em Date ao meio-dia UTC para evitar mudança de dia no fuso de Brasília */
+function parseDateOnlyToUTC(dateStr) {
+  if (dateStr == null || dateStr === '') return null;
+  if (dateStr instanceof Date) {
+    const y = dateStr.getUTCFullYear(), m = dateStr.getUTCMonth(), d = dateStr.getUTCDate();
+    return new Date(Date.UTC(y, m, d, 12, 0, 0, 0));
+  }
+  const str = String(dateStr).trim();
+  const match = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0, 0));
+  return new Date(str);
+}
+
 const app = express();
 app.set('trust proxy', 1); // Necessário quando atrás de reverse proxy (Railway, Render, etc.)
 const PORT = process.env.PORT || 3001;
@@ -2261,7 +2274,7 @@ app.post('/api/send-cadastro-incompleto', requireAuth, requireAdmin, async (req,
 // ESCALAS
 // ──────────────────────────────────────────────────────────────────────────────
 
-// GET /api/escalas — lista escalas (admin: todas; lider: só ativas)
+// GET /api/escalas — lista escalas (admin e líder: todas, inclusive antigas/inativas para histórico)
 // ?light=1 — retorna escalas sem aggregation (rápido); frontend pode carregar contagens depois
 const ESCALAS_LIST_LIMIT = 80;
 app.get('/api/escalas', requireAuth, async (req, res) => {
@@ -2269,7 +2282,7 @@ app.get('/api/escalas', requireAuth, async (req, res) => {
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
     const light = req.query.light === '1' || req.query.light === 'true';
-    const query = isAdmin ? {} : { ativo: true };
+    const query = (isAdmin || isLider) ? {} : { ativo: true };
     const escalas = await Escala.find(query).sort({ createdAt: -1 }).limit(ESCALAS_LIST_LIMIT).select('nome data descricao ativo createdAt').lean();
     const ids = escalas.map(e => e._id);
     if (ids.length === 0) return res.json([]);
@@ -2313,7 +2326,7 @@ app.get('/api/escalas/candidaturas-all', requireAuth, async (req, res) => {
     const isLider = req.userRole === 'lider';
     if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
 
-    const escalas = await Escala.find(isAdmin ? {} : { ativo: true }).sort({ createdAt: -1 }).lean();
+    const escalas = await Escala.find((isAdmin || isLider) ? {} : { ativo: true }).sort({ createdAt: -1 }).lean();
     const ids = escalas.map((e) => e._id);
     let query = { escalaId: { $in: ids } };
     if (isLider) {
@@ -2471,7 +2484,7 @@ app.post('/api/escalas', requireAuth, requireAdmin, async (req, res) => {
     if (!nome || !String(nome).trim()) return sendError(res, 400, 'Nome é obrigatório.');
     const escala = await Escala.create({
       nome: String(nome).trim(),
-      data: data ? new Date(data) : null,
+      data: data ? parseDateOnlyToUTC(data) : null,
       descricao: (descricao || '').trim(),
       ativo: typeof ativo === 'boolean' ? ativo : true,
       criadoPor: req.userId,
@@ -2486,7 +2499,7 @@ app.put('/api/escalas/:id', requireAuth, requireAdmin, async (req, res) => {
     const { nome, data, descricao, ativo } = req.body || {};
     const update = {};
     if (nome !== undefined) update.nome = String(nome).trim();
-    if (data !== undefined) update.data = data ? new Date(data) : null;
+    if (data !== undefined) update.data = data ? parseDateOnlyToUTC(data) : null;
     if (descricao !== undefined) update.descricao = String(descricao).trim();
     if (typeof ativo === 'boolean') update.ativo = ativo;
     const escala = await Escala.findByIdAndUpdate(req.params.id, update, { new: true });

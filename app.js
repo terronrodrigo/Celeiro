@@ -9,6 +9,17 @@ function getHojeDateString() {
   return new Date().toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
 }
 
+/** Formata data de escala como DD/MM/AAAA usando o dia civil (UTC), evitando mudança de dia por fuso. */
+function formatEscalaDateOnly(dateVal) {
+  if (!dateVal) return '—';
+  const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
+  if (Number.isNaN(d.getTime())) return '—';
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const year = d.getUTCFullYear();
+  return `${day}/${month}/${year}`;
+}
+
 const UFS_BR = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
 
 /** Debounce: executa fn após delay ms sem novas chamadas */
@@ -2624,7 +2635,7 @@ function escapeCsv(val) {
 function exportCandidaturasCsv(list) {
   const header = ['Escala', 'Data', 'Nome', 'Email', 'Telefone', 'Ministério', 'CI', 'Part.', 'Status'];
   const rows = list.map((c) => {
-    const dataStr = c.escalaData ? new Date(c.escalaData).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+    const dataStr = formatEscalaDateOnly(c.escalaData) || '';
     return [c.escalaNome || '', dataStr, c.nome || '', c.email || '', c.telefone || '', c.ministerio || '', c.totalCheckins || 0, c.totalParticipacoes || 0, c.status || ''].map(escapeCsv).join(',');
   });
   const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
@@ -2650,7 +2661,7 @@ function renderAnaliseTab() {
     { v: 'falta', l: 'Falta' },
   ];
   const rows = filtered.map((c) => {
-    const dataStr = c.escalaData ? new Date(c.escalaData).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
+    const dataStr = formatEscalaDateOnly(c.escalaData);
     const checked = selectedIds.has(String(c._id));
     const podeSelecionar = c.status !== 'aprovado';
     const statusOpts = statusOptions.map((o) => `<option value="${escapeAttr(o.v)}" ${c.status === o.v ? 'selected' : ''}>${escapeHtml(o.l)}</option>`).join('');
@@ -2712,7 +2723,7 @@ function renderEscalasCriar() {
   const container = document.getElementById('escalasCriarContent');
   if (!container) return;
   const rows = escalasList.map(e => {
-    const data = e.data ? new Date(e.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
+    const data = formatEscalaDateOnly(e.data);
     const ativo = e.ativo !== false;
     return `<tr>
       <td data-label="Nome">${escapeHtml(e.nome)}</td>
@@ -2876,7 +2887,7 @@ function renderEscalasCandidatosAdmin() {
     return;
   }
   const escalasOptions = escalasList.map((e) => {
-    const data = e.data ? new Date(e.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+    const data = formatEscalaDateOnly(e.data) || '';
     return `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome)}${data ? ` (${data})` : ''}</option>`;
   }).join('');
   const ministeriosUnicos = [...new Set(candidaturasAll.map((c) => (c.ministerio || '').trim()).filter(Boolean))].sort();
@@ -2907,7 +2918,7 @@ function renderEscalasCandidatosLider() {
     return;
   }
   const escalasOptions = escalasList.map((e) => {
-    const data = e.data ? new Date(e.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+    const data = formatEscalaDateOnly(e.data) || '';
     return `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome)}${data ? ` (${data})` : ''}</option>`;
   }).join('');
   const ministeriosUnicos = [...new Set(candidaturasAll.map((c) => (c.ministerio || '').trim()).filter(Boolean))].sort();
@@ -2932,7 +2943,7 @@ function renderEscalasVoluntario(list) {
     return;
   }
   const rows = list.map(c => {
-    const data = c.escalaData ? new Date(c.escalaData).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
+    const data = formatEscalaDateOnly(c.escalaData);
     return `<tr>
       <td data-label="Escala">${escapeHtml(c.escalaNome || '—')}</td>
       <td data-label="Data">${data}</td>
@@ -3223,7 +3234,7 @@ async function loadEscalaPublic(escalaId) {
     }
     if (data.concluida) {
       const nome = data.escala?.nome || 'Escala';
-      const dt = data.escala?.data ? new Date(data.escala.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+      const dt = formatEscalaDateOnly(data.escala?.data) || '';
       if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
       if (formEl) formEl.style.display = 'none';
       if (concluidaWrap) concluidaWrap.style.display = 'block';
@@ -3231,7 +3242,7 @@ async function loadEscalaPublic(escalaId) {
       return;
     }
     const nome = data.escala?.nome || 'Escala';
-    const dt = data.escala?.data ? new Date(data.escala.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+    const dt = formatEscalaDateOnly(data.escala?.data) || '';
     if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
     if (labelEl) labelEl.textContent = data.escala?.descricao || '';
     const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
