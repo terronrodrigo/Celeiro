@@ -2568,14 +2568,14 @@ async function fetchCandidaturasPorEscala(escalaId) {
   if (!authToken || !(escalaId || '').trim()) return;
   escalaId = String(escalaId).trim();
   const tbody = document.getElementById('escalasAnaliseBody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="11"><p class="auth-subtitle" style="margin:16px 0">Carregando candidatos…</p></td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="12"><p class="auth-subtitle" style="margin:16px 0">Carregando candidatos…</p></td></tr>';
   try {
     const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(escalaId)}/candidaturas`);
     if (!r.ok) {
       candidaturasAll = [];
       const errData = await r.json().catch(() => ({}));
       const errMsg = errData?.error || `Erro ${r.status}`;
-      if (tbody) tbody.innerHTML = `<tr><td colspan="11"><p class="auth-subtitle" style="margin:16px 0;color:var(--error-color,#c00)">${escapeHtml(errMsg)}</p></td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="12"><p class="auth-subtitle" style="margin:16px 0;color:var(--error-color,#c00)">${escapeHtml(errMsg)}</p></td></tr>`;
       renderAnaliseTab();
       return;
     }
@@ -2587,7 +2587,7 @@ async function fetchCandidaturasPorEscala(escalaId) {
     if (e.message === 'AUTH_REQUIRED') return;
     candidaturasAll = [];
     const msg = (e.message || 'Erro de rede').toString();
-    if (tbody) tbody.innerHTML = `<tr><td colspan="11"><p class="auth-subtitle" style="margin:16px 0;color:var(--error-color,#c00)">${escapeHtml(msg)}</p></td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="12"><p class="auth-subtitle" style="margin:16px 0;color:var(--error-color,#c00)">${escapeHtml(msg)}</p></td></tr>`;
     renderAnaliseTab();
   }
 }
@@ -2624,7 +2624,6 @@ function getFilteredCandidaturasAnalise() {
       const candYmd = escalaDataToYMD(c.escalaData);
       if (candYmd !== String(f.data).slice(0, 10)) return false;
     }
-    if (f.ausentes === 'sim' && (c.totalCheckins || 0) > 0) return false;
     if (f.ministerio && (c.ministerio || '').trim() !== f.ministerio) return false;
     if (f.historicoServico) {
       const nuncaServiu = !c.jaServiuAlgum;
@@ -2633,6 +2632,7 @@ function getFilteredCandidaturasAnalise() {
       if (f.historicoServico === 'nunca' && !nuncaServiu) return false;
       if (f.historicoServico === 'ja-serviu' && !jaServiu) return false;
       if (f.historicoServico === 'ja-serviu-ministerio' && !jaServiuMinLider) return false;
+      if (f.historicoServico === 'ausentes' && (c.totalCheckins || 0) > 0) return false;
     }
     return true;
   });
@@ -2798,8 +2798,7 @@ function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) 
         <div class="form-group compact escala-filter-field"><label for="analiseFilterNome">Buscar</label><input type="text" id="analiseFilterNome" placeholder="Nome ou email..."></div>
         <div class="form-group compact escala-filter-field"><label for="analiseFilterData">Data</label><select id="analiseFilterData"><option value="">Todas</option>${datasUnicas}</select></div>
         <div class="form-group compact escala-filter-field"><label for="analiseFilterMinisterio">Ministério</label><select id="analiseFilterMinisterio"><option value="">Todos</option>${ministeriosOptions}</select></div>
-        <div class="form-group compact escala-filter-field"><label for="analiseFilterHistorico">Histórico</label><select id="analiseFilterHistorico"><option value="">Todos</option><option value="nunca">Nunca serviu</option><option value="ja-serviu">Já serviu</option><option value="ja-serviu-ministerio">Já serviu no meu ministério</option></select></div>
-        <div class="form-group compact escala-filter-field"><label for="analiseFilterAusentes">Ausentes</label><select id="analiseFilterAusentes"><option value="">Todos</option><option value="sim">Ausentes (inscreveu, sem check-in)</option></select></div>
+        <div class="form-group compact escala-filter-field"><label for="analiseFilterHistorico">Histórico</label><select id="analiseFilterHistorico"><option value="">Todos</option><option value="nunca">Nunca serviu</option><option value="ja-serviu">Já serviu</option><option value="ja-serviu-ministerio">Já serviu no meu ministério</option><option value="ausentes">Ausentes (inscreveu, sem check-in)</option></select></div>
         <div class="escala-analise-filters-btns">
           <button type="button" class="btn btn-primary btn-sm" id="btnAnaliseApply">Aplicar</button>
           <button type="button" class="btn btn-ghost btn-sm" id="btnAnaliseClear">Limpar</button>
@@ -2834,7 +2833,6 @@ function bindAnalisePanelEvents(container) {
       data: document.getElementById('analiseFilterData')?.value || '',
       ministerio: document.getElementById('analiseFilterMinisterio')?.value || '',
       historicoServico: document.getElementById('analiseFilterHistorico')?.value || '',
-      ausentes: document.getElementById('analiseFilterAusentes')?.value || '',
     };
     const escalaId = candidaturasAnaliseFilters.escalaId;
     if (escalaId && (candidaturasAll.length === 0 || String((candidaturasAll[0]?.escalaId || '')) !== String(escalaId))) {
@@ -2852,7 +2850,7 @@ function bindAnalisePanelEvents(container) {
   document.getElementById('btnAnaliseApply')?.addEventListener('click', applyAnaliseFilters);
   document.getElementById('btnAnaliseClear')?.addEventListener('click', () => {
     candidaturasAnaliseFilters = {};
-    ['analiseFilterNome', 'analiseFilterEscala', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico', 'analiseFilterAusentes'].forEach((id) => {
+    ['analiseFilterNome', 'analiseFilterEscala', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico'].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.value = el.tagName === 'SELECT' ? '' : '';
     });
@@ -2887,7 +2885,7 @@ function bindAnalisePanelEvents(container) {
     exportCandidaturasCsv(filtered);
   });
   document.getElementById('analiseFilterNome')?.addEventListener('input', debounce(applyAnaliseFilters, 250));
-  ['analiseFilterNome', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico', 'analiseFilterAusentes'].forEach((id) => {
+  ['analiseFilterNome', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico'].forEach((id) => {
     document.getElementById(id)?.addEventListener('change', applyAnaliseFilters);
   });
 }
