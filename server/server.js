@@ -67,6 +67,17 @@ function parseDateOnlyToUTC(dateStr) {
   return new Date(str);
 }
 
+/** Retorna data da escala como YYYY-MM-DD (dia civil UTC) para exibição consistente no cliente */
+function escalaDataToYMD(dateVal) {
+  if (dateVal == null) return null;
+  const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 const app = express();
 app.set('trust proxy', 1); // Necessário quando atrás de reverse proxy (Railway, Render, etc.)
 const PORT = process.env.PORT || 3001;
@@ -2369,7 +2380,7 @@ app.get('/api/escalas/candidaturas-all', requireAuth, async (req, res) => {
       return {
         ...c,
         escalaNome: escala?.nome,
-        escalaData: escala?.data,
+        escalaData: escala?.data != null ? escalaDataToYMD(escala.data) : null,
         totalCheckins: ci.total,
         totalParticipacoes: stats.totalParticipacoes || 0,
         totalDesistencias: stats.totalDesistencias || 0,
@@ -2574,7 +2585,6 @@ app.post('/api/candidaturas', async (req, res) => {
     if (apiKey && em) {
       try {
         const escalaNome = escala?.nome || 'Escala';
-        const escalaData = escala?.data ? new Date(escala.data).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '';
         const nomeDisplay = (nome || '').toString().trim() || 'voluntário(a)';
         const resend = new Resend(apiKey);
         const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
@@ -2593,7 +2603,7 @@ app.post('/api/candidaturas', async (req, res) => {
       </td></tr>
       <tr><td style="padding:40px 40px 32px;">
         <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${nomeDisplay}</strong>!</p>
-        <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Recebemos o preenchimento da escala <strong>${escalaNome}</strong>${escalaData ? ` (${escalaData})` : ''}. Obrigado por se candidatar!</p>
+        <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Recebemos o preenchimento da escala <strong>${escalaNome}</strong>. Obrigado por se candidatar!</p>
         <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Quando o líder do ministério aprovar todos os voluntários, você vai receber um email de confirmação.</p>
         <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Ministério informado: <strong>${(ministerio || '').toString().trim() || '—'}</strong></p>
         <p style="margin:0;font-size:15px;color:#374151;line-height:1.6;">Se tiver dúvidas, responda este email.</p>
@@ -2685,7 +2695,7 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
       return {
         ...c,
         escalaNome: escala?.nome,
-        escalaData: escala?.data,
+        escalaData: escala?.data != null ? escalaDataToYMD(escala.data) : null,
         escalaId: escala?._id,
         totalCheckins: totalCi,
         totalParticipacoes: totalPart,
@@ -2754,7 +2764,6 @@ app.put('/api/candidaturas/:id/status', requireAuth, async (req, res) => {
           const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
           const nomeDisplay = (candidatura.nome || '').trim() || 'voluntário(a)';
           const escalaNome = escala?.nome || 'Escala';
-          const escalaData = escala?.data ? new Date(escala.data).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '';
           const { error } = await resend.emails.send({
             from, to: candidatura.email, reply_to: replyTo,
             subject: `Participação confirmada — ${escalaNome}`,
@@ -2774,7 +2783,6 @@ app.put('/api/candidaturas/:id/status', requireAuth, async (req, res) => {
           <tr><td style="padding:20px 24px;">
             <p style="margin:0 0 8px;font-size:14px;color:#6b7280;">Escala</p>
             <p style="margin:0;font-size:18px;font-weight:700;color:#1a1a2e;">${escalaNome}</p>
-            ${escalaData ? `<p style="margin:4px 0 0;font-size:14px;color:#6b7280;">${escalaData}</p>` : ''}
             <p style="margin:12px 0 0;font-size:14px;color:#374151;">Ministério: <strong>${candidatura.ministerio}</strong></p>
           </td></tr>
         </table>

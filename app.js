@@ -9,15 +9,32 @@ function getHojeDateString() {
   return new Date().toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
 }
 
-/** Formata data de escala como DD/MM/AAAA usando o dia civil (UTC), evitando mudança de dia por fuso. */
+/** Formata data de escala como DD/MM/AAAA usando apenas o dia civil (evita mudança por fuso). */
 function formatEscalaDateOnly(dateVal) {
-  if (!dateVal) return '—';
+  if (dateVal == null || dateVal === '') return '—';
+  const str = typeof dateVal === 'string' ? dateVal.trim() : (dateVal instanceof Date ? dateVal.toISOString() : String(dateVal));
+  const match = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return `${match[3]}/${match[2]}/${match[1]}`;
   const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
   if (Number.isNaN(d.getTime())) return '—';
   const day = String(d.getUTCDate()).padStart(2, '0');
   const month = String(d.getUTCMonth() + 1).padStart(2, '0');
   const year = d.getUTCFullYear();
   return `${day}/${month}/${year}`;
+}
+
+/** Retorna YYYY-MM-DD para comparação/filtro, usando apenas o dia civil. */
+function escalaDataToYMD(dateVal) {
+  if (dateVal == null || dateVal === '') return '';
+  const str = typeof dateVal === 'string' ? dateVal.trim() : (dateVal instanceof Date ? dateVal.toISOString() : String(dateVal));
+  const match = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return match[0];
+  const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
+  if (Number.isNaN(d.getTime())) return '';
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 const UFS_BR = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
@@ -2535,17 +2552,13 @@ async function fetchEscalas() {
 /** Atualiza opções dos filtros ministério e data quando candidaturasAll muda (preserva seleção) */
 function updateAnaliseFilterOptions() {
   const ministerios = [...new Set(candidaturasAll.map((c) => (c.ministerio || '').trim()).filter(Boolean))].sort();
-  const datas = [...new Set(candidaturasAll.map((c) => {
-    if (!c.escalaData) return '';
-    const d = c.escalaData instanceof Date ? c.escalaData : new Date(c.escalaData);
-    return d.toISOString().slice(0, 10);
-  }).filter(Boolean))].sort().reverse();
+  const datas = [...new Set(candidaturasAll.map((c) => escalaDataToYMD(c.escalaData)).filter(Boolean))].sort().reverse();
   const selMin = document.getElementById('analiseFilterMinisterio');
   const selData = document.getElementById('analiseFilterData');
   const valMin = selMin?.value || '';
   const valData = selData?.value || '';
   if (selMin) selMin.innerHTML = '<option value="">Todos</option>' + ministerios.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
-  if (selData) selData.innerHTML = '<option value="">Todas</option>' + datas.map((d) => `<option value="${escapeAttr(d)}">${new Date(d + 'T12:00:00').toLocaleDateString('pt-BR')}</option>`).join('');
+  if (selData) selData.innerHTML = '<option value="">Todas</option>' + datas.map((d) => `<option value="${escapeAttr(d)}">${formatEscalaDateOnly(d)}</option>`).join('');
   if (selMin && valMin && ministerios.includes(valMin)) selMin.value = valMin;
   if (selData && valData && datas.includes(valData)) selData.value = valData;
 }
@@ -2608,12 +2621,10 @@ function getFilteredCandidaturasAnalise() {
       if (!match) return false;
     }
     if (f.data) {
-      if (!c.escalaData) return false;
-      const candData = c.escalaData instanceof Date ? c.escalaData : new Date(c.escalaData);
-      const filterData = String(f.data).slice(0, 10);
-      const candDataStr = candData.toISOString().slice(0, 10);
-      if (candDataStr !== filterData) return false;
+      const candYmd = escalaDataToYMD(c.escalaData);
+      if (candYmd !== String(f.data).slice(0, 10)) return false;
     }
+    if (f.ausentes === 'sim' && (c.totalCheckins || 0) > 0) return false;
     if (f.ministerio && (c.ministerio || '').trim() !== f.ministerio) return false;
     if (f.historicoServico) {
       const nuncaServiu = !c.jaServiuAlgum;
@@ -2633,10 +2644,10 @@ function escapeCsv(val) {
 }
 
 function exportCandidaturasCsv(list) {
-  const header = ['Escala', 'Data', 'Nome', 'Email', 'Telefone', 'Ministério', 'CI', 'Part.', 'Status'];
+  const header = ['Escala', 'Data', 'Nome', 'Email', 'Telefone', 'Ministério', 'CI', 'Part.', 'Ausências', 'Status'];
   const rows = list.map((c) => {
     const dataStr = formatEscalaDateOnly(c.escalaData) || '';
-    return [c.escalaNome || '', dataStr, c.nome || '', c.email || '', c.telefone || '', c.ministerio || '', c.totalCheckins || 0, c.totalParticipacoes || 0, c.status || ''].map(escapeCsv).join(',');
+    return [c.escalaNome || '', dataStr, c.nome || '', c.email || '', c.telefone || '', c.ministerio || '', c.totalCheckins || 0, c.totalParticipacoes || 0, c.totalFaltas ?? 0, c.status || ''].map(escapeCsv).join(',');
   });
   const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -2674,6 +2685,7 @@ function renderAnaliseTab() {
       <td data-label="Ministério">${escapeHtml(c.ministerio || '—')}</td>
       <td class="escala-cand-stat" data-label="CI">${c.totalCheckins || 0}</td>
       <td class="escala-cand-stat" data-label="Part.">${c.totalParticipacoes || 0}</td>
+      <td class="escala-cand-stat" data-label="Ausências">${c.totalFaltas ?? 0}</td>
       <td data-label="Histórico">${c.jaServiuAlgum ? (c.jaServiuMinLider ? 'Ministério' : 'Sim') : 'Nunca'}</td>
       <td data-label="Status">${statusEscalaBadge(c.status)}</td>
       <td data-label="Ações"><select class="escala-status-select" data-cand-id="${escapeAttr(String(c._id))}" aria-label="Alterar status">${statusOpts}</select></td>
@@ -2684,7 +2696,7 @@ function renderAnaliseTab() {
   const selEscala = document.getElementById('analiseFilterEscala');
   const escalaSelected = selEscala && (selEscala.value || '').trim();
   const emptyMsg = !escalaSelected ? 'Selecione uma escala para ver os candidatos.' : 'Nenhuma candidatura corresponde aos filtros.';
-  if (tbody) tbody.innerHTML = rows || `<tr><td colspan="11">${emptyMsg}</td></tr>`;
+  if (tbody) tbody.innerHTML = rows || `<tr><td colspan="12">${emptyMsg}</td></tr>`;
 
   const countEl = document.getElementById('escalasAnaliseCount');
   if (countEl) countEl.textContent = filtered.length;
@@ -2787,6 +2799,7 @@ function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) 
         <div class="form-group compact escala-filter-field"><label for="analiseFilterData">Data</label><select id="analiseFilterData"><option value="">Todas</option>${datasUnicas}</select></div>
         <div class="form-group compact escala-filter-field"><label for="analiseFilterMinisterio">Ministério</label><select id="analiseFilterMinisterio"><option value="">Todos</option>${ministeriosOptions}</select></div>
         <div class="form-group compact escala-filter-field"><label for="analiseFilterHistorico">Histórico</label><select id="analiseFilterHistorico"><option value="">Todos</option><option value="nunca">Nunca serviu</option><option value="ja-serviu">Já serviu</option><option value="ja-serviu-ministerio">Já serviu no meu ministério</option></select></div>
+        <div class="form-group compact escala-filter-field"><label for="analiseFilterAusentes">Ausentes</label><select id="analiseFilterAusentes"><option value="">Todos</option><option value="sim">Ausentes (inscreveu, sem check-in)</option></select></div>
         <div class="escala-analise-filters-btns">
           <button type="button" class="btn btn-primary btn-sm" id="btnAnaliseApply">Aplicar</button>
           <button type="button" class="btn btn-ghost btn-sm" id="btnAnaliseClear">Limpar</button>
@@ -2805,7 +2818,7 @@ function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) 
     </div>
     <div class="table-wrapper">
       <table class="data-table escala-table">
-        <thead><tr><th class="col-check"><input type="checkbox" id="analiseSelectAllHeader"></th><th>Escala</th><th>Data</th><th>Nome</th><th>Email</th><th>Ministério</th><th>CI</th><th>Part.</th><th>Histórico</th><th>Status</th><th>Ações</th></tr></thead>
+        <thead><tr><th class="col-check"><input type="checkbox" id="analiseSelectAllHeader"></th><th>Escala</th><th>Data</th><th>Nome</th><th>Email</th><th>Ministério</th><th>CI</th><th>Part.</th><th>Ausências</th><th>Histórico</th><th>Status</th><th>Ações</th></tr></thead>
         <tbody id="escalasAnaliseBody"></tbody>
       </table>
     </div>
@@ -2821,6 +2834,7 @@ function bindAnalisePanelEvents(container) {
       data: document.getElementById('analiseFilterData')?.value || '',
       ministerio: document.getElementById('analiseFilterMinisterio')?.value || '',
       historicoServico: document.getElementById('analiseFilterHistorico')?.value || '',
+      ausentes: document.getElementById('analiseFilterAusentes')?.value || '',
     };
     const escalaId = candidaturasAnaliseFilters.escalaId;
     if (escalaId && (candidaturasAll.length === 0 || String((candidaturasAll[0]?.escalaId || '')) !== String(escalaId))) {
@@ -2838,7 +2852,7 @@ function bindAnalisePanelEvents(container) {
   document.getElementById('btnAnaliseApply')?.addEventListener('click', applyAnaliseFilters);
   document.getElementById('btnAnaliseClear')?.addEventListener('click', () => {
     candidaturasAnaliseFilters = {};
-    ['analiseFilterNome', 'analiseFilterEscala', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico'].forEach((id) => {
+    ['analiseFilterNome', 'analiseFilterEscala', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico', 'analiseFilterAusentes'].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.value = el.tagName === 'SELECT' ? '' : '';
     });
@@ -2873,7 +2887,7 @@ function bindAnalisePanelEvents(container) {
     exportCandidaturasCsv(filtered);
   });
   document.getElementById('analiseFilterNome')?.addEventListener('input', debounce(applyAnaliseFilters, 250));
-  ['analiseFilterNome', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico'].forEach((id) => {
+  ['analiseFilterNome', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico', 'analiseFilterAusentes'].forEach((id) => {
     document.getElementById(id)?.addEventListener('change', applyAnaliseFilters);
   });
 }
@@ -2887,17 +2901,12 @@ function renderEscalasCandidatosAdmin() {
     return;
   }
   const escalasOptions = escalasList.map((e) => {
-    const data = formatEscalaDateOnly(e.data) || '';
-    return `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome)}${data ? ` (${data})` : ''}</option>`;
+    return `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome)}</option>`;
   }).join('');
   const ministeriosUnicos = [...new Set(candidaturasAll.map((c) => (c.ministerio || '').trim()).filter(Boolean))].sort();
   const ministeriosOptions = ministeriosUnicos.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
-  const datasUnicas = [...new Set(candidaturasAll.map((c) => {
-    if (!c.escalaData) return '';
-    const d = c.escalaData instanceof Date ? c.escalaData : new Date(c.escalaData);
-    return d.toISOString().slice(0, 10);
-  }).filter(Boolean))].sort().reverse();
-  const datasOptions = datasUnicas.map((d) => `<option value="${escapeAttr(d)}">${new Date(d + 'T12:00:00').toLocaleDateString('pt-BR')}</option>`).join('');
+  const datasUnicas = [...new Set(candidaturasAll.map((c) => escalaDataToYMD(c.escalaData)).filter(Boolean))].sort().reverse();
+  const datasOptions = datasUnicas.map((d) => `<option value="${escapeAttr(d)}">${formatEscalaDateOnly(d)}</option>`).join('');
 
   container.innerHTML = buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasOptions);
   bindAnalisePanelEvents(container);
@@ -2918,17 +2927,12 @@ function renderEscalasCandidatosLider() {
     return;
   }
   const escalasOptions = escalasList.map((e) => {
-    const data = formatEscalaDateOnly(e.data) || '';
-    return `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome)}${data ? ` (${data})` : ''}</option>`;
+    return `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome)}</option>`;
   }).join('');
   const ministeriosUnicos = [...new Set(candidaturasAll.map((c) => (c.ministerio || '').trim()).filter(Boolean))].sort();
   const ministeriosOptions = ministeriosUnicos.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
-  const datasUnicas = [...new Set(candidaturasAll.map((c) => {
-    if (!c.escalaData) return '';
-    const d = c.escalaData instanceof Date ? c.escalaData : new Date(c.escalaData);
-    return d.toISOString().slice(0, 10);
-  }).filter(Boolean))].sort().reverse();
-  const datasOptions = datasUnicas.map((d) => `<option value="${escapeAttr(d)}">${new Date(d + 'T12:00:00').toLocaleDateString('pt-BR')}</option>`).join('');
+  const datasUnicas = [...new Set(candidaturasAll.map((c) => escalaDataToYMD(c.escalaData)).filter(Boolean))].sort().reverse();
+  const datasOptions = datasUnicas.map((d) => `<option value="${escapeAttr(d)}">${formatEscalaDateOnly(d)}</option>`).join('');
 
   container.innerHTML = buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasOptions);
   bindAnalisePanelEvents(container);
@@ -3234,16 +3238,14 @@ async function loadEscalaPublic(escalaId) {
     }
     if (data.concluida) {
       const nome = data.escala?.nome || 'Escala';
-      const dt = formatEscalaDateOnly(data.escala?.data) || '';
-      if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
+      if (subtitleEl) subtitleEl.textContent = nome;
       if (formEl) formEl.style.display = 'none';
       if (concluidaWrap) concluidaWrap.style.display = 'block';
       if (concluidaWrap) concluidaWrap.querySelector('p').textContent = data.mensagem || 'A escala deste culto já foi concluída.';
       return;
     }
     const nome = data.escala?.nome || 'Escala';
-    const dt = formatEscalaDateOnly(data.escala?.data) || '';
-    if (subtitleEl) subtitleEl.textContent = nome + (dt ? ` — ${dt}` : '');
+    if (subtitleEl) subtitleEl.textContent = nome;
     if (labelEl) labelEl.textContent = data.escala?.descricao || '';
     const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
     setMinisterioSelectOptions(ministerioSel, list);
