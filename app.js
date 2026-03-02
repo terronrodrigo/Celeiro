@@ -3217,10 +3217,14 @@ document.getElementById('modalCopiarLinkMinisterioCopiarTodos')?.addEventListene
     return;
   }
   const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}`;
-  const urls = options.map((m) => `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(m)}`).join('\n');
-  navigator.clipboard.writeText(urls).then(() => {
-    alert(`${options.length} link(s) copiados! Um por linha. Cole onde quiser (ex.: enviar um para cada líder).`);
-  }).catch(() => prompt('Copie os links (um por linha):', urls));
+  const blocks = options.map((m) => {
+    const url = `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(m)}`;
+    return `${m}\n${url}`;
+  });
+  const text = blocks.join('\n\n');
+  navigator.clipboard.writeText(text).then(() => {
+    alert(`${options.length} link(s) copiados! Cada um com o nome do ministério + link. Cole onde quiser.`);
+  }).catch(() => prompt('Copie (nome do ministério + link):', text));
 });
 
 // ─── Candidatura pública via link ?escala=XXX ─────────────────────────────
