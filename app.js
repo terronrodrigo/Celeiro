@@ -3208,6 +3208,20 @@ document.getElementById('modalCopiarLinkMinisterioCopiar')?.addEventListener('cl
     document.getElementById('modalCopiarLinkMinisterio')?.classList.remove('open');
   }).catch(() => prompt('Copie o link:', url));
 });
+document.getElementById('modalCopiarLinkMinisterioCopiarTodos')?.addEventListener('click', () => {
+  if (!_modalCopiarLinkEscalaId) return;
+  const sel = document.getElementById('modalCopiarLinkMinisterioSelect');
+  const options = Array.from(sel?.querySelectorAll('option[value]') || []).map((o) => o.value?.trim()).filter(Boolean);
+  if (!options.length) {
+    alert('Nenhum ministério carregado. Tente novamente.');
+    return;
+  }
+  const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}`;
+  const urls = options.map((m) => `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(m)}`).join('\n');
+  navigator.clipboard.writeText(urls).then(() => {
+    alert(`${options.length} link(s) copiados! Um por linha. Cole onde quiser (ex.: enviar um para cada líder).`);
+  }).catch(() => prompt('Copie os links (um por linha):', urls));
+});
 
 // ─── Candidatura pública via link ?escala=XXX ─────────────────────────────
 
