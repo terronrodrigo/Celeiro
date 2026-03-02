@@ -2530,10 +2530,11 @@ app.delete('/api/escalas/:id', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
-// GET /api/escala-publica/:id — info pública da escala para o form de candidatura
+// GET /api/escala-publica/:id — info pública da escala para o form de candidatura. ?ministerio=NOME = link por ministério (só esse ministério pode se inscrever).
 app.get('/api/escala-publica/:id', async (req, res) => {
   try {
     const id = (req.params.id || '').trim();
+    const ministerioParam = (req.query.ministerio || '').toString().trim();
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return sendError(res, 400, 'ID da escala inválido.');
     }
@@ -2548,14 +2549,21 @@ app.get('/api/escala-publica/:id', async (req, res) => {
     }
     const ministerios = await Ministerio.find({ ativo: true }).sort({ nome: 1 }).select('nome').lean();
     const ministeriosList = ministerios.length > 0 ? ministerios.map(m => m.nome).filter(Boolean) : MINISTERIOS_PADRAO_PUBLIC;
+    let ministerioFixo = null;
+    if (ministerioParam) {
+      const match = ministeriosList.find((m) => (m || '').trim().toLowerCase() === ministerioParam.toLowerCase());
+      if (match) ministerioFixo = match;
+      else return sendError(res, 400, 'Ministério inválido para este link. Use o link correto enviado pelo seu líder.');
+    }
     res.json({
       escala: { _id: escala._id, nome: escala.nome, data: escala.data, descricao: escala.descricao },
       ministerios: ministeriosList,
+      ...(ministerioFixo && { ministerioFixo }),
     });
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
-// POST /api/candidaturas — candidatura pública (sem auth). Quem se candidata é considerado voluntário.
+// POST /api/candidaturas — candidatura pública (sem auth). Quem se candidata é considerado voluntário. Ministério deve estar na lista permitida.
 app.post('/api/candidaturas', async (req, res) => {
   try {
     const { escalaId, nome, email, telefone, ministerio } = req.body || {};
@@ -2565,20 +2573,26 @@ app.post('/api/candidaturas', async (req, res) => {
     if (!ministerio) return sendError(res, 400, 'Ministério é obrigatório.');
     const escala = await Escala.findById(escalaId).lean();
     if (!escala || !escala.ativo) return sendError(res, 404, 'Escala não encontrada ou não está ativa.');
+    const ministerios = await Ministerio.find({ ativo: true }).sort({ nome: 1 }).select('nome').lean();
+    const ministeriosList = ministerios.length > 0 ? ministerios.map(m => m.nome).filter(Boolean) : MINISTERIOS_PADRAO_PUBLIC;
+    const ministerioTrim = (ministerio || '').toString().trim();
+    const ministerioValido = ministeriosList.find((m) => (m || '').trim().toLowerCase() === ministerioTrim.toLowerCase());
+    if (!ministerioValido) return sendError(res, 400, 'Ministério inválido. Use o link enviado pelo seu líder para o seu ministério.');
     const existing = await Candidatura.findOne({ escalaId, email: em });
     if (existing) {
       try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim() }); } catch (_) {}
       return res.status(200).json({ message: 'Você já se candidatou para esta escala.', candidatura: existing });
     }
+    const ministerioCanonico = ministerioValido;
     const candidatura = await Candidatura.create({
       escalaId,
       nome: (nome || '').toString().trim(),
       email: em,
       telefone: (telefone || '').toString().trim(),
-      ministerio: (ministerio || '').toString().trim(),
+      ministerio: ministerioCanonico,
     });
     // Garante que o candidato apareça na lista de voluntários
-    try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim() }); } catch (_) {}
+    try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: ministerioCanonico }); } catch (_) {}
 
     // Email de confirmação de recebimento
     const apiKey = process.env.RESEND_API_KEY;
@@ -2605,7 +2619,7 @@ app.post('/api/candidaturas', async (req, res) => {
         <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${nomeDisplay}</strong>!</p>
         <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Recebemos o preenchimento da escala <strong>${escalaNome}</strong>. Obrigado por se candidatar!</p>
         <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Quando o líder do ministério aprovar todos os voluntários, você vai receber um email de confirmação.</p>
-        <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Ministério informado: <strong>${(ministerio || '').toString().trim() || '—'}</strong></p>
+        <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Ministério informado: <strong>${ministerioCanonico || '—'}</strong></p>
         <p style="margin:0;font-size:15px;color:#374151;line-height:1.6;">Se tiver dúvidas, responda este email.</p>
       </td></tr>
       <tr><td style="padding:0 40px 40px;">
@@ -2672,10 +2686,10 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
     const emails = [...new Set(candidaturas.map(c => c.email).filter(Boolean))];
     const liderMinisterios = isLider ? (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean) : [];
 
-    // Stats históricos de candidaturas por email
+    // Stats históricos de candidaturas por email (lowercase para lookup consistente)
     const statsAgg = await Candidatura.aggregate([
       { $match: { email: { $in: emails } } },
-      { $group: { _id: '$email', totalParticipacoes: { $sum: { $cond: [{ $eq: ['$status', 'aprovado'] }, 1, 0] } }, totalDesistencias: { $sum: { $cond: [{ $eq: ['$status', 'desistencia'] }, 1, 0] } }, totalFaltas: { $sum: { $cond: [{ $eq: ['$status', 'falta'] }, 1, 0] } } } },
+      { $group: { _id: { $toLower: '$email' }, totalParticipacoes: { $sum: { $cond: [{ $eq: ['$status', 'aprovado'] }, 1, 0] } }, totalDesistencias: { $sum: { $cond: [{ $eq: ['$status', 'desistencia'] }, 1, 0] } }, totalFaltas: { $sum: { $cond: [{ $eq: ['$status', 'falta'] }, 1, 0] } } } },
     ]);
     const statsMap = new Map(statsAgg.map(s => [s._id, s]));
 
@@ -2684,14 +2698,16 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
       { $match: { email: { $in: emails } } },
       { $group: { _id: { $toLower: '$email' }, totalCheckins: { $sum: 1 }, ministerios: { $addToSet: '$ministerio' } } },
     ]);
-    const checkinsMap = new Map(checkinsAgg.map(c => [c._id, { total: c.totalCheckins || 0, ministerios: (c.ministerios || []).filter(Boolean) }]));
+    const checkinsMap = new Map(checkinsAgg.map(c => [c._id, { total: Number(c.totalCheckins || 0), ministerios: (c.ministerios || []).filter(Boolean) }]));
 
     const result = candidaturas.map(c => {
-      const stats = statsMap.get(c.email) || {};
-      const ci = checkinsMap.get((c.email || '').toLowerCase()) || { total: 0, ministerios: [] };
+      const emailKey = (c.email || '').toLowerCase();
+      const stats = statsMap.get(emailKey) || {};
+      const ci = checkinsMap.get(emailKey) || { total: 0, ministerios: [] };
       const jaServiuMinLider = liderMinisterios.length > 0 && ci.ministerios.some((m) => liderMinisterios.some((lm) => (m || '').toLowerCase().includes((lm || '').toLowerCase())));
-      const totalPart = stats.totalParticipacoes || 0;
-      const totalCi = ci.total || 0;
+      const totalPart = Number(stats.totalParticipacoes || 0);
+      const totalCi = Number(ci.total || 0);
+      const totalFaltas = Number(stats.totalFaltas || 0);
       return {
         ...c,
         escalaNome: escala?.nome,
@@ -2699,8 +2715,8 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
         escalaId: escala?._id,
         totalCheckins: totalCi,
         totalParticipacoes: totalPart,
-        totalDesistencias: stats.totalDesistencias || 0,
-        totalFaltas: stats.totalFaltas || 0,
+        totalDesistencias: Number(stats.totalDesistencias || 0),
+        totalFaltas,
         jaServiuAlgum: totalCi + totalPart > 0,
         jaServiuMinLider,
       };

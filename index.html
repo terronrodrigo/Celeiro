@@ -800,8 +800,9 @@
           <label for="escalaPublicTelefone">Telefone / WhatsApp</label>
           <input type="tel" id="escalaPublicTelefone" placeholder="(11) 99999-9999" autocomplete="tel">
         </div>
-        <div class="form-group">
+        <div class="form-group" id="escalaPublicMinisterioWrap">
           <label for="escalaPublicMinisterio">Ministério</label>
+          <span class="form-hint-ministerio" style="display:block;margin-top:2px;font-size:0.85rem;color:var(--text-muted)"></span>
           <select id="escalaPublicMinisterio" required aria-label="Selecione o ministério">
             <option value="">Selecione o ministério</option>
             <option value="Suporte Geral">Suporte Geral</option>
@@ -1175,6 +1176,30 @@
           <button type="submit" class="btn btn-primary">Salvar</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Modal: Copiar link por ministério -->
+  <div id="modalCopiarLinkMinisterio" class="modal" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Copiar link por ministério</h2>
+        <button type="button" class="modal-close" id="modalCopiarLinkMinisterioClose">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="auth-subtitle" style="margin-bottom:12px">Quem abrir o link só poderá se candidatar ao ministério escolhido.</p>
+        <div class="form-group">
+          <label for="modalCopiarLinkMinisterioSelect">Ministério</label>
+          <select id="modalCopiarLinkMinisterioSelect">
+            <option value="">Carregando…</option>
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="modalCopiarLinkMinisterioCancel">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="modalCopiarLinkMinisterioCopiar">Copiar link</button>
+        </div>
+      </div>
     </div>
   </div>
 

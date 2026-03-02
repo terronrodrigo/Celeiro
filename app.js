@@ -2629,10 +2629,11 @@ function getFilteredCandidaturasAnalise() {
       const nuncaServiu = !c.jaServiuAlgum;
       const jaServiu = c.jaServiuAlgum;
       const jaServiuMinLider = !!c.jaServiuMinLider;
+      const totalCi = Number(c.totalCheckins) || 0;
       if (f.historicoServico === 'nunca' && !nuncaServiu) return false;
       if (f.historicoServico === 'ja-serviu' && !jaServiu) return false;
       if (f.historicoServico === 'ja-serviu-ministerio' && !jaServiuMinLider) return false;
-      if (f.historicoServico === 'ausentes' && (c.totalCheckins || 0) > 0) return false;
+      if (f.historicoServico === 'ausentes' && totalCi > 0) return false;
     }
     return true;
   });
@@ -2683,9 +2684,9 @@ function renderAnaliseTab() {
       <td data-label="Nome">${escapeHtml(c.nome || '—')}</td>
       <td data-label="Email"><button type="button" class="link-voluntario" data-email="${escapeAttr((c.email || '').toLowerCase())}">${escapeHtml(c.email || '')}</button></td>
       <td data-label="Ministério">${escapeHtml(c.ministerio || '—')}</td>
-      <td class="escala-cand-stat" data-label="CI">${c.totalCheckins || 0}</td>
-      <td class="escala-cand-stat" data-label="Part.">${c.totalParticipacoes || 0}</td>
-      <td class="escala-cand-stat" data-label="Ausências">${c.totalFaltas ?? 0}</td>
+      <td class="escala-cand-stat" data-label="CI">${Number(c.totalCheckins) || 0}</td>
+      <td class="escala-cand-stat" data-label="Part.">${Number(c.totalParticipacoes) || 0}</td>
+      <td class="escala-cand-stat" data-label="Ausências">${Number(c.totalFaltas) || 0}</td>
       <td data-label="Histórico">${c.jaServiuAlgum ? (c.jaServiuMinLider ? 'Ministério' : 'Sim') : 'Nunca'}</td>
       <td data-label="Status">${statusEscalaBadge(c.status)}</td>
       <td data-label="Ações"><select class="escala-status-select" data-cand-id="${escapeAttr(String(c._id))}" aria-label="Alterar status">${statusOpts}</select></td>
@@ -2742,7 +2743,7 @@ function renderEscalasCriar() {
       <td data-label="Data">${data}</td>
       <td data-label="Status"><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${ativo ? 'Aberta' : 'Inscrições fechadas'}</span></td>
       <td data-label="Candidatos">${e.totalCandidaturas || 0} <span style="color:var(--text-muted);font-size:.8em">(${e.totalAprovados || 0} aprovados)</span></td>
-      <td class="escala-actions-cell" data-label="Link"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-link="${escapeAttr(String(e._id))}" title="Copiar link">Copiar link</button></td>
+      <td class="escala-actions-cell" data-label="Link"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-link="${escapeAttr(String(e._id))}" title="Copiar link (qualquer ministério)">Copiar link</button> <button class="btn btn-sm btn-ghost" data-escala-link-ministerio="${escapeAttr(String(e._id))}" title="Link só para um ministério">Por ministério</button></td>
       <td class="escala-actions-cell" data-label="">
         <div class="escala-actions-wrap">
           <button class="btn btn-sm btn-ghost" data-escala-edit="${escapeAttr(String(e._id))}">Editar</button>
@@ -2774,11 +2775,15 @@ function renderEscalasCriar() {
     if (m) { document.getElementById('escalaNovoNome').value = ''; document.getElementById('escalaNovaData').value = ''; document.getElementById('escalaNovaDescricao').value = ''; document.getElementById('escalaNovoAtivo').checked = true; m.classList.add('open'); m.setAttribute('aria-hidden', 'false'); }
   });
   container.querySelectorAll('[data-escala-link]').forEach(btn => {
+    if (btn.hasAttribute('data-escala-link-ministerio')) return;
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-escala-link');
       const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}?escala=${encodeURIComponent(id)}`;
       navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie:', url));
     });
+  });
+  container.querySelectorAll('[data-escala-link-ministerio]').forEach(btn => {
+    btn.addEventListener('click', () => openModalCopiarLinkMinisterio(btn.getAttribute('data-escala-link-ministerio')));
   });
   container.querySelectorAll('[data-escala-edit]').forEach(btn => { btn.addEventListener('click', () => openModalEditarEscala(btn.getAttribute('data-escala-edit'))); });
   container.querySelectorAll('[data-escala-toggle]').forEach(btn => { btn.addEventListener('click', () => toggleEscalaAtivo(btn.getAttribute('data-escala-toggle'))); });
@@ -3156,6 +3161,54 @@ document.getElementById('formEditarEscala')?.addEventListener('submit', async (e
 document.getElementById('modalNovaEscala')?.querySelector('.modal-backdrop')?.addEventListener('click', () => { document.getElementById('modalNovaEscala')?.classList.remove('open'); });
 document.getElementById('modalEditarEscala')?.querySelector('.modal-backdrop')?.addEventListener('click', () => { document.getElementById('modalEditarEscala')?.classList.remove('open'); });
 
+let _modalCopiarLinkEscalaId = null;
+async function openModalCopiarLinkMinisterio(escalaId) {
+  _modalCopiarLinkEscalaId = (escalaId || '').toString().trim();
+  const modal = document.getElementById('modalCopiarLinkMinisterio');
+  const sel = document.getElementById('modalCopiarLinkMinisterioSelect');
+  if (!modal || !sel) return;
+  sel.innerHTML = '<option value="">Carregando…</option>';
+  sel.disabled = true;
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  try {
+    const r = await fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(_modalCopiarLinkEscalaId)}`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data.concluida) {
+      sel.innerHTML = '<option value="">Escala não encontrada ou inativa</option>';
+    } else {
+      const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
+      sel.innerHTML = '<option value="">Selecione o ministério</option>' + list.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+    }
+    sel.disabled = false;
+  } catch (_) {
+    sel.innerHTML = '<option value="">Erro ao carregar</option>';
+    sel.disabled = false;
+  }
+}
+['modalCopiarLinkMinisterioClose', 'modalCopiarLinkMinisterioCancel'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', () => {
+    document.getElementById('modalCopiarLinkMinisterio')?.classList.remove('open');
+  });
+});
+document.getElementById('modalCopiarLinkMinisterio')?.querySelector('.modal-backdrop')?.addEventListener('click', () => {
+  document.getElementById('modalCopiarLinkMinisterio')?.classList.remove('open');
+});
+document.getElementById('modalCopiarLinkMinisterioCopiar')?.addEventListener('click', () => {
+  const sel = document.getElementById('modalCopiarLinkMinisterioSelect');
+  const ministerio = sel?.value?.trim();
+  if (!_modalCopiarLinkEscalaId || !ministerio) {
+    alert('Selecione um ministério.');
+    return;
+  }
+  const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}`;
+  const url = `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(ministerio)}`;
+  navigator.clipboard.writeText(url).then(() => {
+    alert('Link copiado! Quem abrir só poderá se candidatar a esse ministério.');
+    document.getElementById('modalCopiarLinkMinisterio')?.classList.remove('open');
+  }).catch(() => prompt('Copie o link:', url));
+});
+
 // ─── Candidatura pública via link ?escala=XXX ─────────────────────────────
 
 /** Modo formulário público: usa sessão limpa para evitar conflito com sessão anterior. */
@@ -3202,10 +3255,11 @@ function setMinisterioSelectOptions(selectEl, list) {
   selectEl.innerHTML = '<option value="">' + placeholder + '</option>' + list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
 }
 
-async function loadEscalaPublic(escalaId) {
+async function loadEscalaPublic(escalaId, ministerioFromUrl) {
   const labelEl = document.getElementById('escalaPublicLabel');
   const subtitleEl = document.getElementById('escalaPublicSubtitle');
   const ministerioSel = document.getElementById('escalaPublicMinisterio');
+  const ministerioWrap = document.getElementById('escalaPublicMinisterioWrap');
   const errorEl = document.getElementById('escalaPublicError');
   const successEl = document.getElementById('escalaPublicSuccess');
 
@@ -3215,13 +3269,15 @@ async function loadEscalaPublic(escalaId) {
   const concluidaWrap = document.getElementById('escalaPublicConcluidaWrap');
 
   const escalaIdClean = (escalaId || '').toString().trim();
+  const ministerioParam = (ministerioFromUrl || '').toString().trim();
   if (!escalaIdClean) {
     if (subtitleEl) subtitleEl.textContent = 'Link inválido. Verifique o endereço.';
     return;
   }
 
   try {
-    const r = await fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(escalaIdClean)}`);
+    const url = `${API_BASE}/api/escala-publica/${encodeURIComponent(escalaIdClean)}${ministerioParam ? `?ministerio=${encodeURIComponent(ministerioParam)}` : ''}`;
+    const r = await fetch(url);
     let data = {};
     try {
       const text = await r.text();
@@ -3246,7 +3302,25 @@ async function loadEscalaPublic(escalaId) {
     if (subtitleEl) subtitleEl.textContent = nome;
     if (labelEl) labelEl.textContent = data.escala?.descricao || '';
     const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
-    setMinisterioSelectOptions(ministerioSel, list);
+    const ministerioFixo = data.ministerioFixo || null;
+    if (ministerioFixo) {
+      if (ministerioSel) {
+        ministerioSel.innerHTML = `<option value="${escapeAttr(ministerioFixo)}">${escapeHtml(ministerioFixo)}</option>`;
+        ministerioSel.value = ministerioFixo;
+        ministerioSel.disabled = true;
+      }
+      if (ministerioWrap) {
+        const hint = ministerioWrap.querySelector('.form-hint-ministerio');
+        if (hint) hint.textContent = 'Este link é apenas para o ministério indicado.';
+      }
+    } else {
+      if (ministerioSel) ministerioSel.disabled = false;
+      setMinisterioSelectOptions(ministerioSel, list);
+      if (ministerioWrap) {
+        const hint = ministerioWrap.querySelector('.form-hint-ministerio');
+        if (hint) hint.textContent = '';
+      }
+    }
     if (formEl) formEl.style.display = '';
     if (concluidaWrap) concluidaWrap.style.display = 'none';
   } catch (e) {
@@ -4327,9 +4401,10 @@ function initPublicFormOrDashboard() {
     return true;
   }
   const escalaParam = urlSearchParams.get('escala');
+  const ministerioParam = urlSearchParams.get('ministerio') || '';
   if (escalaParam) {
     showEscalaPublicOverlay();
-    loadEscalaPublic(escalaParam);
+    loadEscalaPublic(escalaParam, ministerioParam);
     return true;
   }
   return false;
