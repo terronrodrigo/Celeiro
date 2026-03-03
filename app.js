@@ -2446,6 +2446,28 @@ function renderCheckinTable(list) {
   if (rangeEl) rangeEl.textContent = total > LIST_PAGE_SIZE ? ` — exibindo 1–${LIST_PAGE_SIZE} de ${total}` : '';
 }
 
+function exportCheckinsCsv() {
+  const list = getFilteredCheckins();
+  if (!list.length) {
+    alert('Nenhum check-in para exportar. Ajuste os filtros.');
+    return;
+  }
+  const header = ['Nome', 'Email', 'Ministério', 'Data/Hora'];
+  const rows = list.map((c) => {
+    const nome = c.nome || '';
+    const email = c.email || '';
+    const ministerio = c.ministerio || '';
+    const dataHora = c.timestamp || '';
+    return [nome, email, ministerio, dataHora].map(escapeCsv).join(',');
+  });
+  const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'checkins-filtrados.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 function renderCheckinDadosIncompletos() {
   const section = document.getElementById('dadosIncompletosSection');
   const body = document.getElementById('dadosIncompletosBody');
@@ -3971,6 +3993,7 @@ document.getElementById('btnUserRoleBack')?.addEventListener('click', () => {
 document.getElementById('btnRefreshCheckinMinisterio')?.addEventListener('click', () => fetchCheckinsMinisterio());
 document.getElementById('btnExportCheckinMinisterio')?.addEventListener('click', () => exportCheckinsMinisterioCsv());
 document.getElementById('checkinMinisterioData')?.addEventListener('change', () => fetchCheckinsMinisterio());
+document.getElementById('btnExportCheckinsCsv')?.addEventListener('click', () => exportCheckinsCsv());
 
 formPerfil?.addEventListener('submit', savePerfil);
 
