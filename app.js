@@ -3162,8 +3162,10 @@ document.getElementById('modalNovaEscala')?.querySelector('.modal-backdrop')?.ad
 document.getElementById('modalEditarEscala')?.querySelector('.modal-backdrop')?.addEventListener('click', () => { document.getElementById('modalEditarEscala')?.classList.remove('open'); });
 
 let _modalCopiarLinkEscalaId = null;
+let _modalCopiarLinkMinisterios = [];
 async function openModalCopiarLinkMinisterio(escalaId) {
   _modalCopiarLinkEscalaId = (escalaId || '').toString().trim();
+  _modalCopiarLinkMinisterios = [];
   const modal = document.getElementById('modalCopiarLinkMinisterio');
   const sel = document.getElementById('modalCopiarLinkMinisterioSelect');
   if (!modal || !sel) return;
@@ -3178,6 +3180,7 @@ async function openModalCopiarLinkMinisterio(escalaId) {
       sel.innerHTML = '<option value="">Escala não encontrada ou inativa</option>';
     } else {
       const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
+      _modalCopiarLinkMinisterios = list.slice();
       sel.innerHTML = '<option value="">Selecione o ministério</option>' + list.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
     }
     sel.disabled = false;
@@ -3209,11 +3212,13 @@ document.getElementById('modalCopiarLinkMinisterioCopiar')?.addEventListener('cl
   }).catch(() => prompt('Copie o link:', url));
 });
 document.getElementById('modalCopiarLinkMinisterioCopiarTodos')?.addEventListener('click', () => {
-  if (!_modalCopiarLinkEscalaId) return;
-  const sel = document.getElementById('modalCopiarLinkMinisterioSelect');
-  const options = Array.from(sel?.querySelectorAll('option[value]') || []).map((o) => o.value?.trim()).filter(Boolean);
+  if (!_modalCopiarLinkEscalaId) {
+    alert('Nenhuma escala selecionada.');
+    return;
+  }
+  const options = _modalCopiarLinkMinisterios.length > 0 ? _modalCopiarLinkMinisterios : Array.from(document.getElementById('modalCopiarLinkMinisterioSelect')?.querySelectorAll('option') || []).map((o) => (o.value || '').trim()).filter(Boolean);
   if (!options.length) {
-    alert('Nenhum ministério carregado. Tente novamente.');
+    alert('Nenhum ministério carregado. Aguarde a lista carregar e tente novamente.');
     return;
   }
   const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}`;
