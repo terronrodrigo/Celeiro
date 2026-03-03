@@ -1189,16 +1189,19 @@
       </div>
       <div class="modal-body">
         <p class="auth-subtitle" style="margin-bottom:12px">Quem abrir o link só poderá se candidatar ao ministério escolhido.</p>
+        <div class="form-group" id="modalCopiarLinkMinisterioListWrap" style="display:none;margin-bottom:16px">
+          <label>Todos os links (selecione e copie com Ctrl+C ou Cmd+C)</label>
+          <textarea id="modalCopiarLinkMinisterioList" readonly rows="12" style="width:100%;font-size:0.9rem;padding:12px;border:1px solid var(--border-color);border-radius:8px;resize:vertical;font-family:inherit;white-space:pre-wrap" aria-label="Lista de links por ministério"></textarea>
+        </div>
         <div class="form-group">
-          <label for="modalCopiarLinkMinisterioSelect">Ministério</label>
+          <label for="modalCopiarLinkMinisterioSelect">Copiar um link</label>
           <select id="modalCopiarLinkMinisterioSelect">
             <option value="">Carregando…</option>
           </select>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-ghost" id="modalCopiarLinkMinisterioCancel">Cancelar</button>
-          <button type="button" class="btn btn-ghost" id="modalCopiarLinkMinisterioCopiarTodos">Copiar todos os links</button>
-          <button type="button" class="btn btn-primary" id="modalCopiarLinkMinisterioCopiar">Copiar link</button>
+          <button type="button" class="btn btn-ghost" id="modalCopiarLinkMinisterioCancel">Fechar</button>
+          <button type="button" class="btn btn-primary" id="modalCopiarLinkMinisterioCopiar">Copiar link selecionado</button>
         </div>
       </div>
     </div>

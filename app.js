@@ -3173,20 +3173,32 @@ async function openModalCopiarLinkMinisterio(escalaId) {
   sel.disabled = true;
   modal.classList.add('open');
   modal.setAttribute('aria-hidden', 'false');
+  const listWrap = document.getElementById('modalCopiarLinkMinisterioListWrap');
+  const listArea = document.getElementById('modalCopiarLinkMinisterioList');
   try {
     const r = await fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(_modalCopiarLinkEscalaId)}`);
     const data = await r.json().catch(() => ({}));
     if (!r.ok || data.concluida) {
       sel.innerHTML = '<option value="">Escala não encontrada ou inativa</option>';
+      if (listWrap) listWrap.style.display = 'none';
     } else {
       const list = Array.isArray(data.ministerios) && data.ministerios.length > 0 ? data.ministerios : MINISTERIOS_PADRAO;
       _modalCopiarLinkMinisterios = list.slice();
       sel.innerHTML = '<option value="">Selecione o ministério</option>' + list.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+      const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}`;
+      const blocks = list.map((m) => {
+        const url = `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(m)}`;
+        return `${m}\n${url}`;
+      });
+      const text = blocks.join('\n\n');
+      if (listArea) listArea.value = text;
+      if (listWrap) listWrap.style.display = 'block';
     }
     sel.disabled = false;
   } catch (_) {
     sel.innerHTML = '<option value="">Erro ao carregar</option>';
     sel.disabled = false;
+    if (listWrap) listWrap.style.display = 'none';
   }
 }
 ['modalCopiarLinkMinisterioClose', 'modalCopiarLinkMinisterioCancel'].forEach(id => {
@@ -3211,27 +3223,6 @@ document.getElementById('modalCopiarLinkMinisterioCopiar')?.addEventListener('cl
     document.getElementById('modalCopiarLinkMinisterio')?.classList.remove('open');
   }).catch(() => prompt('Copie o link:', url));
 });
-document.getElementById('modalCopiarLinkMinisterioCopiarTodos')?.addEventListener('click', () => {
-  if (!_modalCopiarLinkEscalaId) {
-    alert('Nenhuma escala selecionada.');
-    return;
-  }
-  const options = _modalCopiarLinkMinisterios.length > 0 ? _modalCopiarLinkMinisterios : Array.from(document.getElementById('modalCopiarLinkMinisterioSelect')?.querySelectorAll('option') || []).map((o) => (o.value || '').trim()).filter(Boolean);
-  if (!options.length) {
-    alert('Nenhum ministério carregado. Aguarde a lista carregar e tente novamente.');
-    return;
-  }
-  const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}`;
-  const blocks = options.map((m) => {
-    const url = `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(m)}`;
-    return `${m}\n${url}`;
-  });
-  const text = blocks.join('\n\n');
-  navigator.clipboard.writeText(text).then(() => {
-    alert(`${options.length} link(s) copiados! Cada um com o nome do ministério + link. Cole onde quiser.`);
-  }).catch(() => prompt('Copie (nome do ministério + link):', text));
-});
-
 // ─── Candidatura pública via link ?escala=XXX ─────────────────────────────
 
 /** Modo formulário público: usa sessão limpa para evitar conflito com sessão anterior. */
