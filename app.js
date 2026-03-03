@@ -1146,6 +1146,29 @@ function renderCheckinsMinisterio() {
   });
 }
 
+function exportCheckinsMinisterioCsv() {
+  const list = Array.isArray(checkinsMinisterio) ? checkinsMinisterio : [];
+  if (!list.length) {
+    alert('Nenhum check-in para exportar. Ajuste os filtros ou clique em Atualizar.');
+    return;
+  }
+  const header = ['Nome', 'Email', 'Ministério', 'Data/Hora'];
+  const rows = list.map((c) => {
+    const nome = c.nome || '';
+    const email = c.email || '';
+    const ministerio = c.ministerio || '';
+    const dataHora = c.timestamp || '';
+    return [nome, email, ministerio, dataHora].map(escapeCsv).join(',');
+  });
+  const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'checkins-ministerio.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 async function fetchEventosCheckin() {
   if (!authToken) return;
   try {
@@ -3946,6 +3969,7 @@ document.getElementById('btnUserRoleBack')?.addEventListener('click', () => {
 });
 
 document.getElementById('btnRefreshCheckinMinisterio')?.addEventListener('click', () => fetchCheckinsMinisterio());
+document.getElementById('btnExportCheckinMinisterio')?.addEventListener('click', () => exportCheckinsMinisterioCsv());
 document.getElementById('checkinMinisterioData')?.addEventListener('change', () => fetchCheckinsMinisterio());
 
 formPerfil?.addEventListener('submit', savePerfil);
