@@ -1091,7 +1091,7 @@ async function fetchCheckinsMinisterio() {
       if (currentView !== 'checkin-ministerio') return;
       document.getElementById('checkinMinisterioTotal').textContent = '0';
       const body = document.getElementById('checkinMinisterioBody');
-      if (body) body.innerHTML = '<tr><td colspan="4">Sem permissão ou sem ministério.</td></tr>';
+      if (body) body.innerHTML = '<tr><td colspan="5">Sem permissão ou sem ministério.</td></tr>';
       return;
     }
     const data = await r.json();
@@ -1125,21 +1125,23 @@ function renderCheckinsMinisterio() {
   if (countEl) countEl.textContent = `(${total})`;
   if (!bodyEl) return;
   if (!checkinsMinisterio.length) {
-    bodyEl.innerHTML = '<tr><td colspan="4">Nenhum voluntário confirmou presença no seu ministério para o filtro selecionado. Quando fizerem check-in, aparecerão aqui.</td></tr>';
+    bodyEl.innerHTML = '<tr><td colspan="5">Nenhum voluntário confirmou presença no seu ministério para o filtro selecionado. Quando fizerem check-in, aparecerão aqui.</td></tr>';
     return;
   }
   const list = checkinsMinisterio.slice(0, LIST_PAGE_SIZE);
   bodyEl.innerHTML = list.map(c => {
     const email = (c.email || '').toLowerCase().trim();
+    const batizadoLabel = c.batizado === true ? 'Sim' : (c.batizado === false ? 'Não' : '—');
     return `<tr>
       <td><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(c.nome || '—')}</button></td>
       <td><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(c.email || '—')}</button></td>
       <td>${escapeHtml(c.ministerio || '—')}</td>
+      <td>${escapeHtml(batizadoLabel)}</td>
       <td>${escapeHtml(c.timestamp || '—')}</td>
     </tr>`;
   }).join('');
   if (checkinsMinisterio.length > LIST_PAGE_SIZE) {
-    bodyEl.innerHTML += `<tr><td colspan="4" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${checkinsMinisterio.length}.</td></tr>`;
+    bodyEl.innerHTML += `<tr><td colspan="5" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${checkinsMinisterio.length}.</td></tr>`;
   }
   bodyEl.querySelectorAll('.link-voluntario').forEach(btn => {
     btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email'), { checkinsList: checkinsMinisterio }));
@@ -1152,13 +1154,14 @@ function exportCheckinsMinisterioCsv() {
     alert('Nenhum check-in para exportar. Ajuste os filtros ou clique em Atualizar.');
     return;
   }
-  const header = ['Nome', 'Email', 'Ministério', 'Data/Hora'];
+  const header = ['Nome', 'Email', 'Ministério', 'Batizado', 'Data/Hora'];
   const rows = list.map((c) => {
     const nome = c.nome || '';
     const email = c.email || '';
     const ministerio = c.ministerio || '';
+    const batizado = c.batizado === true ? 'Sim' : (c.batizado === false ? 'Não' : '');
     const dataHora = c.timestamp || '';
-    return [nome, email, ministerio, dataHora].map(escapeCsv).join(',');
+    return [nome, email, ministerio, batizado, dataHora].map(escapeCsv).join(',');
   });
   const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -1320,15 +1323,18 @@ async function fetchEventosHoje() {
 async function confirmarCheckin() {
   if (!eventoSelecionadoHoje || !authToken) return;
   const ministerio = (confirmarMinisterio?.value || '').trim();
+  const batizado = (document.getElementById('confirmarBatizado')?.value || '').trim() || undefined;
   try {
     const r = await authFetch(`${API_BASE}/api/checkins/confirmar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventoId: eventoSelecionadoHoje, ministerio }),
+      body: JSON.stringify({ eventoId: eventoSelecionadoHoje, ministerio, batizado }),
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || 'Falha ao confirmar');
     confirmarMinisterio.value = '';
+    const confirmarBatizadoEl = document.getElementById('confirmarBatizado');
+    if (confirmarBatizadoEl) confirmarBatizadoEl.value = '';
     await fetchMeusCheckins();
     setView('meus-checkins');
     const msgEl = document.getElementById('checkinRecebidoMsg');
@@ -2425,17 +2431,19 @@ function renderCheckinTable(list) {
   slice.forEach(c => {
     const tr = document.createElement('tr');
     const email = (c.email || '').toLowerCase();
+    const batizadoLabel = c.batizado === true ? 'Sim' : (c.batizado === false ? 'Não' : '—');
     tr.innerHTML = `
       <td class="cell-with-avatar"><span class="cell-avatar">${avatarHtml(c.fotoUrl, c.nome)}</span><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(c.nome || '—')}</button></td>
       <td><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(c.email || '')}</button></td>
       <td>${escapeHtml(c.ministerio || '—')}</td>
+      <td>${escapeHtml(batizadoLabel)}</td>
       <td>${escapeHtml(c.timestamp || '—')}</td>
     `;
     checkinBody.appendChild(tr);
   });
   if (total > LIST_PAGE_SIZE) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="4" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${total} check-ins.</td>`;
+    tr.innerHTML = `<td colspan="5" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${total} check-ins.</td>`;
     checkinBody.appendChild(tr);
   }
   checkinBody.querySelectorAll('.link-voluntario').forEach(btn => {
@@ -2452,13 +2460,14 @@ function exportCheckinsCsv() {
     alert('Nenhum check-in para exportar. Ajuste os filtros.');
     return;
   }
-  const header = ['Nome', 'Email', 'Ministério', 'Data/Hora'];
+  const header = ['Nome', 'Email', 'Ministério', 'Batizado', 'Data/Hora'];
   const rows = list.map((c) => {
     const nome = c.nome || '';
     const email = c.email || '';
     const ministerio = c.ministerio || '';
+    const batizado = c.batizado === true ? 'Sim' : (c.batizado === false ? 'Não' : '');
     const dataHora = c.timestamp || '';
-    return [nome, email, ministerio, dataHora].map(escapeCsv).join(',');
+    return [nome, email, ministerio, batizado, dataHora].map(escapeCsv).join(',');
   });
   const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -4426,6 +4435,7 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
   const email = (document.getElementById('checkinPublicEmail')?.value || '').trim().toLowerCase();
   const nome = (document.getElementById('checkinPublicNome')?.value || '').trim();
   const ministerio = (document.getElementById('checkinPublicMinisterio')?.value || '').trim();
+  const batizado = (document.getElementById('checkinPublicBatizado')?.value || '').trim() || undefined;
   if (!email || !email.includes('@')) { if (errEl) errEl.textContent = 'Informe um email válido.'; return; }
   if (!ministerio) { if (errEl) errEl.textContent = 'Selecione o ministério.'; return; }
   if (!checkinPublicEventoId) { if (errEl) errEl.textContent = 'Sessão expirada. Abra o link novamente.'; return; }
@@ -4434,7 +4444,7 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
     const r = await fetch(`${API_BASE}/api/checkin-public`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventoId: checkinPublicEventoId, email, ministerio, nome: nome || undefined }),
+      body: JSON.stringify({ eventoId: checkinPublicEventoId, email, ministerio, nome: nome || undefined, batizado }),
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -4446,6 +4456,8 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
     document.getElementById('checkinPublicEmail').value = '';
     document.getElementById('checkinPublicNome').value = '';
     document.getElementById('checkinPublicMinisterio').value = '';
+    const batizadoEl = document.getElementById('checkinPublicBatizado');
+    if (batizadoEl) batizadoEl.value = '';
   } catch (err) {
     if (errEl) errEl.textContent = err.message || 'Erro de rede. Tente novamente.';
   } finally {

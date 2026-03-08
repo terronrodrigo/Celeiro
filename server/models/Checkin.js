@@ -13,6 +13,7 @@ const checkinSchema = new mongoose.Schema({
   timestampMs: { type: Number, default: () => Date.now() },
   dataCheckin: { type: Date, required: true },
   presente: { type: Boolean, default: true },
+  batizado: { type: Boolean, default: null }, // true = sim, false = não, null = não informado
   eventoId: { type: mongoose.Schema.Types.ObjectId, ref: 'EventoCheckin' },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, {

@@ -614,6 +614,7 @@
                       <th>Nome</th>
                       <th>Email</th>
                       <th>Ministério</th>
+                      <th>Batizado</th>
                       <th>Data/Hora</th>
                     </tr>
                   </thead>
@@ -720,6 +721,7 @@
             <p class="checkin-hoje-subtitle">Confirme presença no culto de hoje.</p>
             <div id="eventosHojeList" class="checkin-hoje-eventos"></div>
             <div id="formConfirmarCheckin" class="checkin-hoje-form" style="display: none;">
+              <div class="form-group"><label for="confirmarBatizado">Já é batizado?</label><select id="confirmarBatizado"><option value="">Selecione</option><option value="sim">Sim</option><option value="nao">Não</option></select></div>
               <div class="form-group"><label for="confirmarMinisterio">Ministério</label><select id="confirmarMinisterio"><option value="">Selecione</option></select></div>
               <button type="button" class="btn btn-primary" id="btnConfirmarCheckin">Confirmar presença</button>
             </div>
@@ -768,7 +770,7 @@
               <div class="chart-header"><h2>Quem confirmou presença no seu ministério <span id="checkinMinisterioCount" class="list-count">(0)</span></h2></div>
               <div class="table-wrapper">
                 <table class="data-table">
-                  <thead><tr><th>Nome</th><th>Email</th><th>Ministério</th><th>Data/Hora</th></tr></thead>
+                  <thead><tr><th>Nome</th><th>Email</th><th>Ministério</th><th>Batizado</th><th>Data/Hora</th></tr></thead>
                   <tbody id="checkinMinisterioBody"></tbody>
                 </table>
               </div>
@@ -854,6 +856,14 @@
         <div class="form-group">
           <label for="checkinPublicNome">Nome (opcional)</label>
           <input type="text" id="checkinPublicNome" placeholder="Seu nome">
+        </div>
+        <div class="form-group">
+          <label for="checkinPublicBatizado">Já é batizado?</label>
+          <select id="checkinPublicBatizado">
+            <option value="">Selecione</option>
+            <option value="sim">Sim</option>
+            <option value="nao">Não</option>
+          </select>
         </div>
         <div class="form-group">
           <label for="checkinPublicMinisterio">Ministério</label>

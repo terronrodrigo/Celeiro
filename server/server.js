@@ -1068,11 +1068,11 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
     if (eventoId) query.eventoId = eventoId;
     if (ministerio) query.ministerio = ministerio;
 
-    let checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin eventoId presente').sort({ timestampMs: -1 }).lean();
+    let checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin eventoId presente batizado').sort({ timestampMs: -1 }).lean();
 
     if (isAdmin && checkinsData.length === 0 && CHECKIN_CSV_PATH) {
       await syncCheckins();
-      checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin eventoId presente').sort({ timestampMs: -1 }).lean();
+      checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin eventoId presente batizado').sort({ timestampMs: -1 }).lean();
     }
 
     if (checkinsData.length === 0) {
@@ -1143,7 +1143,7 @@ app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
       if (dateCondition) Object.assign(query, dateCondition);
     }
     // Limita a 500 check-ins mais recentes para performance
-    const checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin').sort({ timestampMs: -1 }).limit(500).lean();
+    const checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin batizado').sort({ timestampMs: -1 }).limit(500).lean();
     const ministeriosCount = {};
     checkinsData.forEach(c => {
       const m = (c.ministerio || '').trim();
@@ -1364,8 +1364,9 @@ app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
-    const { eventoId, ministerio } = req.body || {};
+    const { eventoId, ministerio, batizado: batizadoRaw } = req.body || {};
     if (!eventoId) return sendError(res, 400, 'eventoId é obrigatório.');
+    const batizado = batizadoRaw === true || batizadoRaw === 'sim' ? true : (batizadoRaw === false || batizadoRaw === 'nao' ? false : null);
     let email = req.userEmail;
     let nome = req.user;
     if (req.userId && (!email || !nome)) {
@@ -1393,6 +1394,7 @@ app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
       timestampMs: Date.now(),
       dataCheckin,
       presente: true,
+      batizado: batizado ?? null,
       eventoId,
       userId: req.userId,
     });
@@ -1437,10 +1439,11 @@ app.post('/api/checkin-public', async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'Serviço temporariamente indisponível.');
-    const { eventoId, email, ministerio, nome } = req.body || {};
+    const { eventoId, email, ministerio, nome, batizado: batizadoRaw } = req.body || {};
     const em = (email || '').toString().trim().toLowerCase();
     if (!em || !em.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
     if (!eventoId) return sendError(res, 400, 'Evento é obrigatório.');
+    const batizado = batizadoRaw === true || batizadoRaw === 'sim' ? true : (batizadoRaw === false || batizadoRaw === 'nao' ? false : null);
     const evento = await EventoCheckin.findById(eventoId).lean();
     if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
     // Se o evento está ativo, aceita check-in a qualquer momento (sem trava de data nem janela de horário).
@@ -1459,6 +1462,7 @@ app.post('/api/checkin-public', async (req, res) => {
       timestampMs: Date.now(),
       dataCheckin,
       presente: true,
+      batizado: batizado ?? null,
       eventoId: evento._id,
     });
     try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim() }); } catch (_) {}
