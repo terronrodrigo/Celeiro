@@ -1595,10 +1595,13 @@ app.get('/api/formulario-publico/:tipo/:eventoId', async (req, res) => {
     if (evento.tipo !== tipo) return sendError(res, 404, 'Evento não encontrado.');
     if (evento.ativo !== true) return sendError(res, 404, 'Formulário não está aberto para este evento.');
     const nomeTipo = tipo === 'batismo' ? 'Batismo' : 'Apresentação de Bebês';
+    let label = (evento.label || '').trim() || nomeTipo;
+    label = label.replace(tipo === 'batismo' ? /^Batismo:\s*/i : /^Apresentação de Bebês:\s*/i, '');
+    label = label.replace(/\s*\(\d{1,2}\/\d{1,2}\/\d{2,4}\)\s*$/, '').replace(/\s*\(\d{4}-\d{2}-\d{2}\)\s*$/, '').trim();
     res.json({
       evento: {
         _id: evento._id,
-        label: (evento.label || '').trim() || nomeTipo,
+        label: label || nomeTipo,
         data: evento.data,
         tipo: evento.tipo,
       },

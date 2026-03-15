@@ -1200,6 +1200,16 @@ body {
   overflow-y: auto;
 }
 
+/* Formulário Apresentação de Bebês: card rolável para não estourar a tela */
+.formulario-apresentacao-overlay .formulario-apresentacao-card {
+  max-width: 480px;
+  max-height: 90vh;
+  max-height: min(90vh, 90dvh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
 .cadastro-form .form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

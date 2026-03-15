@@ -4602,7 +4602,11 @@ async function loadFormularioBatismoPublic(eventoId) {
       return;
     }
     formularioBatismoPublicEventoId = data.evento?._id || eventoId;
-    if (labelEl) labelEl.textContent = data.evento?.label || 'Batismo';
+    if (labelEl) {
+      let label = (data.evento?.label || 'Batismo').trim();
+      label = label.replace(/^Batismo:\s*/i, '').replace(/\s*\(\d{1,2}\/\d{1,2}\/\d{2,4}\)\s*$/, '').replace(/\s*\(\d{4}-\d{2}-\d{2}\)\s*$/, '').trim();
+      labelEl.textContent = label || 'Batismo';
+    }
   } catch (e) {
     if (labelEl) labelEl.textContent = 'Erro ao carregar. Tente novamente.';
   }
@@ -4623,7 +4627,11 @@ async function loadFormularioApresentacaoPublic(eventoId) {
       return;
     }
     formularioApresentacaoPublicEventoId = data.evento?._id || eventoId;
-    if (labelEl) labelEl.textContent = data.evento?.label || 'Apresentação de Bebês';
+    if (labelEl) {
+      let label = (data.evento?.label || 'Apresentação de Bebês').trim();
+      label = label.replace(/^Apresentação de Bebês:\s*/i, '').replace(/\s*\(\d{1,2}\/\d{1,2}\/\d{2,4}\)\s*$/, '').replace(/\s*\(\d{4}-\d{2}-\d{2}\)\s*$/, '').trim();
+      labelEl.textContent = label || 'Apresentação de Bebês';
+    }
     renderApresentacaoCriancasFields();
   } catch (e) {
     if (labelEl) labelEl.textContent = 'Erro ao carregar. Tente novamente.';
