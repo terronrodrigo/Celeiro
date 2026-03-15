@@ -4602,10 +4602,7 @@ async function loadFormularioBatismoPublic(eventoId) {
       return;
     }
     formularioBatismoPublicEventoId = data.evento?._id || eventoId;
-    if (labelEl) {
-      const d = data.evento?.data ? new Date(data.evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
-      labelEl.textContent = (data.evento?.label || d) ? `Batismo: ${data.evento?.label || d}${d ? ` (${d})` : ''}` : 'Batismo';
-    }
+    if (labelEl) labelEl.textContent = data.evento?.label || 'Batismo';
   } catch (e) {
     if (labelEl) labelEl.textContent = 'Erro ao carregar. Tente novamente.';
   }
@@ -4626,10 +4623,7 @@ async function loadFormularioApresentacaoPublic(eventoId) {
       return;
     }
     formularioApresentacaoPublicEventoId = data.evento?._id || eventoId;
-    if (labelEl) {
-      const d = data.evento?.data ? new Date(data.evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
-      labelEl.textContent = (data.evento?.label || d) ? `Apresentação de Bebês: ${data.evento?.label || d}${d ? ` (${d})` : ''}` : 'Apresentação de Bebês';
-    }
+    if (labelEl) labelEl.textContent = data.evento?.label || 'Apresentação de Bebês';
     renderApresentacaoCriancasFields();
   } catch (e) {
     if (labelEl) labelEl.textContent = 'Erro ao carregar. Tente novamente.';
@@ -4681,10 +4675,7 @@ async function loadCheckinPublic(eventoId) {
       return;
     }
     checkinPublicEventoId = data.evento?._id || eventoId;
-    if (eventLabel) {
-      const d = data.evento?.data ? new Date(data.evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
-      eventLabel.textContent = (data.evento?.label || d) ? `Evento: ${data.evento?.label || d}${d ? ` (${d})` : ''}` : '';
-    }
+    if (eventLabel) eventLabel.textContent = data.evento?.label || 'Check-in de presença';
     const horarioEl = document.getElementById('checkinPublicEventHorario');
     if (horarioEl) {
       const hin = (data.evento?.horarioInicio || '').trim();

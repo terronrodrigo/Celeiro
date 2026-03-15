@@ -58,28 +58,25 @@ const uploadFoto = multer({
 
 const TZ_BRASILIA = process.env.TZ || process.env.APP_TIMEZONE || 'America/Sao_Paulo';
 
-/** Converte string data-only (YYYY-MM-DD ou ISO com time) em Date ao meio-dia UTC para evitar mudança de dia no fuso de Brasília */
+/** Converte string data-only (YYYY-MM-DD) como data civil em Brasília; retorna 00:00 BRT em UTC. Usado para escalas. */
 function parseDateOnlyToUTC(dateStr) {
   if (dateStr == null || dateStr === '') return null;
   if (dateStr instanceof Date) {
-    const y = dateStr.getUTCFullYear(), m = dateStr.getUTCMonth(), d = dateStr.getUTCDate();
-    return new Date(Date.UTC(y, m, d, 12, 0, 0, 0));
+    const s = dateStr.toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
+    return parseDateAsBrasilia(s);
   }
   const str = String(dateStr).trim();
   const match = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (match) return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0, 0));
+  if (match) return new Date(match[0] + 'T03:00:00.000Z');
   return new Date(str);
 }
 
-/** Retorna data da escala como YYYY-MM-DD (dia civil UTC) para exibição consistente no cliente */
+/** Retorna data da escala como YYYY-MM-DD no fuso de Brasília para exibição no cliente. */
 function escalaDataToYMD(dateVal) {
   if (dateVal == null) return null;
   const d = dateVal instanceof Date ? dateVal : new Date(dateVal);
   if (Number.isNaN(d.getTime())) return null;
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return d.toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
 }
 
 const app = express();
@@ -1183,12 +1180,20 @@ function getHojeDateString() {
   return new Date().toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
 }
 
-/** Dado YYYY-MM-DD, retorna o início desse dia em UTC (00:00:00.000Z). */
+/** Dado YYYY-MM-DD, retorna o início desse dia em UTC (00:00:00.000Z). Legado; preferir parseDateAsBrasilia para eventos. */
 function parseDateAsUTC(dateStr) {
   if (!dateStr || typeof dateStr !== 'string') return null;
   const s = dateStr.trim().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
   return new Date(s + 'T00:00:00.000Z');
+}
+
+/** Dado YYYY-MM-DD (data civil em Brasília), retorna 00:00 desse dia em Brasília como Date (UTC). BRT = UTC-3. */
+function parseDateAsBrasilia(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return null;
+  const s = dateStr.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  return new Date(s + 'T03:00:00.000Z');
 }
 
 /** Intervalo [início do dia, fim do dia) em UTC para a data YYYY-MM-DD no fuso da app. */
@@ -1199,7 +1204,7 @@ function getDayRangeUTC(dateStr) {
   return { start, end };
 }
 
-/** Intervalo do dia em Brasília (BRT = UTC-3): YYYY-MM-DD = 00:00–24:00 BRT em UTC. Usado para check-ins. */
+/** Intervalo do dia em Brasília (BRT = UTC-3): YYYY-MM-DD = 00:00–24:00 BRT em UTC. Usado para check-ins e filtros. */
 function getDayRangeBrasilia(dateStr) {
   if (!dateStr || typeof dateStr !== 'string') return { start: null, end: null };
   const s = dateStr.trim().slice(0, 10);
@@ -1235,14 +1240,11 @@ function getNowHHMMSaoPaulo() {
   return new Date().toLocaleTimeString('en-GB', { timeZone: TZ_BRASILIA, hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-/** Data do evento como YYYY-MM-DD.
- * Eventos são gravados como meia-noite UTC (parseDateAsUTC), então a data
- * intencional é o componente UTC — converter para Brasília adiantaria -3h e
- * pularia para o dia anterior (ex.: 2026-02-15T00:00Z → "2026-02-14" BRT). */
+/** Data do evento como YYYY-MM-DD no fuso de Brasília (eventos são gravados com parseDateAsBrasilia). */
 function getEventDateStringSaoPaulo(evento) {
   if (!evento || !evento.data) return '';
   const d = evento.data instanceof Date ? evento.data : new Date(evento.data);
-  return d.toISOString().slice(0, 10);
+  return d.toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
 }
 
 /** Verifica se o momento atual (em São Paulo) está dentro da janela de check-in do evento (também em São Paulo). */
@@ -1270,7 +1272,7 @@ app.get('/api/eventos-checkin', requireAuth, async (req, res) => {
     const query = {};
     if (!isAdmin) query.ativo = true;
     if (data) {
-      const { start, end } = getDayRangeUTC(data);
+      const { start, end } = getDayRangeBrasilia(data);
       if (start && end) query.data = { $gte: start, $lt: end };
     }
     const eventos = await EventoCheckin.find(query).sort({ data: -1 }).lean();
@@ -1286,7 +1288,7 @@ app.get('/api/eventos-checkin/hoje', requireAuth, async (req, res) => {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
     const hojeStr = getHojeDateString();
-    const { start, end } = getDayRangeUTC(hojeStr);
+    const { start, end } = getDayRangeBrasilia(hojeStr);
     if (!start || !end) return res.json([]);
     const eventos = await EventoCheckin.find({ ativo: true, data: { $gte: start, $lt: end } }).sort({ data: 1 }).lean();
     res.json(eventos);
@@ -1301,7 +1303,7 @@ app.post('/api/eventos-checkin', requireAuth, requireAdmin, async (req, res) => 
     const { data, label, ativo, horarioInicio, horarioFim } = req.body || {};
     if (!data) return sendError(res, 400, 'Campo "data" é obrigatório (YYYY-MM-DD ou ISO).');
     const dateStr = typeof data === 'string' ? data.trim().slice(0, 10) : '';
-    const dataOnly = parseDateAsUTC(dateStr);
+    const dataOnly = parseDateAsBrasilia(dateStr);
     if (!dataOnly || Number.isNaN(dataOnly.getTime())) return sendError(res, 400, 'Data inválida.');
     const hin = horarioInicio != null ? parseHHMM(horarioInicio) : null;
     const hfi = horarioFim != null ? parseHHMM(horarioFim) : null;
@@ -1432,7 +1434,7 @@ app.get('/api/checkin-public/:eventoId', async (req, res) => {
     res.json({
       evento: {
         _id: evento._id,
-        label: evento.label || new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }),
+        label: (evento.label || '').trim() || 'Check-in de presença',
         data: evento.data,
         horarioInicio: (evento.horarioInicio || '').trim() || null,
         horarioFim: (evento.horarioFim || '').trim() || null,
@@ -1497,7 +1499,7 @@ app.get('/api/eventos-formulario', requireAuth, async (req, res) => {
     if (tipo && (tipo === 'batismo' || tipo === 'apresentacao')) query.tipo = tipo;
     if (!isAdmin) query.ativo = true;
     if (data) {
-      const { start, end } = getDayRangeUTC(data);
+      const { start, end } = getDayRangeBrasilia(data);
       if (start && end) query.data = { $gte: start, $lt: end };
     }
     const eventos = await EventoFormulario.find(query).sort({ data: -1 }).lean();
@@ -1514,7 +1516,7 @@ app.post('/api/eventos-formulario', requireAuth, requireAdmin, async (req, res) 
     if (!data) return sendError(res, 400, 'Campo "data" é obrigatório (YYYY-MM-DD ou ISO).');
     if (!tipo || (tipo !== 'batismo' && tipo !== 'apresentacao')) return sendError(res, 400, 'Campo "tipo" deve ser "batismo" ou "apresentacao".');
     const dateStr = typeof data === 'string' ? data.trim().slice(0, 10) : '';
-    const dataOnly = parseDateAsUTC(dateStr);
+    const dataOnly = parseDateAsBrasilia(dateStr);
     if (!dataOnly || Number.isNaN(dataOnly.getTime())) return sendError(res, 400, 'Data inválida.');
     const hin = horarioInicio != null ? parseHHMM(horarioInicio) : null;
     const hfi = horarioFim != null ? parseHHMM(horarioFim) : null;
@@ -1592,10 +1594,11 @@ app.get('/api/formulario-publico/:tipo/:eventoId', async (req, res) => {
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
     if (evento.tipo !== tipo) return sendError(res, 404, 'Evento não encontrado.');
     if (evento.ativo !== true) return sendError(res, 404, 'Formulário não está aberto para este evento.');
+    const nomeTipo = tipo === 'batismo' ? 'Batismo' : 'Apresentação de Bebês';
     res.json({
       evento: {
         _id: evento._id,
-        label: evento.label || new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }),
+        label: (evento.label || '').trim() || nomeTipo,
         data: evento.data,
         tipo: evento.tipo,
       },
