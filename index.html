@@ -60,6 +60,10 @@
           <span class="nav-icon">📋</span>
           <span>Escala</span>
         </a>
+        <a href="#" class="nav-item" data-view="formularios">
+          <span class="nav-icon">📝</span>
+          <span>Formulários</span>
+        </a>
         <a href="#" class="nav-item" data-view="perfil">
           <span class="nav-icon">👤</span>
           <span>Perfil</span>
@@ -533,6 +537,59 @@
           </div>
         </section>
 
+        <!-- Formulários (admin) -->
+        <section class="view" data-view="formularios">
+          <section class="filters-row">
+            <div class="filters-card cadastro-link-box">
+              <div class="cadastro-link-content">
+                <span class="cadastro-link-label">Link formulário <strong>Novos Membros</strong>:</span>
+                <input type="text" id="formularioMembroLinkInput" class="cadastro-link-input" readonly>
+                <button type="button" class="btn btn-primary btn-sm" id="btnCopiarLinkFormularioMembro">Copiar link</button>
+              </div>
+            </div>
+          </section>
+          <div class="table-card" style="margin-top:16px">
+            <div class="chart-header"><h2>Eventos de Batismo</h2></div>
+            <p class="auth-subtitle">Crie eventos por data e compartilhe o link. <span id="eventosBatismoCount" class="list-count">(0)</span></p>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Link público</th><th>Ação</th></tr></thead>
+                <tbody id="eventosBatismoBody"></tbody>
+              </table>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="btnNovoEventoBatismo" style="margin-top:8px">➕ Novo evento de batismo</button>
+          </div>
+          <div class="table-card" style="margin-top:24px">
+            <div class="chart-header"><h2>Eventos de Apresentação de Bebês</h2></div>
+            <p class="auth-subtitle">Crie eventos por data e compartilhe o link. <span id="eventosApresentacaoCount" class="list-count">(0)</span></p>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Link público</th><th>Ação</th></tr></thead>
+                <tbody id="eventosApresentacaoBody"></tbody>
+              </table>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="btnNovoEventoApresentacao" style="margin-top:8px">➕ Novo evento de apresentação</button>
+          </div>
+          <div id="modalNovoEventoFormulario" class="modal" aria-hidden="true">
+            <div class="modal-backdrop"></div>
+            <div class="modal-box">
+              <div class="modal-header"><h2 id="modalNovoEventoFormularioTitle">Novo evento</h2><button type="button" class="modal-close" id="modalNovoEventoFormularioClose">&times;</button></div>
+              <form id="formNovoEventoFormulario" class="modal-body">
+                <input type="hidden" id="eventoFormularioTipo" value="">
+                <div class="form-group"><label for="eventoFormularioData">Data do evento</label><input type="date" id="eventoFormularioData" required></div>
+                <div class="form-group"><label for="eventoFormularioLabel">Nome (opcional)</label><input type="text" id="eventoFormularioLabel" placeholder="Ex: Batismo 15/03"></div>
+                <div class="form-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="eventoFormularioAtivo" checked>
+                    Formulário ativo (pessoas poderão enviar por este link)
+                  </label>
+                </div>
+                <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalNovoEventoFormularioCancel">Cancelar</button><button type="submit" class="btn btn-primary">Criar</button></div>
+              </form>
+            </div>
+          </div>
+        </section>
+
         <!-- Check-in (admin) -->
         <section class="view" data-view="checkin">
           <section class="filters-row">
@@ -889,6 +946,80 @@
         <p id="checkinPublicError" class="auth-error"></p>
         <p id="checkinPublicSuccess" class="auth-success" style="display: none;"></p>
         <button type="submit" class="btn btn-primary" id="btnCheckinPublicSubmit">Confirmar check-in</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Formulário público: Novos Membros -->
+  <div id="formularioMembroOverlay" class="auth-overlay cadastro-overlay" style="display: none;">
+    <div class="auth-card cadastro-card">
+      <div class="auth-header">
+        <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
+        <p class="auth-subtitle">Novos Membros</p>
+      </div>
+      <form id="formularioMembroForm" class="auth-form cadastro-form">
+        <div class="form-group"><label for="formMembroNome">Nome completo</label><input type="text" id="formMembroNome" placeholder="Nome completo" required></div>
+        <div class="form-group"><label for="formMembroNascimento">Data de nascimento</label><input type="date" id="formMembroNascimento" min="1920-01-01" max="2015-12-31"></div>
+        <div class="form-group"><label for="formMembroEmail">E-mail</label><input type="email" id="formMembroEmail" placeholder="seu@email.com" required></div>
+        <div class="form-group"><label for="formMembroEndereco">Endereço completo</label><input type="text" id="formMembroEndereco" placeholder="Rua, número, bairro, cidade, CEP"></div>
+        <div class="form-group"><label for="formMembroWhatsapp">Telefone/WhatsApp</label><input type="tel" id="formMembroWhatsapp" placeholder="(11) 99999-9999" maxlength="16"></div>
+        <div class="form-group"><label for="formMembroBatizado">É batizado?</label><select id="formMembroBatizado"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <div class="form-group"><label for="formMembroVoluntario">É um voluntário?</label><select id="formMembroVoluntario"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <div class="form-group"><label for="formMembroGrupoOracao">Faz parte de um Grupo de Oração?</label><select id="formMembroGrupoOracao"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <div class="form-group"><label for="formMembroQuerMembro">Quer se tornar um membro da Celeiro São Paulo?</label><select id="formMembroQuerMembro"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <div class="form-group"><label for="formMembroCompromisso">Se compromete a respeitar e honrar a visão, cultura, princípios e valores da Celeiro São Paulo, frequentando e participando ativamente da igreja?</label><select id="formMembroCompromisso"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <div class="form-group"><label for="formMembroTestemunho">Breve testemunho</label><textarea id="formMembroTestemunho" placeholder="Conte um pouco da sua história com Jesus..." rows="4"></textarea></div>
+        <p id="formularioMembroError" class="auth-error"></p>
+        <p id="formularioMembroSuccess" class="auth-success" style="display: none;"></p>
+        <button type="submit" class="btn btn-primary" id="btnFormularioMembroSubmit">Enviar</button>
+      </form>
+      <p class="auth-footer-link"><a href="#" id="linkSairFormularioMembro">Voltar ao login</a></p>
+    </div>
+  </div>
+
+  <!-- Formulário público: Batismo -->
+  <div id="formularioBatismoPublicOverlay" class="auth-overlay" style="display: none;">
+    <div class="auth-card checkin-public-card">
+      <div class="auth-header">
+        <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
+        <p class="auth-subtitle" id="formularioBatismoEventLabel">Batismo</p>
+      </div>
+      <form id="formularioBatismoForm" class="auth-form">
+        <div class="form-group"><label for="formBatismoNome">Nome completo</label><input type="text" id="formBatismoNome" placeholder="Nome completo" required></div>
+        <div class="form-group"><label for="formBatismoNascimento">Data de nascimento</label><input type="date" id="formBatismoNascimento" min="1920-01-01" max="2015-12-31"></div>
+        <div class="form-group"><label for="formBatismoEmail">E-mail</label><input type="email" id="formBatismoEmail" placeholder="seu@email.com" required></div>
+        <div class="form-group"><label for="formBatismoWhatsapp">Telefone/WhatsApp</label><input type="tel" id="formBatismoWhatsapp" placeholder="(11) 99999-9999" maxlength="16"></div>
+        <div class="form-group"><label for="formBatismoReconheceJesus">Reconhece Jesus como seu único e suficiente salvador?</label><select id="formBatismoReconheceJesus"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <div class="form-group"><label for="formBatismoQuerMembro">Quer se tornar um membro da Celeiro São Paulo?</label><select id="formBatismoQuerMembro"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <div class="form-group"><label for="formBatismoProximo">Vai se batizar no próximo batismo?</label><select id="formBatismoProximo"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <div class="form-group"><label for="formBatismoCurso">Se compromete a participar do Curso de Batismo?</label><select id="formBatismoCurso"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <p id="formularioBatismoError" class="auth-error"></p>
+        <p id="formularioBatismoSuccess" class="auth-success" style="display: none;"></p>
+        <button type="submit" class="btn btn-primary" id="btnFormularioBatismoSubmit">Enviar</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Formulário público: Apresentação de Bebês -->
+  <div id="formularioApresentacaoPublicOverlay" class="auth-overlay" style="display: none;">
+    <div class="auth-card checkin-public-card">
+      <div class="auth-header">
+        <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
+        <p class="auth-subtitle" id="formularioApresentacaoEventLabel">Apresentação de Bebês</p>
+      </div>
+      <form id="formularioApresentacaoForm" class="auth-form">
+        <div class="form-group"><label for="formApresNomeMae">Nome da mãe</label><input type="text" id="formApresNomeMae" placeholder="Nome da mãe"></div>
+        <div class="form-group"><label for="formApresNomePai">Nome do pai</label><input type="text" id="formApresNomePai" placeholder="Nome do pai"></div>
+        <div class="form-group"><label for="formApresQuantidade">Quantidade de crianças que serão apresentadas</label><input type="number" id="formApresQuantidade" min="1" max="20" value="1" required></div>
+        <div id="formApresCriancasContainer"><!-- preenchido por JS conforme quantidade --></div>
+        <div class="form-group"><label for="formApresEndereco">Endereço</label><input type="text" id="formApresEndereco" placeholder="Endereço completo"></div>
+        <div class="form-group"><label for="formApresPaisMembros">Os pais são membros do Celeiro?</label><select id="formApresPaisMembros"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option><option value="ainda não">Ainda não</option></select></div>
+        <div class="form-group"><label for="formApresEmail">E-mail de contato</label><input type="email" id="formApresEmail" placeholder="seu@email.com" required></div>
+        <div class="form-group"><label for="formApresWhatsapp">WhatsApp para contato</label><input type="tel" id="formApresWhatsapp" placeholder="(11) 99999-9999" maxlength="16"></div>
+        <div class="form-group"><label for="formApresCompromisso">Os pais se comprometem a educar seu(s) filho(s) nos caminhos do Senhor, frequentando a igreja e ensinando princípios bíblicos?</label><select id="formApresCompromisso"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <p id="formularioApresentacaoError" class="auth-error"></p>
+        <p id="formularioApresentacaoSuccess" class="auth-success" style="display: none;"></p>
+        <button type="submit" class="btn btn-primary" id="btnFormularioApresentacaoSubmit">Enviar</button>
       </form>
     </div>
   </div>

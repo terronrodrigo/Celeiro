@@ -20,6 +20,10 @@ import Ministerio from './models/Ministerio.js';
 import RoleHistory from './models/RoleHistory.js';
 import Escala from './models/Escala.js';
 import Candidatura from './models/Candidatura.js';
+import EventoFormulario from './models/EventoFormulario.js';
+import FormularioMembro from './models/FormularioMembro.js';
+import FormularioBatismo from './models/FormularioBatismo.js';
+import FormularioApresentacao from './models/FormularioApresentacao.js';
 import { normalizarEstado, normalizarCidade } from './utils/normalize-locale.js';
 import { createWhatsAppHandler } from './whatsapp/handler.js';
 import { processBrdidWebhook, getLastVerification } from './brdid/whatsapp-verification.js';
@@ -160,6 +164,13 @@ app.use('/api/auth/forgot-password', authLimiter);
 app.use('/api/auth/reset-password', authLimiter);
 app.use('/api/cadastro', cadastroLimiter);
 app.use('/api/checkin-public', publicCheckinLimiter);
+const formularioPublicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  message: { error: 'Muitas requisições. Aguarde um pouco.' },
+});
+app.use('/api/formulario-publico', formularioPublicLimiter);
+app.use('/api/formularios/membro', cadastroLimiter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -1471,6 +1482,264 @@ app.post('/api/checkin-public', async (req, res) => {
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao registrar check-in.');
+  }
+});
+
+// ─── Formulários (membros, batismo, apresentação) ───
+// Eventos de formulário (batismo / apresentação) — por data, como check-in
+app.get('/api/eventos-formulario', requireAuth, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const { tipo, data } = req.query;
+    const isAdmin = String(req.userRole || '').toLowerCase() === 'admin';
+    const query = {};
+    if (tipo && (tipo === 'batismo' || tipo === 'apresentacao')) query.tipo = tipo;
+    if (!isAdmin) query.ativo = true;
+    if (data) {
+      const { start, end } = getDayRangeUTC(data);
+      if (start && end) query.data = { $gte: start, $lt: end };
+    }
+    const eventos = await EventoFormulario.find(query).sort({ data: -1 }).lean();
+    res.json(eventos);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao listar eventos.');
+  }
+});
+
+app.post('/api/eventos-formulario', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data, label, tipo, ativo, horarioInicio, horarioFim } = req.body || {};
+    if (!data) return sendError(res, 400, 'Campo "data" é obrigatório (YYYY-MM-DD ou ISO).');
+    if (!tipo || (tipo !== 'batismo' && tipo !== 'apresentacao')) return sendError(res, 400, 'Campo "tipo" deve ser "batismo" ou "apresentacao".');
+    const dateStr = typeof data === 'string' ? data.trim().slice(0, 10) : '';
+    const dataOnly = parseDateAsUTC(dateStr);
+    if (!dataOnly || Number.isNaN(dataOnly.getTime())) return sendError(res, 400, 'Data inválida.');
+    const hin = horarioInicio != null ? parseHHMM(horarioInicio) : null;
+    const hfi = horarioFim != null ? parseHHMM(horarioFim) : null;
+    if (horarioInicio != null && horarioInicio !== '' && !hin) return sendError(res, 400, 'horarioInicio deve ser HH:mm.');
+    if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm.');
+    const nomeTipo = tipo === 'batismo' ? 'Batismo' : 'Apresentação de bebês';
+    const evento = await EventoFormulario.create({
+      data: dataOnly,
+      label: label || `${nomeTipo} ${dataOnly.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}`,
+      tipo,
+      criadoPor: req.userId,
+      ativo: typeof ativo === 'boolean' ? ativo : true,
+      horarioInicio: hin || '',
+      horarioFim: hfi || '',
+    });
+    res.status(201).json(evento);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao criar evento.');
+  }
+});
+
+app.put('/api/eventos-formulario/:id/ativo', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { ativo } = req.body;
+    if (typeof ativo !== 'boolean') return sendError(res, 400, 'ativo deve ser boolean.');
+    const evento = await EventoFormulario.findByIdAndUpdate(req.params.id, { ativo }, { new: true });
+    if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+    res.json(evento);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message);
+  }
+});
+
+app.put('/api/eventos-formulario/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { label, ativo, horarioInicio, horarioFim } = req.body || {};
+    const update = {};
+    if (typeof label === 'string') update.label = label.trim();
+    if (typeof ativo === 'boolean') update.ativo = ativo;
+    const hin = horarioInicio != null ? parseHHMM(horarioInicio) : undefined;
+    const hfi = horarioFim != null ? parseHHMM(horarioFim) : undefined;
+    if (horarioInicio !== undefined) update.horarioInicio = hin || '';
+    if (horarioFim !== undefined) update.horarioFim = hfi || '';
+    if (horarioInicio != null && horarioInicio !== '' && !hin) return sendError(res, 400, 'horarioInicio deve ser HH:mm.');
+    if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm.');
+    const evento = await EventoFormulario.findByIdAndUpdate(req.params.id, update, { new: true });
+    if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+    res.json(evento);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao atualizar evento.');
+  }
+});
+
+app.delete('/api/eventos-formulario/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const evento = await EventoFormulario.findByIdAndDelete(req.params.id);
+    if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+    res.json({ ok: true, message: 'Evento excluído.' });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao excluir evento.');
+  }
+});
+
+// Público: dados do evento de formulário (batismo ou apresentação)
+app.get('/api/formulario-publico/:tipo/:eventoId', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    const { tipo, eventoId } = req.params;
+    if (tipo !== 'batismo' && tipo !== 'apresentacao') return sendError(res, 400, 'Tipo inválido.');
+    const evento = await EventoFormulario.findById(eventoId).lean();
+    if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+    if (evento.tipo !== tipo) return sendError(res, 404, 'Evento não encontrado.');
+    if (evento.ativo !== true) return sendError(res, 404, 'Formulário não está aberto para este evento.');
+    res.json({
+      evento: {
+        _id: evento._id,
+        label: evento.label || new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }),
+        data: evento.data,
+        tipo: evento.tipo,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao carregar dados.');
+  }
+});
+
+// Público: enviar formulário batismo
+app.post('/api/formulario-publico', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    const body = req.body || {};
+    const tipo = (body.tipo || '').trim().toLowerCase();
+    const eventoId = body.eventoId;
+
+    if (tipo === 'batismo') {
+      if (!eventoId) return sendError(res, 400, 'eventoId é obrigatório.');
+      const evento = await EventoFormulario.findById(eventoId).lean();
+      if (!evento || evento.tipo !== 'batismo' || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou formulário encerrado.');
+      const nomeCompleto = (body.nomeCompleto || '').trim();
+      const email = (body.email || '').trim().toLowerCase();
+      if (!nomeCompleto) return sendError(res, 400, 'Nome completo é obrigatório.');
+      if (!email || !email.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
+      const dataNascimento = body.dataNascimento ? parseNascimento(body.dataNascimento) : undefined;
+      const doc = await FormularioBatismo.create({
+        eventoId: evento._id,
+        nomeCompleto,
+        dataNascimento: dataNascimento || undefined,
+        email,
+        telefoneWhatsapp: (body.telefoneWhatsapp || '').trim() || '',
+        reconheceJesus: (body.reconheceJesus || '').trim() || '',
+        querMembroCeleiro: (body.querMembroCeleiro || '').trim() || '',
+        batizarProximo: (body.batizarProximo || '').trim() || '',
+        cursoBatismo: (body.cursoBatismo || '').trim() || '',
+      });
+      return res.status(201).json({ ok: true, message: 'Formulário de batismo enviado com sucesso!', id: doc._id });
+    }
+
+    if (tipo === 'apresentacao') {
+      if (!eventoId) return sendError(res, 400, 'eventoId é obrigatório.');
+      const evento = await EventoFormulario.findById(eventoId).lean();
+      if (!evento || evento.tipo !== 'apresentacao' || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou formulário encerrado.');
+      const nomeMae = (body.nomeMae || '').trim();
+      const nomePai = (body.nomePai || '').trim();
+      const quantidadeCriancas = Math.max(0, parseInt(body.quantidadeCriancas, 10) || 0);
+      const criancasRaw = body.criancas;
+      let criancas = [];
+      if (Array.isArray(criancasRaw) && criancasRaw.length > 0) {
+        criancas = criancasRaw.slice(0, 20).map(c => ({
+          nomeCompleto: (c.nomeCompleto || '').trim(),
+          dataNascimento: c.dataNascimento ? parseNascimento(c.dataNascimento) : undefined,
+        })).filter(c => c.nomeCompleto || c.dataNascimento);
+      }
+      const emailContato = (body.emailContato || '').trim().toLowerCase();
+      if (!emailContato || !emailContato.includes('@')) return sendError(res, 400, 'E-mail de contato é obrigatório e deve ser válido.');
+      const doc = await FormularioApresentacao.create({
+        eventoId: evento._id,
+        nomeMae,
+        nomePai,
+        quantidadeCriancas: criancas.length || quantidadeCriancas,
+        criancas,
+        endereco: (body.endereco || '').trim() || '',
+        paisMembrosCeleiro: (body.paisMembrosCeleiro || '').trim() || '',
+        emailContato,
+        whatsappContato: (body.whatsappContato || '').trim() || '',
+        compromissoEducar: (body.compromissoEducar || '').trim() || '',
+      });
+      return res.status(201).json({ ok: true, message: 'Formulário de apresentação enviado com sucesso!', id: doc._id });
+    }
+
+    return sendError(res, 400, 'Campo "tipo" deve ser "batismo" ou "apresentacao".');
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao enviar formulário.');
+  }
+});
+
+// Cadastro público: novo membro (um único link, como cadastro de voluntários)
+app.post('/api/formularios/membro', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    const body = req.body || {};
+    const email = (body.email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
+    const nomeCompleto = (body.nomeCompleto || '').trim();
+    if (!nomeCompleto) return sendError(res, 400, 'Nome completo é obrigatório.');
+    const dataNascimento = body.dataNascimento ? parseNascimento(body.dataNascimento) : undefined;
+    await FormularioMembro.create({
+      nomeCompleto,
+      dataNascimento: dataNascimento || undefined,
+      email,
+      enderecoCompleto: (body.enderecoCompleto || '').trim() || '',
+      telefoneWhatsapp: (body.telefoneWhatsapp || '').trim() || '',
+      batizado: (body.batizado || '').trim() || '',
+      voluntario: (body.voluntario || '').trim() || '',
+      grupoOracao: (body.grupoOracao || '').trim() || '',
+      querMembroCeleiro: (body.querMembroCeleiro || '').trim() || '',
+      compromissoRespeitar: (body.compromissoRespeitar || '').trim() || '',
+      testemunho: (body.testemunho || '').trim() || '',
+    });
+    return res.status(201).json({ ok: true, message: 'Formulário de novo membro enviado com sucesso!' });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao enviar formulário.');
+  }
+});
+
+// Admin: listar inscrições formulário membros
+app.get('/api/formularios/membro', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const list = await FormularioMembro.find({}).sort({ createdAt: -1 }).lean();
+    res.json(list);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao listar inscrições.');
+  }
+});
+
+// Admin: listar inscrições batismo por evento
+app.get('/api/formularios/batismo/:eventoId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    const list = await FormularioBatismo.find({ eventoId: req.params.eventoId }).sort({ createdAt: -1 }).lean();
+    res.json(list);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao listar inscrições.');
+  }
+});
+
+// Admin: listar inscrições apresentação por evento
+app.get('/api/formularios/apresentacao/:eventoId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    const list = await FormularioApresentacao.find({ eventoId: req.params.eventoId }).sort({ createdAt: -1 }).lean();
+    res.json(list);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao listar inscrições.');
   }
 });
 

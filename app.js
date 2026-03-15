@@ -103,6 +103,8 @@ let authMustChangePassword = false;
 let authIsMasterAdmin = false;
 let authVerified = false;
 let eventosCheckin = [];
+let eventosBatismo = [];
+let eventosApresentacao = [];
 let eventoSelecionadoHoje = null;
 let allCheckins = []; // todos os check-ins sem filtro, para contagem histórica por pessoa
 const filters = {
@@ -192,6 +194,8 @@ const eventoHorarioFim = document.getElementById('eventoHorarioFim');
 const eventoAtivo = document.getElementById('eventoAtivo');
 const modalNovoEventoClose = document.getElementById('modalNovoEventoClose');
 const modalNovoEventoCancel = document.getElementById('modalNovoEventoCancel');
+const eventosBatismoBody = document.getElementById('eventosBatismoBody');
+const eventosApresentacaoBody = document.getElementById('eventosApresentacaoBody');
 const formPerfil = document.getElementById('formPerfil');
 const perfilNome = document.getElementById('perfilNome');
 const perfilEmail = document.getElementById('perfilEmail');
@@ -326,7 +330,7 @@ function clearUserContent() {
   eventoSelecionadoHoje = null;
   selectedEmails.clear();
   currentView = '';
-  ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar'].forEach(v => setViewLoading(v, false));
+  ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'].forEach(v => setViewLoading(v, false));
   const perfilFields = [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilEstado, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilMinisterio, perfilHorasSemana, perfilAreas, perfilTestemunho];
   perfilFields.forEach(el => { if (el) el.value = ''; });
   if (perfilDisponibilidadeGroup) {
@@ -335,6 +339,10 @@ function clearUserContent() {
   if (meusCheckinsBody) meusCheckinsBody.innerHTML = '<tr><td colspan="3">Carregando...</td></tr>';
   if (eventosHojeList) eventosHojeList.innerHTML = '';
   if (eventosCheckinBody) eventosCheckinBody.innerHTML = '';
+  if (eventosBatismoBody) eventosBatismoBody.innerHTML = '';
+  if (eventosApresentacaoBody) eventosApresentacaoBody.innerHTML = '';
+  eventosBatismo = [];
+  eventosApresentacao = [];
   if (voluntariosBody) voluntariosBody.innerHTML = '';
   if (checkinBody) checkinBody.innerHTML = '';
   if (formConfirmarCheckin) formConfirmarCheckin.style.display = 'none';
@@ -527,6 +535,7 @@ const VIEW_META = {
   'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico de presenças.', role: 'voluntario' },
   'escalas-criar': { title: 'Criar escalas', subtitle: 'Crie e edite escalas, copie links de candidatura.', role: 'admin' },
   escalas: { title: 'Escala', subtitle: 'Candidatos e aprovação de voluntários.', role: 'admin' },
+  formularios: { title: 'Formulários', subtitle: 'Novos membros, batismo e apresentação de bebês.', role: 'admin' },
 };
 
 function setView(view, options) {
@@ -572,9 +581,10 @@ function setView(view, options) {
   if (searchBox) searchBox.style.display = (isAdmin || isLider || authRole === 'lider') && view === 'voluntarios' ? 'flex' : 'none';
   if (view === 'voluntarios') voluntariosPageOffset = 0;
   if (!options.skipFetch) {
-    const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar'];
+    const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'];
     viewsWithFetch.forEach(v => setViewLoading(v, false)); // Limpa loading de todas as views primeiro
     if (view === 'eventos-checkin') runWithTimeout('eventos-checkin', () => fetchEventosCheckin());
+    else if (view === 'formularios') runWithTimeout('formularios', () => fetchFormularios());
     else if (view === 'checkin-hoje') runWithTimeout('checkin-hoje', () => fetchEventosHoje());
     else if (view === 'meus-checkins') runWithTimeout('meus-checkins', () => fetchMeusCheckins());
     else if (view === 'perfil') runWithTimeout('perfil', () => fetchPerfil());
@@ -1281,6 +1291,104 @@ async function toggleEventoAtivo(eventoId) {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+function getFormularioMembroLinkUrl() {
+  const base = window.location.origin + window.location.pathname;
+  return base.replace(/\/$/, '') + '#formulario-membro';
+}
+
+async function fetchFormularios() {
+  if (!authToken) return;
+  try {
+    const [rBatismo, rApres] = await Promise.all([
+      authFetch(`${API_BASE}/api/eventos-formulario?tipo=batismo&_t=${Date.now()}`),
+      authFetch(`${API_BASE}/api/eventos-formulario?tipo=apresentacao&_t=${Date.now()}`),
+    ]);
+    if (currentView !== 'formularios') return;
+    eventosBatismo = rBatismo.ok ? (await rBatismo.json()) || [] : [];
+    eventosApresentacao = rApres.ok ? (await rApres.json()) || [] : [];
+    const countBatismo = document.getElementById('eventosBatismoCount');
+    const countApres = document.getElementById('eventosApresentacaoCount');
+    if (countBatismo) countBatismo.textContent = `(${eventosBatismo.length})`;
+    if (countApres) countApres.textContent = `(${eventosApresentacao.length})`;
+    const formularioMembroLinkInput = document.getElementById('formularioMembroLinkInput');
+    if (formularioMembroLinkInput) formularioMembroLinkInput.value = getFormularioMembroLinkUrl();
+    if (eventosBatismoBody) {
+      if (!eventosBatismo.length) {
+        eventosBatismoBody.innerHTML = '<tr><td colspan="5">Nenhum evento. Clique em "Novo evento de batismo" para criar.</td></tr>';
+      } else {
+        eventosBatismoBody.innerHTML = eventosBatismo.map(e => {
+          const eventId = (e._id != null ? String(e._id) : '');
+          const d = new Date(e.data);
+          const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
+          const ativo = e.ativo !== false;
+          const statusText = ativo ? 'Ativo' : 'Inativo';
+          return `<tr data-event-id="${escapeAttr(eventId)}">
+            <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
+            <td>${escapeHtml(label)}</td>
+            <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
+            <td><button type="button" class="btn btn-sm btn-primary" data-form-link="batismo" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-form-delete="batismo" data-event-id="${escapeAttr(eventId)}" title="Excluir">Excluir</button></td>
+          </tr>`;
+        }).join('');
+        eventosBatismoBody.querySelectorAll('[data-form-link="batismo"]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-event-id');
+            const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}?batismo=${encodeURIComponent(id)}`;
+            navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie o link:', url));
+          });
+        });
+        eventosBatismoBody.querySelectorAll('[data-form-delete="batismo"]').forEach(btn => {
+          btn.addEventListener('click', () => excluirEventoFormulario(btn.getAttribute('data-event-id'), 'batismo'));
+        });
+      }
+    }
+    if (eventosApresentacaoBody) {
+      if (!eventosApresentacao.length) {
+        eventosApresentacaoBody.innerHTML = '<tr><td colspan="5">Nenhum evento. Clique em "Novo evento de apresentação" para criar.</td></tr>';
+      } else {
+        eventosApresentacaoBody.innerHTML = eventosApresentacao.map(e => {
+          const eventId = (e._id != null ? String(e._id) : '');
+          const d = new Date(e.data);
+          const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
+          const ativo = e.ativo !== false;
+          const statusText = ativo ? 'Ativo' : 'Inativo';
+          return `<tr data-event-id="${escapeAttr(eventId)}">
+            <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
+            <td>${escapeHtml(label)}</td>
+            <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
+            <td><button type="button" class="btn btn-sm btn-primary" data-form-link="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-form-delete="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Excluir">Excluir</button></td>
+          </tr>`;
+        }).join('');
+        eventosApresentacaoBody.querySelectorAll('[data-form-link="apresentacao"]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-event-id');
+            const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}?apresentacao=${encodeURIComponent(id)}`;
+            navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie o link:', url));
+          });
+        });
+        eventosApresentacaoBody.querySelectorAll('[data-form-delete="apresentacao"]').forEach(btn => {
+          btn.addEventListener('click', () => excluirEventoFormulario(btn.getAttribute('data-event-id'), 'apresentacao'));
+        });
+      }
+    }
+  } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
+  finally { setViewLoading('formularios', false); }
+}
+
+async function excluirEventoFormulario(eventoId, tipo) {
+  if (!eventoId || !authToken) return;
+  const list = tipo === 'batismo' ? eventosBatismo : eventosApresentacao;
+  const evento = list.find(e => String(e._id) === String(eventoId));
+  const label = evento?.label || (evento?.data ? new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '');
+  if (!confirm(`Excluir o evento "${(label || '').replace(/"/g, '')}"?`)) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/eventos-formulario/${eventoId}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    fetchFormularios();
+  } catch (err) { alert(err.message || 'Erro ao excluir evento.'); }
 }
 
 async function fetchEventosHoje() {
@@ -3882,6 +3990,53 @@ formNovoEvento?.addEventListener('submit', async (e) => {
   } catch (err) { alert(err.message || 'Erro ao criar evento.'); }
 });
 
+const modalNovoEventoFormulario = document.getElementById('modalNovoEventoFormulario');
+const formNovoEventoFormulario = document.getElementById('formNovoEventoFormulario');
+const eventoFormularioTipo = document.getElementById('eventoFormularioTipo');
+const eventoFormularioData = document.getElementById('eventoFormularioData');
+const eventoFormularioLabel = document.getElementById('eventoFormularioLabel');
+const eventoFormularioAtivo = document.getElementById('eventoFormularioAtivo');
+document.getElementById('btnNovoEventoBatismo')?.addEventListener('click', () => {
+  if (modalNovoEventoFormulario && eventoFormularioTipo) {
+    eventoFormularioTipo.value = 'batismo';
+    document.getElementById('modalNovoEventoFormularioTitle').textContent = 'Novo evento de batismo';
+    if (eventoFormularioData) eventoFormularioData.value = new Date().toISOString().slice(0, 10);
+    if (eventoFormularioLabel) eventoFormularioLabel.value = '';
+    if (eventoFormularioAtivo) eventoFormularioAtivo.checked = true;
+    modalNovoEventoFormulario.setAttribute('aria-hidden', 'false');
+    modalNovoEventoFormulario.classList.add('open');
+  }
+});
+document.getElementById('btnNovoEventoApresentacao')?.addEventListener('click', () => {
+  if (modalNovoEventoFormulario && eventoFormularioTipo) {
+    eventoFormularioTipo.value = 'apresentacao';
+    document.getElementById('modalNovoEventoFormularioTitle').textContent = 'Novo evento de apresentação de bebês';
+    if (eventoFormularioData) eventoFormularioData.value = new Date().toISOString().slice(0, 10);
+    if (eventoFormularioLabel) eventoFormularioLabel.value = '';
+    if (eventoFormularioAtivo) eventoFormularioAtivo.checked = true;
+    modalNovoEventoFormulario.setAttribute('aria-hidden', 'false');
+    modalNovoEventoFormulario.classList.add('open');
+  }
+});
+document.getElementById('modalNovoEventoFormularioClose')?.addEventListener('click', () => modalNovoEventoFormulario?.classList.remove('open'));
+document.getElementById('modalNovoEventoFormularioCancel')?.addEventListener('click', () => modalNovoEventoFormulario?.classList.remove('open'));
+modalNovoEventoFormulario?.querySelector('.modal-backdrop')?.addEventListener('click', () => modalNovoEventoFormulario?.classList.remove('open'));
+formNovoEventoFormulario?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const tipo = eventoFormularioTipo?.value?.trim();
+  const data = eventoFormularioData?.value;
+  const label = (eventoFormularioLabel?.value || '').trim();
+  const ativo = eventoFormularioAtivo ? eventoFormularioAtivo.checked : true;
+  if (!tipo || !data) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/eventos-formulario`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data, label, tipo, ativo }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    modalNovoEventoFormulario?.classList.remove('open');
+    if (formNovoEventoFormulario) formNovoEventoFormulario.reset();
+    fetchFormularios();
+  } catch (err) { alert(err.message || 'Erro ao criar evento.'); }
+});
+
 document.getElementById('btnNovoMinisterio')?.addEventListener('click', () => { document.getElementById('ministerioNome').value = ''; document.getElementById('modalNovoMinisterio')?.classList.add('open'); });
 document.getElementById('formNovoMinisterio')?.addEventListener('submit', createMinisterio);
 document.getElementById('modalNovoMinisterioClose')?.addEventListener('click', () => document.getElementById('modalNovoMinisterio')?.classList.remove('open'));
@@ -4341,6 +4496,16 @@ document.getElementById('btnCopiarLinkCadastro')?.addEventListener('click', () =
   }).catch(() => {});
 });
 
+document.getElementById('btnCopiarLinkFormularioMembro')?.addEventListener('click', () => {
+  const input = document.getElementById('formularioMembroLinkInput');
+  const url = input?.value || getFormularioMembroLinkUrl();
+  if (!url) return;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = document.getElementById('btnCopiarLinkFormularioMembro');
+    if (btn) { const t = btn.textContent; btn.textContent = 'Copiado!'; setTimeout(() => { btn.textContent = t; }, 2000); }
+  }).catch(() => prompt('Copie o link:', url));
+});
+
 document.getElementById('btnVerCodigoWhatsApp')?.addEventListener('click', async () => {
   const resultEl = document.getElementById('brdidCodigoResult');
   if (!resultEl) return;
@@ -4376,10 +4541,118 @@ document.getElementById('cadastroWhatsapp')?.addEventListener('blur', function (
 
 window.addEventListener('hashchange', () => {
   if (window.location.hash === '#cadastro') showCadastroPublico();
-  else hideCadastroPublico();
+  else if (window.location.hash === '#formulario-membro') showFormularioMembroPublico();
+  else { hideCadastroPublico(); hideFormularioMembroPublico(); }
 });
 
 let checkinPublicEventoId = null;
+let formularioBatismoPublicEventoId = null;
+let formularioApresentacaoPublicEventoId = null;
+
+function showFormularioMembroPublico() {
+  preparePublicFormSession();
+  const overlay = document.getElementById('formularioMembroOverlay');
+  const auth = document.getElementById('authOverlay');
+  const content = document.getElementById('content');
+  if (overlay) overlay.style.display = 'flex';
+  if (auth) auth.style.display = 'none';
+  if (content) content.style.display = 'none';
+}
+
+function hideFormularioMembroPublico() {
+  const overlay = document.getElementById('formularioMembroOverlay');
+  if (overlay) overlay.style.display = 'none';
+  updateAuthUi();
+  if (authToken && contentEl) contentEl.style.display = 'block';
+}
+
+function showFormularioBatismoPublicOverlay() {
+  preparePublicFormSession();
+  const overlay = document.getElementById('formularioBatismoPublicOverlay');
+  const auth = document.getElementById('authOverlay');
+  const content = document.getElementById('content');
+  if (overlay) overlay.style.display = 'flex';
+  if (auth) auth.style.display = 'none';
+  if (content) content.style.display = 'none';
+}
+
+function showFormularioApresentacaoPublicOverlay() {
+  preparePublicFormSession();
+  const overlay = document.getElementById('formularioApresentacaoPublicOverlay');
+  const auth = document.getElementById('authOverlay');
+  const content = document.getElementById('content');
+  if (overlay) overlay.style.display = 'flex';
+  if (auth) auth.style.display = 'none';
+  if (content) content.style.display = 'none';
+  renderApresentacaoCriancasFields();
+}
+
+async function loadFormularioBatismoPublic(eventoId) {
+  const errEl = document.getElementById('formularioBatismoError');
+  const successEl = document.getElementById('formularioBatismoSuccess');
+  const labelEl = document.getElementById('formularioBatismoEventLabel');
+  if (errEl) errEl.textContent = '';
+  if (successEl) successEl.style.display = 'none';
+  if (labelEl) labelEl.textContent = 'Carregando...';
+  try {
+    const r = await fetch(`${API_BASE}/api/formulario-publico/batismo/${encodeURIComponent(eventoId)}`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (labelEl) labelEl.textContent = data.error || 'Evento não encontrado ou formulário encerrado.';
+      return;
+    }
+    formularioBatismoPublicEventoId = data.evento?._id || eventoId;
+    if (labelEl) {
+      const d = data.evento?.data ? new Date(data.evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+      labelEl.textContent = (data.evento?.label || d) ? `Batismo: ${data.evento?.label || d}${d ? ` (${d})` : ''}` : 'Batismo';
+    }
+  } catch (e) {
+    if (labelEl) labelEl.textContent = 'Erro ao carregar. Tente novamente.';
+  }
+}
+
+async function loadFormularioApresentacaoPublic(eventoId) {
+  const errEl = document.getElementById('formularioApresentacaoError');
+  const successEl = document.getElementById('formularioApresentacaoSuccess');
+  const labelEl = document.getElementById('formularioApresentacaoEventLabel');
+  if (errEl) errEl.textContent = '';
+  if (successEl) successEl.style.display = 'none';
+  if (labelEl) labelEl.textContent = 'Carregando...';
+  try {
+    const r = await fetch(`${API_BASE}/api/formulario-publico/apresentacao/${encodeURIComponent(eventoId)}`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (labelEl) labelEl.textContent = data.error || 'Evento não encontrado ou formulário encerrado.';
+      return;
+    }
+    formularioApresentacaoPublicEventoId = data.evento?._id || eventoId;
+    if (labelEl) {
+      const d = data.evento?.data ? new Date(data.evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '';
+      labelEl.textContent = (data.evento?.label || d) ? `Apresentação de Bebês: ${data.evento?.label || d}${d ? ` (${d})` : ''}` : 'Apresentação de Bebês';
+    }
+    renderApresentacaoCriancasFields();
+  } catch (e) {
+    if (labelEl) labelEl.textContent = 'Erro ao carregar. Tente novamente.';
+  }
+}
+
+function renderApresentacaoCriancasFields() {
+  const container = document.getElementById('formApresCriancasContainer');
+  const qtdInput = document.getElementById('formApresQuantidade');
+  if (!container || !qtdInput) return;
+  const n = Math.min(20, Math.max(1, parseInt(qtdInput.value, 10) || 1));
+  container.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const idx = i + 1;
+    const wrap = document.createElement('div');
+    wrap.className = 'form-row form-row-2';
+    wrap.innerHTML = `
+      <div class="form-group"><label>Criança ${idx} – Nome completo</label><input type="text" data-apres-crianca-nome data-idx="${idx}" placeholder="Nome completo"></div>
+      <div class="form-group"><label>Criança ${idx} – Data de nascimento</label><input type="date" data-apres-crianca-nascimento data-idx="${idx}" min="2020-01-01" max="${new Date().toISOString().slice(0, 10)}"></div>
+    `;
+    container.appendChild(wrap);
+  }
+}
 
 function showCheckinPublicOverlay() {
   preparePublicFormSession();
@@ -4465,12 +4738,145 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
   }
 });
 
+document.getElementById('formApresQuantidade')?.addEventListener('input', renderApresentacaoCriancasFields);
+document.getElementById('formApresQuantidade')?.addEventListener('change', renderApresentacaoCriancasFields);
+
+document.getElementById('linkSairFormularioMembro')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  window.location.hash = '';
+  hideFormularioMembroPublico();
+});
+
+document.getElementById('formularioMembroForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('formularioMembroError');
+  const successEl = document.getElementById('formularioMembroSuccess');
+  const btn = document.getElementById('btnFormularioMembroSubmit');
+  if (errEl) errEl.textContent = '';
+  if (successEl) successEl.style.display = 'none';
+  const payload = {
+    nomeCompleto: (document.getElementById('formMembroNome')?.value || '').trim(),
+    dataNascimento: (document.getElementById('formMembroNascimento')?.value || '').trim() || undefined,
+    email: (document.getElementById('formMembroEmail')?.value || '').trim().toLowerCase(),
+    enderecoCompleto: (document.getElementById('formMembroEndereco')?.value || '').trim() || '',
+    telefoneWhatsapp: (document.getElementById('formMembroWhatsapp')?.value || '').trim() || '',
+    batizado: (document.getElementById('formMembroBatizado')?.value || '').trim() || '',
+    voluntario: (document.getElementById('formMembroVoluntario')?.value || '').trim() || '',
+    grupoOracao: (document.getElementById('formMembroGrupoOracao')?.value || '').trim() || '',
+    querMembroCeleiro: (document.getElementById('formMembroQuerMembro')?.value || '').trim() || '',
+    compromissoRespeitar: (document.getElementById('formMembroCompromisso')?.value || '').trim() || '',
+    testemunho: (document.getElementById('formMembroTestemunho')?.value || '').trim() || '',
+  };
+  if (!payload.email || !payload.email.includes('@')) { if (errEl) errEl.textContent = 'E-mail é obrigatório e deve ser válido.'; return; }
+  if (!payload.nomeCompleto) { if (errEl) errEl.textContent = 'Nome completo é obrigatório.'; return; }
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${API_BASE}/api/formularios/membro`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao enviar.'; return; }
+    if (successEl) { successEl.textContent = data.message || 'Formulário enviado com sucesso!'; successEl.style.display = 'block'; }
+    if (errEl) errEl.textContent = '';
+    document.getElementById('formularioMembroForm')?.reset();
+  } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
+  finally { if (btn) btn.disabled = false; }
+});
+
+document.getElementById('formularioBatismoForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('formularioBatismoError');
+  const successEl = document.getElementById('formularioBatismoSuccess');
+  const btn = document.getElementById('btnFormularioBatismoSubmit');
+  if (errEl) errEl.textContent = '';
+  if (successEl) successEl.style.display = 'none';
+  if (!formularioBatismoPublicEventoId) { if (errEl) errEl.textContent = 'Sessão expirada. Abra o link novamente.'; return; }
+  const payload = {
+    tipo: 'batismo',
+    eventoId: formularioBatismoPublicEventoId,
+    nomeCompleto: (document.getElementById('formBatismoNome')?.value || '').trim(),
+    dataNascimento: (document.getElementById('formBatismoNascimento')?.value || '').trim() || undefined,
+    email: (document.getElementById('formBatismoEmail')?.value || '').trim().toLowerCase(),
+    telefoneWhatsapp: (document.getElementById('formBatismoWhatsapp')?.value || '').trim() || '',
+    reconheceJesus: (document.getElementById('formBatismoReconheceJesus')?.value || '').trim() || '',
+    querMembroCeleiro: (document.getElementById('formBatismoQuerMembro')?.value || '').trim() || '',
+    batizarProximo: (document.getElementById('formBatismoProximo')?.value || '').trim() || '',
+    cursoBatismo: (document.getElementById('formBatismoCurso')?.value || '').trim() || '',
+  };
+  if (!payload.nomeCompleto) { if (errEl) errEl.textContent = 'Nome completo é obrigatório.'; return; }
+  if (!payload.email || !payload.email.includes('@')) { if (errEl) errEl.textContent = 'E-mail é obrigatório e válido.'; return; }
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${API_BASE}/api/formulario-publico`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao enviar.'; return; }
+    if (successEl) { successEl.textContent = data.message || 'Formulário enviado com sucesso!'; successEl.style.display = 'block'; }
+    if (errEl) errEl.textContent = '';
+    document.getElementById('formularioBatismoForm')?.reset();
+  } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
+  finally { if (btn) btn.disabled = false; }
+});
+
+document.getElementById('formularioApresentacaoForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('formularioApresentacaoError');
+  const successEl = document.getElementById('formularioApresentacaoSuccess');
+  const btn = document.getElementById('btnFormularioApresentacaoSubmit');
+  if (errEl) errEl.textContent = '';
+  if (successEl) successEl.style.display = 'none';
+  if (!formularioApresentacaoPublicEventoId) { if (errEl) errEl.textContent = 'Sessão expirada. Abra o link novamente.'; return; }
+  const quantidade = Math.min(20, Math.max(1, parseInt(document.getElementById('formApresQuantidade')?.value, 10) || 1));
+  const criancas = [];
+  for (let i = 1; i <= quantidade; i++) {
+    const nomeEl = document.querySelector(`[data-apres-crianca-nome][data-idx="${i}"]`);
+    const nascEl = document.querySelector(`[data-apres-crianca-nascimento][data-idx="${i}"]`);
+    const nome = (nomeEl?.value || '').trim();
+    const nascimento = (nascEl?.value || '').trim();
+    if (nome || nascimento) criancas.push({ nomeCompleto: nome, dataNascimento: nascimento || undefined });
+  }
+  const payload = {
+    tipo: 'apresentacao',
+    eventoId: formularioApresentacaoPublicEventoId,
+    nomeMae: (document.getElementById('formApresNomeMae')?.value || '').trim(),
+    nomePai: (document.getElementById('formApresNomePai')?.value || '').trim(),
+    quantidadeCriancas: quantidade,
+    criancas,
+    endereco: (document.getElementById('formApresEndereco')?.value || '').trim() || '',
+    paisMembrosCeleiro: (document.getElementById('formApresPaisMembros')?.value || '').trim() || '',
+    emailContato: (document.getElementById('formApresEmail')?.value || '').trim().toLowerCase(),
+    whatsappContato: (document.getElementById('formApresWhatsapp')?.value || '').trim() || '',
+    compromissoEducar: (document.getElementById('formApresCompromisso')?.value || '').trim() || '',
+  };
+  if (!payload.emailContato || !payload.emailContato.includes('@')) { if (errEl) errEl.textContent = 'E-mail de contato é obrigatório e válido.'; return; }
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${API_BASE}/api/formulario-publico`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao enviar.'; return; }
+    if (successEl) { successEl.textContent = data.message || 'Formulário enviado com sucesso!'; successEl.style.display = 'block'; }
+    if (errEl) errEl.textContent = '';
+    document.getElementById('formularioApresentacaoForm')?.reset();
+    renderApresentacaoCriancasFields();
+  } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
+  finally { if (btn) btn.disabled = false; }
+});
+
 function initPublicFormOrDashboard() {
   const urlSearchParams = new URLSearchParams(window.location.search);
   const checkinParam = urlSearchParams.get('checkin');
   if (checkinParam) {
     showCheckinPublicOverlay();
     loadCheckinPublic(checkinParam);
+    return true;
+  }
+  const batismoParam = urlSearchParams.get('batismo');
+  if (batismoParam) {
+    showFormularioBatismoPublicOverlay();
+    loadFormularioBatismoPublic(batismoParam);
+    return true;
+  }
+  const apresentacaoParam = urlSearchParams.get('apresentacao');
+  if (apresentacaoParam) {
+    showFormularioApresentacaoPublicOverlay();
+    loadFormularioApresentacaoPublic(apresentacaoParam);
     return true;
   }
   const escalaParam = urlSearchParams.get('escala');
@@ -4488,7 +4894,9 @@ window.addEventListener('pageshow', function(ev) {
     var params = new URLSearchParams(window.location.search);
     var escalaId = params.get('escala');
     var checkinId = params.get('checkin');
-    if (escalaId || checkinId) {
+    var batismoId = params.get('batismo');
+    var apresentacaoId = params.get('apresentacao');
+    if (escalaId || checkinId || batismoId || apresentacaoId) {
       var loading = document.getElementById('loading');
       var dashboard = document.querySelector('.dashboard');
       if (loading) loading.style.display = 'none';
@@ -4501,6 +4909,14 @@ window.addEventListener('pageshow', function(ev) {
         var ov = document.getElementById('checkinPublicOverlay');
         if (ov) ov.style.display = 'flex';
       }
+      if (batismoId) {
+        var ov = document.getElementById('formularioBatismoPublicOverlay');
+        if (ov) ov.style.display = 'flex';
+      }
+      if (apresentacaoId) {
+        var ov = document.getElementById('formularioApresentacaoPublicOverlay');
+        if (ov) ov.style.display = 'flex';
+      }
     }
   }
 });
@@ -4509,6 +4925,10 @@ window.addEventListener('pageshow', function(ev) {
   if (initPublicFormOrDashboard()) return;
   if (window.location.hash === '#cadastro') {
     showCadastroPublico();
+    return;
+  }
+  if (window.location.hash === '#formulario-membro') {
+    showFormularioMembroPublico();
     return;
   }
   const stored = localStorage.getItem(AUTH_STORAGE_KEY);
