@@ -4602,11 +4602,7 @@ async function loadFormularioBatismoPublic(eventoId) {
       return;
     }
     formularioBatismoPublicEventoId = data.evento?._id || eventoId;
-    if (labelEl) {
-      let label = (data.evento?.label || 'Batismo').trim();
-      label = label.replace(/^Batismo:\s*/i, '').replace(/\s*\(\d{1,2}\/\d{1,2}\/\d{2,4}\)\s*$/, '').replace(/\s*\(\d{4}-\d{2}-\d{2}\)\s*$/, '').trim();
-      labelEl.textContent = label || 'Batismo';
-    }
+    if (labelEl) labelEl.textContent = data.evento?.label || 'Batismo';
   } catch (e) {
     if (labelEl) labelEl.textContent = 'Erro ao carregar. Tente novamente.';
   }
@@ -4650,7 +4646,7 @@ function renderApresentacaoCriancasFields() {
     wrap.className = 'form-row form-row-2';
     wrap.innerHTML = `
       <div class="form-group"><label>Criança ${idx} – Nome completo</label><input type="text" data-apres-crianca-nome data-idx="${idx}" placeholder="Nome completo"></div>
-      <div class="form-group"><label>Criança ${idx} – Data de nascimento</label><input type="date" data-apres-crianca-nascimento data-idx="${idx}" min="2020-01-01" max="${new Date().toISOString().slice(0, 10)}"></div>
+      <div class="form-group"><label>Criança ${idx} – Data de nascimento</label><input type="date" data-apres-crianca-nascimento data-idx="${idx}" min="2016-01-01" max="${new Date().toISOString().slice(0, 10)}"></div>
     `;
     container.appendChild(wrap);
   }
