@@ -547,6 +547,12 @@
                 <button type="button" class="btn btn-primary btn-sm" id="btnCopiarLinkFormularioMembro">Copiar link</button>
               </div>
             </div>
+            <div class="filters-card cadastro-link-box">
+              <div class="cadastro-link-content">
+                <span class="cadastro-link-label">Exportar inscrições:</span>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnExportFormularioMembroCsv">Novos Membros (CSV)</button>
+              </div>
+            </div>
           </section>
           <div class="table-card" style="margin-top:16px">
             <div class="chart-header"><h2>Eventos de Batismo</h2></div>
@@ -556,6 +562,9 @@
                 <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Link público</th><th>Ação</th></tr></thead>
                 <tbody id="eventosBatismoBody"></tbody>
               </table>
+            </div>
+            <div class="filters-actions" style="margin-top:12px">
+              <button type="button" class="btn btn-ghost btn-sm" id="btnExportFormularioBatismoCsv">Batismo (CSV – todos os eventos)</button>
             </div>
             <button type="button" class="btn btn-primary btn-sm" id="btnNovoEventoBatismo" style="margin-top:8px">➕ Novo evento de batismo</button>
           </div>
@@ -567,6 +576,9 @@
                 <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Link público</th><th>Ação</th></tr></thead>
                 <tbody id="eventosApresentacaoBody"></tbody>
               </table>
+            </div>
+            <div class="filters-actions" style="margin-top:12px">
+              <button type="button" class="btn btn-ghost btn-sm" id="btnExportFormularioApresentacaoCsv">Apresentação (CSV – todos os eventos)</button>
             </div>
             <button type="button" class="btn btn-primary btn-sm" id="btnNovoEventoApresentacao" style="margin-top:8px">➕ Novo evento de apresentação</button>
           </div>
