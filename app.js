@@ -1301,22 +1301,64 @@ function getFormularioMembroLinkUrl() {
 async function fetchFormularios() {
   if (!authToken) return;
   try {
-    const [rBatismo, rApres] = await Promise.all([
+    const [rBatismo, rApres, rMembro] = await Promise.all([
       authFetch(`${API_BASE}/api/eventos-formulario?tipo=batismo&_t=${Date.now()}`),
       authFetch(`${API_BASE}/api/eventos-formulario?tipo=apresentacao&_t=${Date.now()}`),
+      authFetch(`${API_BASE}/api/formularios/membro?_t=${Date.now()}`),
     ]);
     if (currentView !== 'formularios') return;
     eventosBatismo = rBatismo.ok ? (await rBatismo.json()) || [] : [];
     eventosApresentacao = rApres.ok ? (await rApres.json()) || [] : [];
+    const membrosList = rMembro?.ok ? (await rMembro.json()) || [] : [];
+    const totalMembros = Array.isArray(membrosList) ? membrosList.length : 0;
     const countBatismo = document.getElementById('eventosBatismoCount');
     const countApres = document.getElementById('eventosApresentacaoCount');
     if (countBatismo) countBatismo.textContent = `(${eventosBatismo.length})`;
     if (countApres) countApres.textContent = `(${eventosApresentacao.length})`;
+    const totalMembroEl = document.getElementById('formulariosMembroCount');
+    if (totalMembroEl) totalMembroEl.textContent = `(${totalMembros})`;
+    const totalBatismoEl = document.getElementById('formulariosBatismoTotalCount');
+    const totalApresEl = document.getElementById('formulariosApresentacaoTotalCount');
+
+    const filledBatismoById = new Map();
+    const filledApresById = new Map();
+    let totalFilledBatismo = 0;
+    let totalFilledApres = 0;
+
+    const batismoCountPromises = (eventosBatismo || []).map(async (e) => {
+      const id = e?._id;
+      if (!id) return;
+      try {
+        const rr = await authFetch(`${API_BASE}/api/formularios/batismo/${encodeURIComponent(String(id))}?_t=${Date.now()}`);
+        if (!rr.ok) return;
+        const list = await rr.json().catch(() => []);
+        const qtd = Array.isArray(list) ? list.length : 0;
+        filledBatismoById.set(String(id), qtd);
+        totalFilledBatismo += qtd;
+      } catch (_) {}
+    });
+    const apresCountPromises = (eventosApresentacao || []).map(async (e) => {
+      const id = e?._id;
+      if (!id) return;
+      try {
+        const rr = await authFetch(`${API_BASE}/api/formularios/apresentacao/${encodeURIComponent(String(id))}?_t=${Date.now()}`);
+        if (!rr.ok) return;
+        const list = await rr.json().catch(() => []);
+        const qtd = Array.isArray(list) ? list.length : 0;
+        filledApresById.set(String(id), qtd);
+        totalFilledApres += qtd;
+      } catch (_) {}
+    });
+    await Promise.all([...batismoCountPromises, ...apresCountPromises]);
+
+    if (totalBatismoEl) totalBatismoEl.textContent = `(${totalFilledBatismo})`;
+    if (totalApresEl) totalApresEl.textContent = `(${totalFilledApres})`;
+
     const formularioMembroLinkInput = document.getElementById('formularioMembroLinkInput');
     if (formularioMembroLinkInput) formularioMembroLinkInput.value = getFormularioMembroLinkUrl();
     if (eventosBatismoBody) {
       if (!eventosBatismo.length) {
-        eventosBatismoBody.innerHTML = '<tr><td colspan="5">Nenhum evento. Clique em "Novo evento de batismo" para criar.</td></tr>';
+        eventosBatismoBody.innerHTML = '<tr><td colspan="6">Nenhum evento. Clique em "Novo evento de batismo" para criar.</td></tr>';
       } else {
         eventosBatismoBody.innerHTML = eventosBatismo.map(e => {
           const eventId = (e._id != null ? String(e._id) : '');
@@ -1324,10 +1366,12 @@ async function fetchFormularios() {
           const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
           const ativo = e.ativo !== false;
           const statusText = ativo ? 'Ativo' : 'Inativo';
+          const filled = filledBatismoById.get(eventId) || 0;
           return `<tr data-event-id="${escapeAttr(eventId)}">
             <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
             <td>${escapeHtml(label)}</td>
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
+            <td>${filled}</td>
             <td><button type="button" class="btn btn-sm btn-primary" data-form-link="batismo" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
             <td><button type="button" class="btn btn-sm btn-ghost" data-form-delete="batismo" data-event-id="${escapeAttr(eventId)}" title="Excluir">Excluir</button></td>
           </tr>`;
@@ -1346,7 +1390,7 @@ async function fetchFormularios() {
     }
     if (eventosApresentacaoBody) {
       if (!eventosApresentacao.length) {
-        eventosApresentacaoBody.innerHTML = '<tr><td colspan="5">Nenhum evento. Clique em "Novo evento de apresentação" para criar.</td></tr>';
+        eventosApresentacaoBody.innerHTML = '<tr><td colspan="6">Nenhum evento. Clique em "Novo evento de apresentação" para criar.</td></tr>';
       } else {
         eventosApresentacaoBody.innerHTML = eventosApresentacao.map(e => {
           const eventId = (e._id != null ? String(e._id) : '');
@@ -1354,10 +1398,12 @@ async function fetchFormularios() {
           const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
           const ativo = e.ativo !== false;
           const statusText = ativo ? 'Ativo' : 'Inativo';
+          const filled = filledApresById.get(eventId) || 0;
           return `<tr data-event-id="${escapeAttr(eventId)}">
             <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
             <td>${escapeHtml(label)}</td>
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
+            <td>${filled}</td>
             <td><button type="button" class="btn btn-sm btn-primary" data-form-link="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
             <td><button type="button" class="btn btn-sm btn-ghost" data-form-delete="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Excluir">Excluir</button></td>
           </tr>`;

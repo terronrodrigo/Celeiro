@@ -551,15 +551,17 @@
               <div class="cadastro-link-content">
                 <span class="cadastro-link-label">Exportar inscrições:</span>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnExportFormularioMembroCsv">Novos Membros (CSV)</button>
+                <span class="cadastro-link-label" style="margin-left:12px">Preenchidos:</span>
+                <span id="formulariosMembroCount" class="list-count">(0)</span>
               </div>
             </div>
           </section>
           <div class="table-card" style="margin-top:16px">
             <div class="chart-header"><h2>Eventos de Batismo</h2></div>
-            <p class="auth-subtitle">Crie eventos por data e compartilhe o link. <span id="eventosBatismoCount" class="list-count">(0)</span></p>
+            <p class="auth-subtitle">Crie eventos por data e compartilhe o link. Eventos: <span id="eventosBatismoCount" class="list-count">(0)</span> · Preenchidos: <span id="formulariosBatismoTotalCount" class="list-count">(0)</span></p>
             <div class="table-wrapper">
               <table class="data-table">
-                <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Link público</th><th>Ação</th></tr></thead>
+                <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Preenchidos</th><th>Link público</th><th>Ação</th></tr></thead>
                 <tbody id="eventosBatismoBody"></tbody>
               </table>
             </div>
@@ -570,10 +572,10 @@
           </div>
           <div class="table-card" style="margin-top:24px">
             <div class="chart-header"><h2>Eventos de Apresentação de Bebês</h2></div>
-            <p class="auth-subtitle">Crie eventos por data e compartilhe o link. <span id="eventosApresentacaoCount" class="list-count">(0)</span></p>
+            <p class="auth-subtitle">Crie eventos por data e compartilhe o link. Eventos: <span id="eventosApresentacaoCount" class="list-count">(0)</span> · Preenchidos: <span id="formulariosApresentacaoTotalCount" class="list-count">(0)</span></p>
             <div class="table-wrapper">
               <table class="data-table">
-                <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Link público</th><th>Ação</th></tr></thead>
+                <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Preenchidos</th><th>Link público</th><th>Ação</th></tr></thead>
                 <tbody id="eventosApresentacaoBody"></tbody>
               </table>
             </div>
