@@ -1202,13 +1202,16 @@ body {
 
 /* Formulários públicos (membro/batismo/apresentação): comportamento de página normal, não modal */
 .public-form-page {
-  position: static;
-  inset: auto;
-  z-index: auto;
-  display: block;
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  display: block !important;
   padding: 24px;
   background: transparent;
   backdrop-filter: none;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
 }
 .public-form-page .auth-card {
   max-width: 720px;
