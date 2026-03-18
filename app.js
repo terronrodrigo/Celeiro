@@ -2842,6 +2842,15 @@ function formatDateTimePtBR(dateVal) {
   });
 }
 
+function safeFileName(val) {
+  const s = String(val ?? '').trim();
+  const cleaned = s
+    .replace(/[\/\\?%*:|"<>]/g, '-') // caracteres proibidos em nomes
+    .replace(/\s+/g, '-')            // espaços
+    .replace(/-+/g, '-');           // repetidos
+  return (cleaned || 'evento').slice(0, 70);
+}
+
 async function exportFormularioMembroCsv() {
   if (!authToken) return updateAuthUi();
   try {
@@ -2906,19 +2915,6 @@ async function exportFormularioBatismoCsv() {
     const eventos = Array.isArray(eventsBody) ? eventsBody : [];
     if (!eventos.length) return alert('Nenhum evento de Batismo para exportar.');
 
-    const eventoMap = new Map(eventos.map((e) => [String(e._id), e]));
-    const allRows = [];
-
-    for (const e of eventos) {
-      const rList = await authFetch(`${API_BASE}/api/formularios/batismo/${encodeURIComponent(e._id)}?_t=${Date.now()}`);
-      if (!rList.ok) continue;
-      const list = await rList.json().catch(() => ([]));
-      const items = Array.isArray(list) ? list : [];
-      for (const c of items) allRows.push({ evento: e, doc: c });
-    }
-
-    if (!allRows.length) return alert('Nenhum formulário de Batismo preenchido para exportar.');
-
     const header = [
       'Evento',
       'Data nascimento',
@@ -2932,26 +2928,38 @@ async function exportFormularioBatismoCsv() {
       'Criado em',
     ];
 
-    const rows = allRows.map(({ evento, doc }) => ([
-      (evento?.label || '').trim(),
-      formatDatePtBR(doc.dataNascimento),
-      doc.nomeCompleto || '',
-      doc.email || '',
-      doc.telefoneWhatsapp || '',
-      (doc.reconheceJesus || '').trim(),
-      (doc.querMembroCeleiro || '').trim(),
-      (doc.batizarProximo || '').trim(),
-      (doc.cursoBatismo || '').trim(),
-      formatDateTimePtBR(doc.createdAt),
-    ]).map(escapeCsv).join(','));
+    let exportedAny = false;
+    for (const e of eventos) {
+      const rList = await authFetch(`${API_BASE}/api/formularios/batismo/${encodeURIComponent(e._id)}?_t=${Date.now()}`);
+      if (!rList.ok) continue;
+      const list = await rList.json().catch(() => ([]));
+      const items = Array.isArray(list) ? list : [];
+      if (!items.length) continue;
+      exportedAny = true;
 
-    const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'formularios-batismo-export.csv';
-    a.click();
-    URL.revokeObjectURL(a.href);
+      const rows = items.map((doc) => ([
+        (e?.label || '').trim(),
+        formatDatePtBR(doc.dataNascimento),
+        doc.nomeCompleto || '',
+        doc.email || '',
+        doc.telefoneWhatsapp || '',
+        (doc.reconheceJesus || '').trim(),
+        (doc.querMembroCeleiro || '').trim(),
+        (doc.batizarProximo || '').trim(),
+        (doc.cursoBatismo || '').trim(),
+        formatDateTimePtBR(doc.createdAt),
+      ]).map(escapeCsv).join(','));
+
+      const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `formularios-batismo-${safeFileName(e?.label || e?._id)}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    if (!exportedAny) alert('Nenhum formulário de Batismo preenchido para exportar.');
   } catch (err) {
     alert(err.message || 'Erro ao exportar.');
   } finally {
@@ -2969,16 +2977,6 @@ async function exportFormularioApresentacaoCsv() {
     const eventos = Array.isArray(eventsBody) ? eventsBody : [];
     if (!eventos.length) return alert('Nenhum evento de Apresentação para exportar.');
 
-    const allItems = [];
-    for (const e of eventos) {
-      const rList = await authFetch(`${API_BASE}/api/formularios/apresentacao/${encodeURIComponent(e._id)}?_t=${Date.now()}`);
-      if (!rList.ok) continue;
-      const list = await rList.json().catch(() => ([]));
-      const items = Array.isArray(list) ? list : [];
-      for (const c of items) allItems.push({ evento: e, doc: c });
-    }
-    if (!allItems.length) return alert('Nenhum formulário de Apresentação preenchido para exportar.');
-
     const header = [
       'Evento',
       'Nome mãe',
@@ -2993,35 +2991,47 @@ async function exportFormularioApresentacaoCsv() {
       'Criado em',
     ];
 
-    const rows = allItems.map(({ evento, doc }) => {
-      const criancas = Array.isArray(doc.criancas) ? doc.criancas : [];
-      const criancasStr = criancas.map(c => {
-        const nome = (c.nomeCompleto || '').trim();
-        const nasc = formatDatePtBR(c.dataNascimento);
-        return nome ? `${nome}${nasc ? ` (${nasc})` : ''}` : '';
-      }).filter(Boolean).join('; ');
-      return ([
-        (evento?.label || '').trim(),
-        doc.nomeMae || '',
-        doc.nomePai || '',
-        Number(doc.quantidadeCriancas) || criancas.length || 0,
-        criancasStr,
-        doc.endereco || '',
-        (doc.paisMembrosCeleiro || '').trim(),
-        doc.emailContato || '',
-        doc.whatsappContato || '',
-        (doc.compromissoEducar || '').trim(),
-        formatDateTimePtBR(doc.createdAt),
-      ]).map(escapeCsv).join(',');
-    });
+    let exportedAny = false;
+    for (const e of eventos) {
+      const rList = await authFetch(`${API_BASE}/api/formularios/apresentacao/${encodeURIComponent(e._id)}?_t=${Date.now()}`);
+      if (!rList.ok) continue;
+      const list = await rList.json().catch(() => ([]));
+      const items = Array.isArray(list) ? list : [];
+      if (!items.length) continue;
+      exportedAny = true;
 
-    const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'formularios-apresentacao-export.csv';
-    a.click();
-    URL.revokeObjectURL(a.href);
+      const rows = items.map((doc) => {
+        const criancas = Array.isArray(doc.criancas) ? doc.criancas : [];
+        const criancasStr = criancas.map(c => {
+          const nome = (c.nomeCompleto || '').trim();
+          const nasc = formatDatePtBR(c.dataNascimento);
+          return nome ? `${nome}${nasc ? ` (${nasc})` : ''}` : '';
+        }).filter(Boolean).join('; ');
+        return ([
+          (e?.label || '').trim(),
+          doc.nomeMae || '',
+          doc.nomePai || '',
+          Number(doc.quantidadeCriancas) || criancas.length || 0,
+          criancasStr,
+          doc.endereco || '',
+          (doc.paisMembrosCeleiro || '').trim(),
+          doc.emailContato || '',
+          doc.whatsappContato || '',
+          (doc.compromissoEducar || '').trim(),
+          formatDateTimePtBR(doc.createdAt),
+        ]).map(escapeCsv).join(',');
+      });
+
+      const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `formularios-apresentacao-${safeFileName(e?.label || e?._id)}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    if (!exportedAny) alert('Nenhum formulário de Apresentação preenchido para exportar.');
   } catch (err) {
     alert(err.message || 'Erro ao exportar.');
   } finally {
