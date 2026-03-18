@@ -1213,6 +1213,23 @@ body {
   max-height: none !important;
   overflow: visible !important;
 }
+
+/* Reforço para iOS/Safari: neutraliza as regras base de .auth-overlay (fixed/flex) */
+.auth-overlay.public-form-page {
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  display: block !important;
+  align-items: flex-start !important;
+  justify-content: flex-start !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  overflow: visible !important;
+}
+
+.auth-overlay.public-form-page .auth-card {
+  overflow: visible !important;
+}
 .public-form-page .auth-card {
   max-width: 720px;
   margin: 0 auto;
