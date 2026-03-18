@@ -1200,14 +1200,29 @@ body {
   overflow-y: auto;
 }
 
+/* Formulários públicos (membro/batismo/apresentação): comportamento de página normal, não modal */
+.public-form-page {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  display: block;
+  padding: 24px;
+  background: transparent;
+  backdrop-filter: none;
+}
+.public-form-page .auth-card {
+  max-width: 720px;
+  margin: 0 auto;
+  box-shadow: none;
+}
+.public-form-page.cadastro-overlay .cadastro-card {
+  max-height: none;
+  overflow: visible;
+}
+
 /* Formulário Apresentação de Bebês: card rolável para não estourar a tela */
 .formulario-apresentacao-overlay .formulario-apresentacao-card {
-  max-width: 480px;
-  max-height: 90vh;
-  max-height: min(90vh, 90dvh);
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
+  max-width: 720px;
 }
 
 .cadastro-form .form-row {

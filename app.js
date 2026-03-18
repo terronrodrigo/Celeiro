@@ -4554,7 +4554,7 @@ function showFormularioMembroPublico() {
   const overlay = document.getElementById('formularioMembroOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
-  if (overlay) overlay.style.display = 'flex';
+  if (overlay) overlay.style.display = 'block';
   if (auth) auth.style.display = 'none';
   if (content) content.style.display = 'none';
 }
@@ -4571,7 +4571,7 @@ function showFormularioBatismoPublicOverlay() {
   const overlay = document.getElementById('formularioBatismoPublicOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
-  if (overlay) overlay.style.display = 'flex';
+  if (overlay) overlay.style.display = 'block';
   if (auth) auth.style.display = 'none';
   if (content) content.style.display = 'none';
 }
@@ -4581,7 +4581,7 @@ function showFormularioApresentacaoPublicOverlay() {
   const overlay = document.getElementById('formularioApresentacaoPublicOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
-  if (overlay) overlay.style.display = 'flex';
+  if (overlay) overlay.style.display = 'block';
   if (auth) auth.style.display = 'none';
   if (content) content.style.display = 'none';
   renderApresentacaoCriancasFields();
@@ -4906,11 +4906,11 @@ window.addEventListener('pageshow', function(ev) {
       }
       if (batismoId) {
         var ov = document.getElementById('formularioBatismoPublicOverlay');
-        if (ov) ov.style.display = 'flex';
+        if (ov) ov.style.display = 'block';
       }
       if (apresentacaoId) {
         var ov = document.getElementById('formularioApresentacaoPublicOverlay');
-        if (ov) ov.style.display = 'flex';
+        if (ov) ov.style.display = 'block';
       }
     }
   }
