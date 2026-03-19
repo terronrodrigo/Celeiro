@@ -20,6 +20,7 @@ import Ministerio from './models/Ministerio.js';
 import RoleHistory from './models/RoleHistory.js';
 import Escala from './models/Escala.js';
 import Candidatura from './models/Candidatura.js';
+import EscalaInscricoesPorMinisterio from './models/EscalaInscricoesPorMinisterio.js';
 import EventoFormulario from './models/EventoFormulario.js';
 import FormularioMembro from './models/FormularioMembro.js';
 import FormularioBatismo from './models/FormularioBatismo.js';
@@ -2834,12 +2835,111 @@ app.get('/api/escala-publica/:id', async (req, res) => {
       if (match) ministerioFixo = match;
       else return sendError(res, 400, 'Ministério inválido para este link. Use o link correto enviado pelo seu líder.');
     }
+
+    // Se o link está fixado para um ministério, respeita também o fechamento de inscrições desse ministério
+    if (ministerioFixo) {
+      const config = await EscalaInscricoesPorMinisterio.findOne({
+        escalaId: escala._id,
+        ministerio: ministerioFixo,
+      }).lean();
+      if (config && config.ativo === false) {
+        return res.status(200).json({
+          concluida: true,
+          mensagem: `Inscrições fechadas para o ministério ${ministerioFixo}.`,
+          escala: { _id: escala._id, nome: escala.nome, data: escala.data, descricao: escala.descricao },
+        });
+      }
+    }
     res.json({
       escala: { _id: escala._id, nome: escala.nome, data: escala.data, descricao: escala.descricao },
       ministerios: ministeriosList,
       ...(ministerioFixo && { ministerioFixo }),
     });
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
+});
+
+// ─── Fechamento de inscrições por ministério (líder) ─────────────────────────────
+// Abre/fecha apenas a inscrição de um ministério dentro de uma escala, mesmo com a escala geral ativa.
+app.get('/api/escalas/:id/inscricoes-por-ministerio', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = req.userRole === 'admin';
+    const isLider = req.userRole === 'lider';
+    if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
+
+    const escalaId = req.params.id;
+    if (!escalaId || !mongoose.Types.ObjectId.isValid(escalaId)) return sendError(res, 400, 'ID da escala inválido.');
+
+    const ministerioParam = (req.query.ministerio || '').toString().trim();
+    const ministerioLeaderDefault = isLider ? (req.userMinisterioNome || '').toString().trim() : '';
+    const ministerioRequested = ministerioParam || ministerioLeaderDefault;
+    if (!ministerioRequested) return sendError(res, 400, 'Informe o ministério.');
+
+    const ministerios = await Ministerio.find({ ativo: true }).sort({ nome: 1 }).select('nome').lean();
+    const canon = ministerios.find((m) => (m?.nome || '').trim().toLowerCase() === ministerioRequested.toLowerCase());
+    if (!canon) return sendError(res, 400, 'Ministério inválido.');
+
+    if (isLider) {
+      const allowed = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
+      const allowedCanon = allowed.map((n) => n.toLowerCase());
+      if (!allowedCanon.includes(canon.nome.toLowerCase())) {
+        return sendError(res, 403, 'Você só pode alterar inscrições do seu ministério.');
+      }
+    }
+
+    const config = await EscalaInscricoesPorMinisterio.findOne({
+      escalaId,
+      ministerio: canon.nome,
+    }).lean();
+
+    res.json({
+      escalaId,
+      ministerio: canon.nome,
+      ativo: config ? config.ativo !== false : true,
+    });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao carregar status.');
+  }
+});
+
+app.put('/api/escalas/:id/inscricoes-por-ministerio', requireAuth, async (req, res) => {
+  try {
+    const isAdmin = req.userRole === 'admin';
+    const isLider = req.userRole === 'lider';
+    if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
+
+    const escalaId = req.params.id;
+    if (!escalaId || !mongoose.Types.ObjectId.isValid(escalaId)) return sendError(res, 400, 'ID da escala inválido.');
+
+    const body = req.body || {};
+    const ministerioRequested = (body.ministerio || req.userMinisterioNome || '').toString().trim();
+    const ativo = typeof body.ativo === 'boolean' ? body.ativo : undefined;
+    if (!ministerioRequested) return sendError(res, 400, 'Informe o ministério.');
+    if (ativo === undefined) return sendError(res, 400, 'Informe "ativo" (boolean).');
+
+    const ministerios = await Ministerio.find({ ativo: true }).sort({ nome: 1 }).select('nome').lean();
+    const canon = ministerios.find((m) => (m?.nome || '').trim().toLowerCase() === ministerioRequested.toLowerCase());
+    if (!canon) return sendError(res, 400, 'Ministério inválido.');
+
+    if (isLider) {
+      const allowed = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
+      const allowedCanon = allowed.map((n) => n.toLowerCase());
+      if (!allowedCanon.includes(canon.nome.toLowerCase())) {
+        return sendError(res, 403, 'Você só pode alterar inscrições do seu ministério.');
+      }
+    }
+
+    await EscalaInscricoesPorMinisterio.findOneAndUpdate(
+      { escalaId, ministerio: canon.nome },
+      { $set: { ativo }, $setOnInsert: { criadoPor: req.userId } },
+      { new: true, upsert: true }
+    );
+
+    res.json({ ok: true, escalaId, ministerio: canon.nome, ativo });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao salvar status.');
+  }
 });
 
 // POST /api/candidaturas — candidatura pública (sem auth). Quem se candidata é considerado voluntário. Ministério deve estar na lista permitida.
@@ -2863,6 +2963,15 @@ app.post('/api/candidaturas', async (req, res) => {
       return res.status(200).json({ message: 'Você já se candidatou para esta escala.', candidatura: existing });
     }
     const ministerioCanonico = ministerioValido;
+
+    // Respeita fechamento específico do ministério (mesmo se a escala estiver ativa)
+    const config = await EscalaInscricoesPorMinisterio.findOne({
+      escalaId,
+      ministerio: ministerioCanonico,
+    }).lean();
+    if (config && config.ativo === false) {
+      return sendError(res, 403, `Inscrições fechadas para o ministério ${ministerioCanonico}.`);
+    }
     const candidatura = await Candidatura.create({
       escalaId,
       nome: (nome || '').toString().trim(),

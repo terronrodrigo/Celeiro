@@ -3237,6 +3237,15 @@ function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) 
       </div>
     </div>
   </section>
+  <div class="filters-card" id="escalaMinisterioTogglesWrap" style="display:none;margin: 0 0 12px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div class="chart-header" style="margin:0">
+        <h2 style="font-size:1rem;margin:0">Inscrições por ministério</h2>
+      </div>
+      <div style="color:var(--text-muted);font-size:.9em;margin-left:auto" id="escalaMinisterioTogglesHint"></div>
+    </div>
+    <div id="escalaMinisterioTogglesList" style="display:flex;flex-direction:column;gap:10px;margin-top:10px;"></div>
+  </div>
   <div class="table-card escala-table-card" id="escalasAnalisePanel">
     <div class="chart-header">
       <h2>Candidaturas <span id="escalasAnaliseCount">0</span></h2>
@@ -3319,6 +3328,133 @@ function bindAnalisePanelEvents(container) {
   ['analiseFilterNome', 'analiseFilterData', 'analiseFilterMinisterio', 'analiseFilterHistorico'].forEach((id) => {
     document.getElementById(id)?.addEventListener('change', applyAnaliseFilters);
   });
+
+  // (Líder) Controle de inscrição fechada por ministério na escala selecionada
+  const wrapToggle = document.getElementById('escalaMinisterioTogglesWrap');
+  const togglesListEl = document.getElementById('escalaMinisterioTogglesList');
+  const hintEl = document.getElementById('escalaMinisterioTogglesHint');
+  if (wrapToggle && togglesListEl && hintEl && authRole === 'lider' && !wrapToggle.dataset.bound) {
+    wrapToggle.dataset.bound = '1';
+
+    const getLeaderMinisterios = () => {
+      const list = Array.isArray(authMinisterioNomes) && authMinisterioNomes.length
+        ? authMinisterioNomes
+        : (authMinisterioNome ? [authMinisterioNome] : []);
+      return list.map((m) => String(m || '').trim()).filter(Boolean);
+    };
+
+    const updateTogglesState = async () => {
+      const escalaId = document.getElementById('analiseFilterEscala')?.value || '';
+      const ministerios = getLeaderMinisterios();
+
+      if (!escalaId || !ministerios.length) {
+        wrapToggle.style.display = 'none';
+        togglesListEl.innerHTML = '';
+        hintEl.textContent = '';
+        return;
+      }
+
+      // Se a escala geral estiver concluída, desabilita todos os toggles
+      const escalaObj = Array.isArray(escalasList) ? escalasList.find(e => String(e._id) === String(escalaId)) : null;
+      const isEscalaConcluida = !!(escalaObj && escalaObj.ativo === false);
+      wrapToggle.style.display = '';
+      togglesListEl.innerHTML = '';
+
+      if (isEscalaConcluida) {
+        hintEl.textContent = 'Escala concluída: sem inscrições.';
+        togglesListEl.innerHTML = ministerios.map((m, i) => `
+          <div class="escala-ministerio-toggle-row" style="display:flex;align-items:center;gap:12px;justify-content:space-between">
+            <div style="font-weight:600">${escapeHtml(m)}</div>
+            <button type="button" class="btn btn-ghost btn-sm" disabled>Escala concluída</button>
+            <span style="color:var(--text-muted);font-size:.9em"></span>
+          </div>
+        `).join('');
+        return;
+      }
+
+      hintEl.textContent = 'Controle por ministério (se estiver fechado, bloqueia novas inscrições desse ministério).';
+
+      // HTML base + busca em paralelo
+      togglesListEl.innerHTML = ministerios.map((m, i) => `
+        <div class="escala-ministerio-toggle-row" style="display:flex;align-items:center;gap:12px;justify-content:space-between">
+          <div style="font-weight:600">${escapeHtml(m)}</div>
+          <button type="button" class="btn btn-ghost btn-sm" data-ministerio-toggle-index="${i}" data-ministerio="${escapeAttr(m)}" data-ativo="true" disabled>Carregando...</button>
+          <span class="escala-ministerio-toggle-status" data-ministerio-status-index="${i}" style="color:var(--text-muted);font-size:.9em"></span>
+        </div>
+      `).join('');
+
+      const fetchStatusFor = async (ministerio, i) => {
+        try {
+          const r = await authFetch(
+            `${API_BASE}/api/escalas/${encodeURIComponent(escalaId)}/inscricoes-por-ministerio?ministerio=${encodeURIComponent(ministerio)}`
+          );
+          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+          const data = await r.json();
+          const ativo = data.ativo !== false;
+          return { i, ministerio, ativo };
+        } catch (e) {
+          return { i, ministerio, error: e?.message || 'Erro ao carregar' };
+        }
+      };
+
+      const results = await Promise.all(ministerios.map((m, i) => fetchStatusFor(m, i)));
+      results.forEach((r) => {
+        const btn = togglesListEl.querySelector(`button[data-ministerio-toggle-index="${r.i}"]`);
+        const st = togglesListEl.querySelector(`span[data-ministerio-status-index="${r.i}"]`);
+        if (!btn || !st) return;
+        if (r.error) {
+          btn.disabled = false;
+          btn.textContent = 'Erro';
+          st.textContent = r.error;
+          return;
+        }
+        btn.disabled = false;
+        btn.dataset.ativo = String(r.ativo);
+        btn.textContent = r.ativo ? 'Fechar inscrições' : 'Reabrir inscrições';
+        st.textContent = r.ativo ? 'Aberta' : 'Fechada';
+      });
+    };
+
+    // Delegação: um único listener para todos os botões re-renderizados
+    togglesListEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-ministerio-toggle-index]');
+      if (!btn) return;
+      const ministerioAtual = btn.getAttribute('data-ministerio') || '';
+      const escalaId = document.getElementById('analiseFilterEscala')?.value || '';
+      if (!escalaId || !ministerioAtual) return;
+
+      const ativoAtual = btn.dataset.ativo === 'true';
+      const novoAtivo = !ativoAtual;
+
+      btn.disabled = true;
+      btn.textContent = novoAtivo ? 'Reabrindo...' : 'Fechando...';
+
+      const row = btn.closest('.escala-ministerio-toggle-row');
+      const st = row ? row.querySelector('.escala-ministerio-toggle-status') : null;
+      if (st) st.textContent = '';
+
+      try {
+        const r = await authFetch(
+          `${API_BASE}/api/escalas/${encodeURIComponent(escalaId)}/inscricoes-por-ministerio`,
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ministerio: ministerioAtual, ativo: novoAtivo }),
+          }
+        );
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+        await updateTogglesState();
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Erro';
+        if (st) st.textContent = err?.message || 'Erro ao atualizar';
+      }
+    });
+
+    document.getElementById('analiseFilterEscala')?.addEventListener('change', updateTogglesState);
+    // Carrega estado inicial (se já houver escala pré-selecionada)
+    setTimeout(updateTogglesState, 0);
+  }
 }
 
 /** Escala → Candidatos (admin) */
