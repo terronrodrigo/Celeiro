@@ -9,6 +9,7 @@
     "dev": "node --watch server.js",
     "migrate": "node scripts/sync-mongo.js",
     "update-db": "node scripts/update-db.js",
+    "fix-planilha-celeiro": "node scripts/fix-planilha-voluntarios-celeiro.js",
     "create-voluntario-test": "node scripts/create-voluntario-test.js"
   },
   "dependencies": {

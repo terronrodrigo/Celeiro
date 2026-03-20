@@ -679,6 +679,15 @@ async function syncCheckins(igrejaId) {
   return await syncCheckinsFromText(text, igrejaId);
 }
 
+/** CSV/Sheets legados da plataforma (voluntários + check-ins) são sempre do Celeiro. */
+async function getCeleiroIgrejaIdForLegacyImport() {
+  const g = await Igreja.findOne({ slug: DEFAULT_IGREJA_SLUG }).select('_id').lean();
+  if (!g?._id) {
+    throw new Error(`Igreja "${DEFAULT_IGREJA_SLUG}" não encontrada. Rode: node scripts/migrate-multi-igreja.js`);
+  }
+  return g._id;
+}
+
 // Setup inicial: criar primeiro admin (após deploy). Protegido por SETUP_SECRET.
 app.get('/api/setup/status', async (_req, res) => {
   try {
@@ -985,7 +994,12 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
     let voluntarios = await Voluntario.find(vq).lean();
 
     if (voluntarios.length === 0 && (VOLUNTARIOS_CSV_PATH || CSV_URL)) {
-      await syncVoluntarios(req.tenantIgrejaId);
+      try {
+        const celeiroId = await getCeleiroIgrejaIdForLegacyImport();
+        await syncVoluntarios(celeiroId);
+      } catch (e) {
+        console.error('syncVoluntarios (planilha Celeiro):', e?.message || e);
+      }
       voluntarios = await Voluntario.find(vq).lean();
     }
 
@@ -1176,7 +1190,12 @@ app.get('/api/checkins', requireAuth, resolveTenant, async (req, res) => {
     let checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin eventoId presente batizado').sort({ timestampMs: -1 }).lean();
 
     if (isAdmin && checkinsData.length === 0 && CHECKIN_CSV_PATH) {
-      await syncCheckins(req.tenantIgrejaId);
+      try {
+        const celeiroId = await getCeleiroIgrejaIdForLegacyImport();
+        await syncCheckins(celeiroId);
+      } catch (e) {
+        console.error('syncCheckins (CSV Celeiro):', e?.message || e);
+      }
       checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin eventoId presente batizado').sort({ timestampMs: -1 }).lean();
     }
 
@@ -2696,8 +2715,9 @@ app.post('/api/migrate', requireAuth, resolveTenant, requireAdmin, async (req, r
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado. Configure MONGODB_URI no .env.');
     if (!VOLUNTARIOS_CSV_PATH && !CSV_URL) return sendError(res, 400, 'VOLUNTARIOS_CSV_PATH ou CSV_URL não configurado.');
-    const volResult = await syncVoluntarios(req.tenantIgrejaId);
-    const checkResult = CHECKIN_CSV_PATH ? await syncCheckins(req.tenantIgrejaId) : { inserted: 0, updated: 0, skipped: true };
+    const celeiroId = await getCeleiroIgrejaIdForLegacyImport();
+    const volResult = await syncVoluntarios(celeiroId);
+    const checkResult = CHECKIN_CSV_PATH ? await syncCheckins(celeiroId) : { inserted: 0, updated: 0, skipped: true };
 
     res.json({ 
       success: true, 

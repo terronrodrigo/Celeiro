@@ -73,6 +73,19 @@ O servidor, ao resolver `escalaId` / `eventoId`, deve validar que o documento pe
 4. Ajustar índices: trocar `unique: true` em `Voluntario.email` por índice composto `{ email: 1, igrejaId: 1 }` (e planejar deduplicação se necessário).
 5. Rodar `npm run update-db` (ou script de sync de índices) após deploy.
 
+### Planilha Google Sheets / CSV (`VOLUNTARIOS_CSV_PATH`, `CSV_URL`, check-ins CSV)
+
+A importação legada é **sempre gravada no tenant Celeiro** (`celeiro-sp`), independente do seletor de igreja no admin global. Assim a lista oficial da plataforma não “vaza” para a Inc por engano.
+
+Se já existirem voluntários `fonte: 'planilha'` com `igrejaId` errado:
+
+```bash
+cd server && npm run fix-planilha-celeiro
+# simular: node scripts/fix-planilha-voluntarios-celeiro.js --dry-run
+```
+
+O script `migrate-multi-igreja.js` também corrige esses registros ao ser executado de novo.
+
 ## 7. Fases de implementação sugeridas
 
 | Fase | Entrega |

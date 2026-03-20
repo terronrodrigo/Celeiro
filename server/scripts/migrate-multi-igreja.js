@@ -104,6 +104,23 @@ async function main() {
   }
   console.log(`  FormularioApresentacao: { modified: ${fa} }`);
 
+  // Planilha/Sheets legada é sempre do Celeiro (evita duplicar no Inc por engano).
+  const stray = await Voluntario.find({ fonte: 'planilha', igrejaId: { $ne: celeiroId } }).lean();
+  let pvMoved = 0;
+  let pvRemoved = 0;
+  for (const v of stray) {
+    const em = (v.email || '').toLowerCase().trim();
+    const existsCeleiro = await Voluntario.findOne({ email: em, igrejaId: celeiroId }).lean();
+    if (existsCeleiro) {
+      await Voluntario.deleteOne({ _id: v._id });
+      pvRemoved++;
+    } else {
+      await Voluntario.updateOne({ _id: v._id }, { $set: { igrejaId: celeiroId } });
+      pvMoved++;
+    }
+  }
+  if (stray.length) console.log(`  Voluntario (planilha → Celeiro): movidos ${pvMoved}, duplicatas removidas ${pvRemoved}`);
+
   console.log('\nOK. Rode também: cd server && npm run update-db');
   await mongoose.disconnect();
   process.exit(0);
