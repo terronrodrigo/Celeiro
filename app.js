@@ -645,6 +645,9 @@ const VIEW_META = {
 
 function setView(view, options) {
   options = options || {};
+  // Garante que overlays públicos (Novos Membros/Batismo/Apresentação/Check-in/escala link público)
+  // não fiquem aparecendo em telas admin/líder/voluntário.
+  if (authToken) hideAllPublicOverlays();
   if (view === 'escalas' && options.escalaId) escalasPreSelectId = options.escalaId;
   if (viewLoadTimeoutId) {
     clearTimeout(viewLoadTimeoutId);
