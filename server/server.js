@@ -688,6 +688,52 @@ async function getCeleiroIgrejaIdForLegacyImport() {
   return g._id;
 }
 
+/** Detecta erro de índice legado único em users.email (sem igrejaId). */
+function isLegacyUsersEmailIndexConflict(err) {
+  if (!err || err.code !== 11000) return false;
+  const msg = String(err.message || '');
+  return msg.includes('collection:') && msg.includes('.users') && msg.includes('index: email_1');
+}
+
+/** Garante índice composto de users por tenant e remove índice legado email_1 quando existir. */
+async function ensureUsersTenantEmailIndex() {
+  if (mongoose.connection.readyState !== 1) return { changed: false };
+  const col = mongoose.connection.db.collection('users');
+  const indexes = await col.indexes();
+  const hasLegacyEmailUnique = indexes.some((i) => (
+    i?.name === 'email_1'
+    && i?.unique === true
+    && i?.key
+    && Object.keys(i.key).length === 1
+    && i.key.email === 1
+  ));
+  if (hasLegacyEmailUnique) {
+    await col.dropIndex('email_1');
+  }
+  const hasTenantComposite = indexes.some((i) => (
+    i?.name === 'email_1_igrejaId_1'
+    && i?.unique === true
+    && i?.key?.email === 1
+    && i?.key?.igrejaId === 1
+  ));
+  if (!hasTenantComposite) {
+    await col.createIndex({ email: 1, igrejaId: 1 }, { unique: true, name: 'email_1_igrejaId_1' });
+  }
+  return { changed: hasLegacyEmailUnique || !hasTenantComposite };
+}
+
+/** Tenta criar usuário; se bater no índice legado email_1, auto-corrige índices e tenta uma vez de novo. */
+async function createUserWithLegacyIndexSelfHeal(payload) {
+  try {
+    return await User.create(payload);
+  } catch (err) {
+    if (!isLegacyUsersEmailIndexConflict(err)) throw err;
+    console.warn('⚠️ Detectado índice legado users.email_1; corrigindo automaticamente...');
+    await ensureUsersTenantEmailIndex();
+    return await User.create(payload);
+  }
+}
+
 /** Slug enviado pelo cliente ao escolher “admin global” quando o email existe em mais de um contexto. */
 const GLOBAL_LOGIN_SLUG = '_global';
 
@@ -865,8 +911,7 @@ app.post('/api/setup', async (req, res) => {
       return res.status(400).json({ error: 'Este email já está cadastrado como admin global. Use outra conta ou faça login.' });
     }
 
-    const user = new User({ email: emailVal, nome: nomeVal, senha: senhaVal, role: 'admin' });
-    await user.save();
+    await createUserWithLegacyIndexSelfHeal({ email: emailVal, nome: nomeVal, senha: senhaVal, role: 'admin' });
     res.status(201).json({ ok: true, message: 'Admin criado. Faça login com este email e senha.' });
   } catch (err) {
     console.error(err);
@@ -2313,10 +2358,9 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(409).json({ error: 'Email já registrado nesta igreja.' });
     }
     
-    const user = new User({
+    const user = await createUserWithLegacyIndexSelfHeal({
       email: email.toLowerCase(), nome, senha, role: 'voluntario', igrejaId: igrejaDoc._id,
     });
-    await user.save();
     try { await ensureVoluntarioInList({ email: user.email, nome: user.nome, igrejaId: igrejaDoc._id }); } catch (_) {}
     try { await vincularCheckinsAoUsuario(user._id, user.email); } catch (_) {}
     invalidateCache();
@@ -2515,7 +2559,7 @@ app.post('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res
     const existing = await User.findOne({ email: em, igrejaId: req.tenantIgrejaId });
     if (existing) return sendError(res, 409, 'Já existe um usuário com este email nesta igreja.');
     const rawIds = Array.isArray(ministerioIds) ? ministerioIds.filter(Boolean) : [];
-    const user = new User({
+    const user = await createUserWithLegacyIndexSelfHeal({
       email: em,
       nome: (nome || '').toString().trim(),
       senha: senhaVal,
@@ -2525,7 +2569,6 @@ app.post('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res
       mustChangePassword: true,
       igrejaId: req.tenantIgrejaId,
     });
-    await user.save();
     try {
       await ensureVoluntarioInList({ email: user.email, nome: user.nome, igrejaId: req.tenantIgrejaId });
     } catch (_) {}
@@ -3627,6 +3670,10 @@ async function start() {
     try {
       await mongoose.connect(process.env.MONGODB_URI);
       console.log('✅ MongoDB conectado');
+      const indexFix = await ensureUsersTenantEmailIndex();
+      if (indexFix.changed) {
+        console.log('✅ Índices users ajustados para multi-igreja (email + igrejaId).');
+      }
       await fixDataCheckinOnce();
       setImmediate(() => syncLegadoVoluntarios()); // Legado: vincular check-ins e garantir voluntários
     } catch (err) {
