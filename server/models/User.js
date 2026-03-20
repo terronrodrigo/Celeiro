@@ -25,6 +25,8 @@ const userSchema = new mongoose.Schema({
     enum: ['admin', 'voluntario', 'lider'],
     default: 'voluntario',
   },
+  /** Igreja (tenant). null = admin global (vê todas com header X-Igreja-Slug). */
+  igrejaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Igreja', default: null },
   ministerioId: { type: mongoose.Schema.Types.ObjectId, ref: 'Ministerio', default: null }, // legado; preferir ministerioIds
   ministerioIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Ministerio' }],
   ativo: {
@@ -56,6 +58,7 @@ const userSchema = new mongoose.Schema({
 
 // Índices para performance
 userSchema.index({ role: 1 });
+userSchema.index({ igrejaId: 1, role: 1 });
 userSchema.index({ ministerioIds: 1, ativo: 1 });
 userSchema.index({ resetToken: 1 });
 userSchema.index({ whatsapp: 1 });

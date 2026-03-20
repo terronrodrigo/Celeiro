@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 const formularioMembroSchema = new mongoose.Schema({
+  igrejaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Igreja', required: true },
   nomeCompleto: { type: String, trim: true, default: '' },
   dataNascimento: { type: Date },
   email: { type: String, required: true, lowercase: true, trim: true },
@@ -14,7 +15,9 @@ const formularioMembroSchema = new mongoose.Schema({
   testemunho: { type: String, trim: true, default: '' },
 }, { timestamps: true });
 
+formularioMembroSchema.index({ igrejaId: 1, email: 1 });
 formularioMembroSchema.index({ email: 1 });
+formularioMembroSchema.index({ igrejaId: 1, createdAt: -1 });
 formularioMembroSchema.index({ createdAt: -1 });
 
 export default mongoose.model('FormularioMembro', formularioMembroSchema);

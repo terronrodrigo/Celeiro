@@ -177,7 +177,7 @@ export async function processMessage(whatsappId, text, sendCodeToWhatsApp, creat
       const userForSession = await User.findOne({ email: email.toLowerCase(), ativo: true }).populate('ministerioIds', 'nome').lean();
       if (!userForSession) return 'Código inválido ou expirado.';
       if (!createAuthTokenForUser) return 'Erro de configuração. Contate o admin.';
-      const token = await createAuthTokenForUser(userForSession);
+      const { token } = await createAuthTokenForUser(userForSession);
       setSession(phone, {
         userId: String(userForSession._id),
         token,

@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 const eventoCheckinSchema = new mongoose.Schema({
+  igrejaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Igreja', required: true },
   data: { type: Date, required: true },
   label: { type: String, trim: true, default: '' },
   criadoPor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -11,6 +12,8 @@ const eventoCheckinSchema = new mongoose.Schema({
   horarioFim: { type: String, trim: true, default: '' },
 }, { timestamps: true });
 
+eventoCheckinSchema.index({ igrejaId: 1, data: 1 });
+eventoCheckinSchema.index({ igrejaId: 1, ativo: 1, data: 1 });
 eventoCheckinSchema.index({ data: 1 });
 eventoCheckinSchema.index({ ativo: 1, data: 1 });
 

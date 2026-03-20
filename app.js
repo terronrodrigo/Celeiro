@@ -4,6 +4,23 @@ const API_BASE = '';
 const AUTH_STORAGE_KEY = 'celeiro_admin_auth';
 const TZ_BRASILIA = 'America/Sao_Paulo'; // Eventos de check-in: sempre horário de Brasília
 
+/** Slug do tenant em links (?igreja=) e header X-Igreja-Slug. URL vence sessão; padrão celeiro-sp. */
+function getTenantSlugForLinks() {
+  try {
+    const u = new URL(window.location.href);
+    const q = (u.searchParams.get('igreja') || '').trim().toLowerCase();
+    if (q) return q;
+  } catch (_) {}
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (raw) {
+      const o = JSON.parse(raw);
+      if (o.igrejaSlug) return String(o.igrejaSlug).trim().toLowerCase();
+    }
+  } catch (_) {}
+  return 'celeiro-sp';
+}
+
 /** Data de hoje em Brasília no formato YYYY-MM-DD (para filtro de check-ins). */
 function getHojeDateString() {
   return new Date().toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
@@ -364,8 +381,13 @@ function setAuthSession(data) {
   authFotoUrl = (user && user.fotoUrl) ? user.fotoUrl : (data?.fotoUrl != null ? data.fotoUrl : null);
   authMustChangePassword = !!(user?.mustChangePassword || data?.mustChangePassword);
   authIsMasterAdmin = !!(user?.isMasterAdmin || data?.isMasterAdmin);
+  const igrejaSlug = (user?.igrejaSlug || data?.user?.igrejaSlug || '').toString().trim().toLowerCase() || 'celeiro-sp';
   if (authToken) {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ token: authToken, user: authUser, role: authRole, email: authEmail, ministerioId: authMinisterioId, ministerioNome: authMinisterioNome, ministerioIds: authMinisterioIds, ministerioNomes: authMinisterioNomes, fotoUrl: authFotoUrl, mustChangePassword: authMustChangePassword, isMasterAdmin: authIsMasterAdmin }));
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      token: authToken, user: authUser, role: authRole, email: authEmail,
+      ministerioId: authMinisterioId, ministerioNome: authMinisterioNome, ministerioIds: authMinisterioIds, ministerioNomes: authMinisterioNomes,
+      fotoUrl: authFotoUrl, mustChangePassword: authMustChangePassword, isMasterAdmin: authIsMasterAdmin, igrejaSlug,
+    }));
   }
   updateAuthUi();
 }
@@ -405,6 +427,8 @@ function getAuthHeaders() {
 
 async function authFetch(url, options = {}) {
   const headers = { ...(options.headers || {}), ...getAuthHeaders() };
+  const slug = getTenantSlugForLinks();
+  if (slug) headers['X-Igreja-Slug'] = slug;
   const r = await fetch(url, { ...options, headers });
   if (r.status === 401) {
     clearAuthSession();
@@ -444,6 +468,8 @@ async function verifyAuth() {
         parsed.fotoUrl = authFotoUrl;
         parsed.mustChangePassword = authMustChangePassword;
         parsed.isMasterAdmin = authIsMasterAdmin;
+        if (data.igrejaSlug) parsed.igrejaSlug = String(data.igrejaSlug).trim().toLowerCase();
+        else if (!parsed.igrejaSlug) parsed.igrejaSlug = 'celeiro-sp';
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
       } catch (_) {}
     }
@@ -3204,7 +3230,8 @@ function renderEscalasCriar() {
     if (btn.hasAttribute('data-escala-link-ministerio')) return;
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-escala-link');
-      const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}?escala=${encodeURIComponent(id)}`;
+      const ig = getTenantSlugForLinks();
+      const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}?escala=${encodeURIComponent(id)}&igreja=${encodeURIComponent(ig)}`;
       navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie:', url));
     });
   });
@@ -3738,7 +3765,8 @@ async function openModalCopiarLinkMinisterio(escalaId) {
   const listWrap = document.getElementById('modalCopiarLinkMinisterioListWrap');
   const listArea = document.getElementById('modalCopiarLinkMinisterioList');
   try {
-    const r = await fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(_modalCopiarLinkEscalaId)}`);
+    const ig = getTenantSlugForLinks();
+    const r = await fetch(`${API_BASE}/api/escala-publica/${encodeURIComponent(_modalCopiarLinkEscalaId)}?igreja=${encodeURIComponent(ig)}`);
     const data = await r.json().catch(() => ({}));
     if (!r.ok || data.concluida) {
       sel.innerHTML = '<option value="">Escala não encontrada ou inativa</option>';
@@ -3749,7 +3777,7 @@ async function openModalCopiarLinkMinisterio(escalaId) {
       sel.innerHTML = '<option value="">Selecione o ministério</option>' + list.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
       const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}`;
       const blocks = list.map((m) => {
-        const url = `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(m)}`;
+        const url = `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(m)}&igreja=${encodeURIComponent(ig)}`;
         return `${m}\n${url}`;
       });
       const text = blocks.join('\n\n');
@@ -3779,7 +3807,8 @@ document.getElementById('modalCopiarLinkMinisterioCopiar')?.addEventListener('cl
     return;
   }
   const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}`;
-  const url = `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(ministerio)}`;
+  const ig = getTenantSlugForLinks();
+  const url = `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(ministerio)}&igreja=${encodeURIComponent(ig)}`;
   navigator.clipboard.writeText(url).then(() => {
     alert('Link copiado! Quem abrir só poderá se candidatar a esse ministério.');
     document.getElementById('modalCopiarLinkMinisterio')?.classList.remove('open');
@@ -3852,7 +3881,11 @@ async function loadEscalaPublic(escalaId, ministerioFromUrl) {
   }
 
   try {
-    const url = `${API_BASE}/api/escala-publica/${encodeURIComponent(escalaIdClean)}${ministerioParam ? `?ministerio=${encodeURIComponent(ministerioParam)}` : ''}`;
+    const ig = getTenantSlugForLinks();
+    const qs = new URLSearchParams();
+    qs.set('igreja', ig);
+    if (ministerioParam) qs.set('ministerio', ministerioParam);
+    const url = `${API_BASE}/api/escala-publica/${encodeURIComponent(escalaIdClean)}?${qs}`;
     const r = await fetch(url);
     let data = {};
     try {
@@ -3935,7 +3968,10 @@ async function loadEscalaPublic(escalaId, ministerioFromUrl) {
       const r = await fetch(`${API_BASE}/api/candidaturas`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ escalaId: escalaIdClean, nome, email, telefone, ministerio }),
+        body: JSON.stringify({
+          escalaId: escalaIdClean, nome, email, telefone, ministerio,
+          igrejaSlug: getTenantSlugForLinks(),
+        }),
       });
       const data = await r.json();
       if (!r.ok && r.status !== 200) throw new Error(data.error || 'Erro ao enviar candidatura.');
@@ -4780,7 +4816,7 @@ registerForm?.addEventListener('submit', async (e) => {
   const nome = (registerNome?.value || '').trim(); const email = (registerEmail?.value || '').trim(); const senha = (registerPass?.value || '').trim();
   if (!nome || !email || !senha) { if (registerError) registerError.textContent = 'Preencha todos os campos.'; return; }
   try {
-    const r = await fetch(`${API_BASE}/api/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome, email, senha }) });
+    const r = await fetch(`${API_BASE}/api/auth/register?igreja=${encodeURIComponent(getTenantSlugForLinks())}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome, email, senha, igrejaSlug: getTenantSlugForLinks() }) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { if (registerError) registerError.textContent = data.error || 'Falha ao cadastrar.'; return; }
     if (registerNome) registerNome.value = '';
@@ -4870,7 +4906,7 @@ document.getElementById('cadastroPublicoForm')?.addEventListener('submit', async
   const btn = document.getElementById('btnCadastroPublico');
   if (btn) btn.disabled = true;
   try {
-    const r = await fetch(`${API_BASE}/api/cadastro`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const r = await fetch(`${API_BASE}/api/cadastro?igreja=${encodeURIComponent(getTenantSlugForLinks())}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       if (errEl) errEl.textContent = data.error || 'Falha ao enviar. Tente novamente.';
@@ -5075,7 +5111,7 @@ async function loadCheckinPublic(eventoId) {
   if (eventLabel) eventLabel.textContent = 'Carregando...';
   if (ministerioSel) ministerioSel.selectedIndex = 0;
   try {
-    const r = await fetch(`${API_BASE}/api/checkin-public/${encodeURIComponent(eventoId)}`);
+    const r = await fetch(`${API_BASE}/api/checkin-public/${encodeURIComponent(eventoId)}?igreja=${encodeURIComponent(getTenantSlugForLinks())}`);
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
       if (eventLabel) eventLabel.textContent = data.error || 'Evento não encontrado ou check-in encerrado.';
@@ -5115,7 +5151,10 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
     const r = await fetch(`${API_BASE}/api/checkin-public`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventoId: checkinPublicEventoId, email, ministerio, nome: nome || undefined, batizado }),
+      body: JSON.stringify({
+        eventoId: checkinPublicEventoId, email, ministerio, nome: nome || undefined, batizado,
+        igrejaSlug: getTenantSlugForLinks(),
+      }),
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -5344,6 +5383,7 @@ window.addEventListener('pageshow', function(ev) {
       authFotoUrl = parsed.fotoUrl != null ? parsed.fotoUrl : null;
       authMustChangePassword = !!parsed.mustChangePassword;
       authIsMasterAdmin = !!parsed.isMasterAdmin;
+      if (!parsed.igrejaSlug) parsed.igrejaSlug = 'celeiro-sp';
     } catch (_) {
       authToken = ''; authUser = ''; authRole = 'admin'; authEmail = null; authMinisterioId = null; authMinisterioNome = null; authMinisterioIds = []; authMinisterioNomes = []; authFotoUrl = null; authMustChangePassword = false; authIsMasterAdmin = false;
     }

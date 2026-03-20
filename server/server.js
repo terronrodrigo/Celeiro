@@ -13,6 +13,7 @@ import { dirname, join } from 'path';
 import crypto from 'crypto';
 import multer from 'multer';
 import User from './models/User.js';
+import Igreja from './models/Igreja.js';
 import Voluntario from './models/Voluntario.js';
 import Checkin from './models/Checkin.js';
 import EventoCheckin from './models/EventoCheckin.js';
@@ -28,6 +29,7 @@ import FormularioApresentacao from './models/FormularioApresentacao.js';
 import { normalizarEstado, normalizarCidade } from './utils/normalize-locale.js';
 import { createWhatsAppHandler } from './whatsapp/handler.js';
 import { processBrdidWebhook, getLastVerification } from './brdid/whatsapp-verification.js';
+import { resolveTenant, tQ, publicIgrejaFromRequest, DEFAULT_IGREJA_SLUG } from './tenant-context.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -97,21 +99,27 @@ const createAuthTokenForUser = async (user) => {
   const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
   let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
   if (ministerioIds.length === 0 && user.ministerioId) ministerioIds = [user.ministerioId];
+  ministerioIds = ministerioIds.map((m) => (m && typeof m === 'object' && m._id != null ? m._id : m)).filter(Boolean);
   const ministerioNomes = [];
+  const minFilter = user.igrejaId ? { _id: { $in: ministerioIds }, igrejaId: user.igrejaId } : { _id: { $in: ministerioIds } };
   if (ministerioIds.length > 0) {
-    const mins = await Ministerio.find({ _id: { $in: ministerioIds } }).select('nome').lean();
+    const mins = await Ministerio.find(minFilter).select('nome').lean();
     mins.forEach(m => { if (m?.nome) ministerioNomes.push(m.nome); });
   }
   const ministerioId = ministerioIds[0] || null;
   const ministerioNome = ministerioNomes[0] || null;
   const roleNorm = String(user.role || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') || 'voluntario';
   const roleFinal = roleNorm === 'lider' || roleNorm.includes('lider') ? 'lider' : roleNorm;
+  const igrejaIdStr = user.igrejaId ? String(user.igrejaId) : null;
+  const isGlobalAdmin = roleFinal === 'admin' && !user.igrejaId;
   authTokens.set(token, {
     user: user.nome, userId: user._id, role: roleFinal, email: user.email,
     ministerioId, ministerioNome, ministerioIds, ministerioNomes, expiresAt,
     mustChangePassword: !!user.mustChangePassword,
+    igrejaId: igrejaIdStr,
+    isGlobalAdmin,
   });
-  return token;
+  return { token, expiresAt };
 };
 const whatsappHandler = createWhatsAppHandler({ createAuthTokenForUser });
 app.get('/api/whatsapp/webhook', (req, res) => whatsappHandler.handleVerify(req, res));
@@ -129,8 +137,10 @@ const CSV_URL = process.env.GOOGLE_SHEETS_CSV_URL ||
 const cache = {
   voluntarios: null,
   voluntariosTime: 0,
+  voluntariosIgrejaId: null,
   checkins: null,
   checkinsTime: 0,
+  checkinsIgrejaId: null,
 };
 const CACHE_TTL = (Number(process.env.CACHE_TTL_MINUTES) || 30) * 60 * 1000;
 
@@ -213,6 +223,9 @@ app.post('/api/cadastro', async (req, res) => {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'Serviço temporariamente indisponível. Tente em instantes.');
 
+    const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug na URL ou igrejaSlug no corpo.');
+
     const body = req.body || {};
     const email = (body.email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
@@ -262,12 +275,12 @@ app.post('/api/cadastro', async (req, res) => {
     };
     const clean = Object.fromEntries(Object.entries(doc).filter(([, v]) => v !== undefined));
 
-    const existing = await Voluntario.findOne({ email });
+    const existing = await Voluntario.findOne({ email, igrejaId: igrejaDoc._id });
     if (existing) {
-      await Voluntario.updateOne({ email }, { $set: clean });
+      await Voluntario.updateOne({ email, igrejaId: igrejaDoc._id }, { $set: clean });
       return res.status(200).json({ ok: true, message: 'Cadastro atualizado com sucesso.' });
     }
-    await Voluntario.create(clean);
+    await Voluntario.create({ ...clean, igrejaId: igrejaDoc._id });
     invalidateCache();
     return res.status(201).json({ ok: true, message: 'Cadastro realizado com sucesso.' });
   } catch (err) {
@@ -304,6 +317,8 @@ function requireAuth(req, res, next) {
   req.userMinisterioNome = data.ministerioNome || null;
   req.userMinisterioIds = Array.isArray(data.ministerioIds) ? data.ministerioIds : [];
   req.userMinisterioNomes = Array.isArray(data.ministerioNomes) ? data.ministerioNomes : (data.ministerioNome ? [data.ministerioNome] : []);
+  req.authIgrejaIdStr = data.igrejaId != null && data.igrejaId !== '' ? String(data.igrejaId) : null;
+  req.authIsGlobalAdmin = data.isGlobalAdmin === true;
   req.token = token;
   next();
 }
@@ -330,6 +345,25 @@ function requireAdminOrLider(req, res, next) {
   next();
 }
 
+// Lista igrejas (admin global: todas; admin vinculado a uma igreja: só a sua). Sem resolveTenant.
+app.get('/api/igrejas', requireAuth, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    if (req.authIsGlobalAdmin) {
+      const list = await Igreja.find({ ativo: true }).sort({ nome: 1 }).select('nome slug ativo').lean();
+      return res.json(list);
+    }
+    if (req.userRole === 'admin' && req.authIgrejaIdStr && mongoose.Types.ObjectId.isValid(req.authIgrejaIdStr)) {
+      const g = await Igreja.findById(req.authIgrejaIdStr).select('nome slug ativo').lean();
+      return res.json(g ? [g] : []);
+    }
+    return res.status(403).json({ error: 'Acesso negado.' });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao listar igrejas.');
+  }
+});
+
 // ─── BR DID – Webhook verificação WhatsApp (https://brdid.com.br/api-docs/) ───
 // POST: recebe dados da chamada/áudio quando WhatsApp envia código de verificação
 app.post('/api/brdid/whatsapp-verification', async (req, res) => {
@@ -343,7 +377,7 @@ app.post('/api/brdid/whatsapp-verification', async (req, res) => {
   }
 });
 // GET: admin consulta último código recebido (para digitar no WhatsApp Business)
-app.get('/api/brdid/whatsapp-verification/latest', requireAuth, requireAdmin, (req, res) => {
+app.get('/api/brdid/whatsapp-verification/latest', requireAuth, resolveTenant, requireAdmin, (req, res) => {
   const last = getLastVerification();
   if (!last) return res.json({ codigo: null, mensagem: 'Nenhum código recebido ainda. Configure o webhook no BR DID e inicie a verificação no WhatsApp Business.' });
   res.json({
@@ -358,25 +392,30 @@ app.get('/api/brdid/whatsapp-verification/latest', requireAuth, requireAdmin, (r
 function invalidateCache() {
   cache.voluntarios = null;
   cache.voluntariosTime = 0;
+  cache.voluntariosIgrejaId = null;
   cache.checkins = null;
   cache.checkinsTime = 0;
+  cache.checkinsIgrejaId = null;
 }
 
 /** Garante que o email esteja na lista de voluntários (mesmo com dados incompletos). Usado em registro, role voluntário e check-in. */
-async function ensureVoluntarioInList({ email, nome, ministerio }) {
+async function ensureVoluntarioInList({ email, nome, ministerio, igrejaId }) {
   const em = (email || '').toString().trim().toLowerCase();
   if (!em || !em.includes('@')) return null;
+  if (!igrejaId) return null;
   const setFields = {};
   const nomeStr = (nome || '').toString().trim();
   if (nomeStr) setFields.nome = nomeStr;
   const minStr = (ministerio || '').toString().trim();
   if (minStr) setFields.ministerio = minStr;
   const update = {
-    $setOnInsert: { email: em, ativo: true, fonte: 'manual', timestamp: new Date(), timestampMs: Date.now() },
+    $setOnInsert: {
+      email: em, igrejaId, ativo: true, fonte: 'manual', timestamp: new Date(), timestampMs: Date.now(),
+    },
     ...(Object.keys(setFields).length ? { $set: setFields } : {}),
   };
   const doc = await Voluntario.findOneAndUpdate(
-    { email: em },
+    { email: em, igrejaId },
     update,
     { upsert: true, new: true }
   ).lean();
@@ -397,7 +436,7 @@ async function vincularCheckinsAoUsuario(userId, email) {
 /** Legado: garante que todos os usuários (conta) tenham check-ins vinculados e estejam na lista de voluntários. */
 async function syncLegadoVoluntarios() {
   try {
-    const users = await User.find({}).select('email nome').lean();
+    const users = await User.find({}).select('email nome igrejaId').lean();
     let linked = 0;
     for (const u of users) {
       const em = (u.email || '').toString().trim().toLowerCase();
@@ -408,7 +447,9 @@ async function syncLegadoVoluntarios() {
           { $set: { userId: u._id } }
         );
         if (r.modifiedCount > 0) { linked += r.modifiedCount; }
-        await ensureVoluntarioInList({ email: em, nome: (u.nome || '').toString().trim() });
+        if (u.igrejaId) {
+          await ensureVoluntarioInList({ email: em, nome: (u.nome || '').toString().trim(), igrejaId: u.igrejaId });
+        }
       } catch (_) {}
     }
     if (linked > 0) {
@@ -561,9 +602,12 @@ function buildColMap(headers, cols) {
   return colMap;
 }
 
-async function syncVoluntariosFromText(text) {
+async function syncVoluntariosFromText(text, igrejaId) {
   if (mongoose.connection.readyState !== 1) {
     throw new Error('MongoDB não conectado. Configure MONGODB_URI no .env.');
+  }
+  if (!igrejaId) {
+    throw new Error('igrejaId é obrigatório para importar voluntários (escopo da igreja).');
   }
   const rows = parseCsvRows(text);
   if (!rows.length) return { inserted: 0, updated: 0 };
@@ -574,21 +618,24 @@ async function syncVoluntariosFromText(text) {
   voluntarios.forEach(v => byEmail.set(v.email.toLowerCase(), v));
   const unique = Array.from(byEmail.values());
 
-  const operations = unique.map(doc => ({
+  const operations = unique.map((doc) => ({
     updateOne: {
-      filter: { email: doc.email.toLowerCase() },
-      update: { $set: doc },
-      upsert: true
-    }
+      filter: { email: doc.email.toLowerCase(), igrejaId },
+      update: { $set: { ...doc, igrejaId, fonte: 'planilha', ativo: true } },
+      upsert: true,
+    },
   }));
   const result = await Voluntario.bulkWrite(operations, { ordered: false });
   invalidateCache();
   return { inserted: result.upsertedCount || 0, updated: result.modifiedCount || 0 };
 }
 
-async function syncCheckinsFromText(text) {
+async function syncCheckinsFromText(text, igrejaId) {
   if (mongoose.connection.readyState !== 1) {
     throw new Error('MongoDB não conectado. Configure MONGODB_URI no .env.');
+  }
+  if (!igrejaId) {
+    throw new Error('igrejaId é obrigatório para importar check-ins.');
   }
   const rows = parseCsvRows(text);
   if (!rows.length) return { inserted: 0, updated: 0 };
@@ -604,32 +651,32 @@ async function syncCheckinsFromText(text) {
   });
   const unique = Array.from(byKey.values());
 
-  const operations = unique.map(doc => ({
+  const operations = unique.map((doc) => ({
     updateOne: {
-      filter: { email: doc.email, ministerio: doc.ministerio, timestampMs: doc.timestampMs },
-      update: { $set: doc },
-      upsert: true
-    }
+      filter: { email: doc.email, ministerio: doc.ministerio, timestampMs: doc.timestampMs, igrejaId },
+      update: { $set: { ...doc, igrejaId } },
+      upsert: true,
+    },
   }));
   const result = await Checkin.bulkWrite(operations, { ordered: false });
   invalidateCache();
   return { inserted: result.upsertedCount || 0, updated: result.modifiedCount || 0 };
 }
 
-async function syncVoluntarios() {
+async function syncVoluntarios(igrejaId) {
   const text = await readCsvTextFromSource({
     path: VOLUNTARIOS_CSV_PATH,
     url: VOLUNTARIOS_CSV_PATH ? '' : CSV_URL,
   });
-  return await syncVoluntariosFromText(text);
+  return await syncVoluntariosFromText(text, igrejaId);
 }
 
-async function syncCheckins() {
+async function syncCheckins(igrejaId) {
   const text = await readCsvTextFromSource({
     path: CHECKIN_CSV_PATH,
     url: '',
   });
-  return await syncCheckinsFromText(text);
+  return await syncCheckinsFromText(text, igrejaId);
 }
 
 // Setup inicial: criar primeiro admin (após deploy). Protegido por SETUP_SECRET.
@@ -691,7 +738,10 @@ app.post('/api/login', async (req, res) => {
       } catch (_) {}
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
-      authTokens.set(token, { user: ADMIN_USER, userId: null, role: 'admin', email: null, expiresAt });
+      authTokens.set(token, {
+        user: ADMIN_USER, userId: null, role: 'admin', email: null, expiresAt,
+        igrejaId: null, isGlobalAdmin: true,
+      });
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       return res.json({
         token,
@@ -709,7 +759,6 @@ app.post('/api/login', async (req, res) => {
     user.ultimoAcesso = new Date();
     await user.save();
 
-    const mustChangePassword = user.mustChangePassword === true;
     let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
     if (ministerioIds.length === 0 && user.ministerioId) {
       ministerioIds = [user.ministerioId];
@@ -718,19 +767,36 @@ app.post('/api/login', async (req, res) => {
     }
     const ministerioNomes = [];
     if (ministerioIds.length > 0) {
-      const mins = await Ministerio.find({ _id: { $in: ministerioIds } }).select('nome').lean();
+      const minQ = { _id: { $in: ministerioIds } };
+      if (user.igrejaId) minQ.igrejaId = user.igrejaId;
+      const mins = await Ministerio.find(minQ).select('nome').lean();
       mins.forEach(m => { if (m && m.nome) ministerioNomes.push(m.nome); });
     }
     const ministerioId = ministerioIds[0] || null;
     const ministerioNome = ministerioNomes[0] || null;
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
     const roleNorm = String(user.role || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') || 'voluntario';
     const roleFinal = roleNorm === 'lider' || roleNorm.includes('lider') ? 'lider' : roleNorm;
-    authTokens.set(token, { user: user.nome, userId: user._id, role: roleFinal, email: user.email, ministerioId, ministerioNome, ministerioIds, ministerioNomes, expiresAt, mustChangePassword });
+    const igrejaIdStr = user.igrejaId ? String(user.igrejaId) : null;
+    const isGlobalAdmin = roleFinal === 'admin' && !user.igrejaId;
+    const mustChangePassword = user.mustChangePassword === true;
+    const { token, expiresAt } = await createAuthTokenForUser(user);
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const isMasterAdmin = MASTER_ADMIN_EMAIL && (user.email || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
-    return res.json({ token, user: { nome: user.nome, email: user.email, role: roleFinal, ministerioId, ministerioNome, ministerioIds, ministerioNomes, fotoUrl: user.fotoUrl || null, mustChangePassword, isMasterAdmin }, expiresAt });
+    let igrejaNome = null;
+    let igrejaSlug = null;
+    if (user.igrejaId) {
+      const ig = await Igreja.findById(user.igrejaId).select('nome slug').lean();
+      if (ig) { igrejaNome = ig.nome; igrejaSlug = ig.slug; }
+    }
+    return res.json({
+      token,
+      user: {
+        nome: user.nome, email: user.email, role: roleFinal, ministerioId, ministerioNome, ministerioIds, ministerioNomes,
+        fotoUrl: user.fotoUrl || null, mustChangePassword, isMasterAdmin,
+        igrejaId: igrejaIdStr, igrejaNome, igrejaSlug, isGlobalAdmin,
+      },
+      expiresAt,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao fazer login.' });
@@ -745,27 +811,35 @@ app.get('/api/me', requireAuth, async (req, res) => {
   let role = req.userRole;
   let ministerioId = req.userMinisterioId;
   let ministerioNome = req.userMinisterioNome;
-  let ministerioIds = req.userMinisterioIds || [];
-  let ministerioNomes = req.userMinisterioNomes || [];
+    let ministerioIds = req.userMinisterioIds || [];
+    let ministerioNomes = req.userMinisterioNomes || [];
+  let igrejaSlug = null;
   try {
     let userEmail = req.userEmail;
+    let dbUser = null;
     if (req.userId) {
-      const user = await User.findById(req.userId).select('nome fotoUrl mustChangePassword email role ministerioIds').lean();
-      if (user) {
-        if (user.nome) displayName = user.nome;
-        if (user.fotoUrl) fotoUrl = user.fotoUrl;
-        if (user.mustChangePassword) mustChangePassword = true;
-        if (user.email) userEmail = user.email;
-        if (user.role) {
-          const r = String(user.role).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      dbUser = await User.findById(req.userId).select('nome fotoUrl mustChangePassword email role ministerioIds igrejaId').lean();
+      if (dbUser) {
+        if (dbUser.nome) displayName = dbUser.nome;
+        if (dbUser.fotoUrl) fotoUrl = dbUser.fotoUrl;
+        if (dbUser.mustChangePassword) mustChangePassword = true;
+        if (dbUser.email) userEmail = dbUser.email;
+        if (dbUser.role) {
+          const r = String(dbUser.role).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
           role = r === 'lider' || r.includes('lider') ? 'lider' : r;
         }
-        if (user.ministerioIds && user.ministerioIds.length > 0) {
-          ministerioIds = user.ministerioIds.map(id => id);
-          const mins = await Ministerio.find({ _id: { $in: ministerioIds } }).select('nome').lean();
+        if (dbUser.ministerioIds && dbUser.ministerioIds.length > 0) {
+          ministerioIds = dbUser.ministerioIds.map(id => id);
+          const minQ = { _id: { $in: ministerioIds } };
+          if (dbUser.igrejaId) minQ.igrejaId = dbUser.igrejaId;
+          const mins = await Ministerio.find(minQ).select('nome').lean();
           ministerioNomes = mins.map(m => m?.nome).filter(Boolean);
           ministerioId = ministerioIds[0] || null;
           ministerioNome = ministerioNomes[0] || null;
+        }
+        if (dbUser.igrejaId) {
+          const ig = await Igreja.findById(dbUser.igrejaId).select('slug').lean();
+          if (ig?.slug) igrejaSlug = ig.slug;
         }
       }
     } else if (req.userRole === 'admin' && ADMIN_USER) {
@@ -774,7 +848,9 @@ app.get('/api/me', requireAuth, async (req, res) => {
     }
     const email = userEmail;
     if (email) {
-      const vol = await Voluntario.findOne({ email: email.toLowerCase() }).select('nome').lean();
+      const volQ = { email: email.toLowerCase() };
+      if (dbUser?.igrejaId) volQ.igrejaId = dbUser.igrejaId;
+      const vol = await Voluntario.findOne(volQ).select('nome').lean();
       if (vol && vol.nome && String(vol.nome).trim()) displayName = vol.nome.trim();
     }
   } catch (_) {}
@@ -792,6 +868,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
   if (MASTER_ADMIN_EMAIL) {
     payload.isMasterAdmin = (req.userEmail || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
   }
+  if (igrejaSlug) payload.igrejaSlug = igrejaSlug;
   res.json(payload);
 });
 
@@ -851,7 +928,7 @@ app.post('/api/logout', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) => {
+app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, async (req, res) => {
   try {
     const isLider = req.userRole === 'lider';
     const ministerioNomes = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
@@ -882,7 +959,14 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
       });
     };
 
-    if (isCacheValid('voluntarios') && cache.voluntarios && Array.isArray(cache.voluntarios.voluntarios)) {
+    const tenantIdStr = String(req.tenantIgrejaId);
+    if (
+      isCacheValid('voluntarios') &&
+      cache.voluntariosIgrejaId != null &&
+      String(cache.voluntariosIgrejaId) === tenantIdStr &&
+      cache.voluntarios &&
+      Array.isArray(cache.voluntarios.voluntarios)
+    ) {
       if (!isLider) return res.json(cache.voluntarios);
       const filteredCached = filterByMinisterio(cache.voluntarios.voluntarios);
       return res.json({
@@ -896,11 +980,12 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
       return sendError(res, 500, 'MongoDB não conectado. Configure MONGODB_URI no .env.');
     }
 
-    let voluntarios = await Voluntario.find({ ativo: true }).lean();
+    const vq = { ativo: true, ...tQ(req) };
+    let voluntarios = await Voluntario.find(vq).lean();
 
     if (voluntarios.length === 0 && (VOLUNTARIOS_CSV_PATH || CSV_URL)) {
-      await syncVoluntarios();
-      voluntarios = await Voluntario.find({ ativo: true }).lean();
+      await syncVoluntarios(req.tenantIgrejaId);
+      voluntarios = await Voluntario.find(vq).lean();
     }
 
     // Para líder, evita o bloco pesado de upsert em toda request (causa lentidão/travamento).
@@ -909,7 +994,7 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
       const existingEmails = new Set(voluntarios.map(v => (v.email || '').toLowerCase().trim()).filter(Boolean));
       const toInsert = []; // { email, nome? }
       try {
-        const usersVoluntarios = await User.find({ role: 'voluntario' }).select('email nome').lean();
+        const usersVoluntarios = await User.find({ role: 'voluntario', ...tQ(req) }).select('email nome').lean();
         (usersVoluntarios || []).forEach(u => {
           const em = (u.email || '').toLowerCase().trim();
           if (em && em.includes('@') && !existingEmails.has(em)) {
@@ -917,7 +1002,7 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
             existingEmails.add(em);
           }
         });
-        const checkinEmails = await Checkin.distinct('email').then(arr => (arr || []).map(e => (e || '').toLowerCase().trim()).filter(Boolean));
+        const checkinEmails = await Checkin.distinct('email', { ...tQ(req) }).then(arr => (arr || []).map(e => (e || '').toLowerCase().trim()).filter(Boolean));
         checkinEmails.forEach(em => {
           if (em && em.includes('@') && !existingEmails.has(em)) {
             toInsert.push({ email: em });
@@ -927,10 +1012,11 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
         if (toInsert.length > 0) {
           const ops = toInsert.map(({ email, nome }) => ({
             updateOne: {
-              filter: { email },
+              filter: { email, ...tQ(req) },
               update: {
                 $setOnInsert: {
                   email,
+                  igrejaId: req.tenantIgrejaId,
                   ativo: true,
                   fonte: 'manual',
                   timestamp: new Date(),
@@ -942,7 +1028,7 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
             },
           }));
           await Voluntario.bulkWrite(ops, { ordered: false });
-          voluntarios = await Voluntario.find({ ativo: true }).lean();
+          voluntarios = await Voluntario.find(vq).lean();
         }
       } catch (e) { /* não falhar a listagem */ }
     }
@@ -973,6 +1059,7 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
     };
     cache.voluntarios = fullData;
     cache.voluntariosTime = Date.now();
+    cache.voluntariosIgrejaId = req.tenantIgrejaId;
 
     if (!isLider) return res.json(fullData);
 
@@ -988,16 +1075,24 @@ app.get('/api/voluntarios', requireAuth, requireAdminOrLider, async (req, res) =
 });
 
 // Lista só os emails (para "selecionar todos" no front, com os mesmos filtros)
-app.get('/api/voluntarios/emails', requireAuth, requireAdminOrLider, async (req, res) => {
+app.get('/api/voluntarios/emails', requireAuth, resolveTenant, requireAdminOrLider, async (req, res) => {
   try {
     const isLider = req.userRole === 'lider';
     const ministerioNomes = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
 
     let list = [];
-    if (!isLider && isCacheValid('voluntarios') && cache.voluntarios && Array.isArray(cache.voluntarios.voluntarios)) {
+    const tenantIdStrEmails = String(req.tenantIgrejaId);
+    if (
+      !isLider &&
+      isCacheValid('voluntarios') &&
+      cache.voluntariosIgrejaId != null &&
+      String(cache.voluntariosIgrejaId) === tenantIdStrEmails &&
+      cache.voluntarios &&
+      Array.isArray(cache.voluntarios.voluntarios)
+    ) {
       list = cache.voluntarios.voluntarios;
     } else {
-      let raw = await Voluntario.find({ ativo: true }).lean();
+      let raw = await Voluntario.find({ ativo: true, ...tQ(req) }).lean();
       if (isLider && ministerioNomes.length > 0) {
         raw = raw.filter((v) => {
           const m = (v.ministerio || '').toString().trim();
@@ -1015,7 +1110,7 @@ app.get('/api/voluntarios/emails', requireAuth, requireAdminOrLider, async (req,
     const qLower = (q && typeof q === 'string') ? q.trim().toLowerCase() : '';
     let checkinEmails = new Set();
     if (comCheckin) {
-      checkinEmails = new Set(await Checkin.distinct('email').then(arr => (arr || []).map(e => (e || '').toLowerCase().trim()).filter(Boolean)));
+      checkinEmails = new Set(await Checkin.distinct('email', { ...tQ(req) }).then(arr => (arr || []).map(e => (e || '').toLowerCase().trim()).filter(Boolean)));
     }
     const filtered = list.filter(v => {
       if (qLower) {
@@ -1051,7 +1146,7 @@ app.get('/api/voluntarios/emails', requireAuth, requireAdminOrLider, async (req,
   }
 });
 
-app.get('/api/checkins', requireAuth, async (req, res) => {
+app.get('/api/checkins', requireAuth, resolveTenant, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado. Configure MONGODB_URI no .env.');
@@ -1059,7 +1154,7 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
     const isAdmin = req.userRole === 'admin';
     const { data: dataFiltro, eventoId, ministerio } = req.query;
 
-    let query = {};
+    let query = { ...tQ(req) };
     if (!isAdmin) {
       const userEmail = (req.userEmail || (req.userId && (await User.findById(req.userId).select('email').lean())?.email) || '').toString().trim().toLowerCase();
       if (!req.userId && !userEmail) return res.json({ checkins: [], resumo: { total: 0, ministerios: [] } });
@@ -1080,7 +1175,7 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
     let checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin eventoId presente batizado').sort({ timestampMs: -1 }).lean();
 
     if (isAdmin && checkinsData.length === 0 && CHECKIN_CSV_PATH) {
-      await syncCheckins();
+      await syncCheckins(req.tenantIgrejaId);
       checkinsData = await Checkin.find(query).select('email nome ministerio timestamp timestampMs dataCheckin eventoId presente batizado').sort({ timestampMs: -1 }).lean();
     }
 
@@ -1120,6 +1215,7 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
     if (isAdmin) {
       cache.checkins = data;
       cache.checkinsTime = Date.now();
+      cache.checkinsIgrejaId = String(req.tenantIgrejaId);
     }
     res.json(data);
   } catch (err) {
@@ -1133,7 +1229,7 @@ app.get('/api/checkins', requireAuth, async (req, res) => {
 function escapeRegex(s) {
   return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
+app.get('/api/checkins/ministerio', requireAuth, resolveTenant, async (req, res) => {
   try {
     const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length ? req.userMinisterioNomes.map(String).map(s => s.trim()).filter(Boolean) : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
     if (nomes.length === 0) {
@@ -1146,7 +1242,7 @@ app.get('/api/checkins/ministerio', requireAuth, async (req, res) => {
       { ministerio: { $in: nomes } },
       ...nomes.map((n) => ({ ministerio: new RegExp(escapeRegex(n), 'i') })),
     ];
-    const query = { $or: orConditions };
+    const query = { $or: orConditions, ...tQ(req) };
     if (dataFiltro) {
       const dateCondition = queryDataCheckinDiaBrasilia(String(dataFiltro).trim());
       if (dateCondition) Object.assign(query, dateCondition);
@@ -1263,14 +1359,14 @@ function isWithinEventWindow(evento) {
 }
 
 // Eventos de check-in: admin vê TODOS (ativos e inativos); voluntário vê só ativos. /hoje filtra ativo.
-app.get('/api/eventos-checkin', requireAuth, async (req, res) => {
+app.get('/api/eventos-checkin', requireAuth, resolveTenant, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const { data } = req.query;
     const isAdmin = String(req.userRole || '').toLowerCase() === 'admin';
-    const query = {};
+    const query = { ...tQ(req) };
     if (!isAdmin) query.ativo = true;
     if (data) {
       const { start, end } = getDayRangeBrasilia(data);
@@ -1284,14 +1380,14 @@ app.get('/api/eventos-checkin', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/eventos-checkin/hoje', requireAuth, async (req, res) => {
+app.get('/api/eventos-checkin/hoje', requireAuth, resolveTenant, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
     const hojeStr = getHojeDateString();
     const { start, end } = getDayRangeBrasilia(hojeStr);
     if (!start || !end) return res.json([]);
-    const eventos = await EventoCheckin.find({ ativo: true, data: { $gte: start, $lt: end } }).sort({ data: 1 }).lean();
+    const eventos = await EventoCheckin.find({ ...tQ(req), ativo: true, data: { $gte: start, $lt: end } }).sort({ data: 1 }).lean();
     res.json(eventos);
   } catch (err) {
     console.error(err);
@@ -1299,7 +1395,7 @@ app.get('/api/eventos-checkin/hoje', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/eventos-checkin', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/eventos-checkin', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { data, label, ativo, horarioInicio, horarioFim } = req.body || {};
     if (!data) return sendError(res, 400, 'Campo "data" é obrigatório (YYYY-MM-DD ou ISO).');
@@ -1311,6 +1407,7 @@ app.post('/api/eventos-checkin', requireAuth, requireAdmin, async (req, res) => 
     if (horarioInicio != null && horarioInicio !== '' && !hin) return sendError(res, 400, 'horarioInicio deve ser HH:mm (ex: 19:00).');
     if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm (ex: 22:00).');
     const evento = await EventoCheckin.create({
+      ...tQ(req),
       data: dataOnly,
       label: label || `Culto ${dataOnly.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}`,
       criadoPor: req.userId,
@@ -1325,11 +1422,11 @@ app.post('/api/eventos-checkin', requireAuth, requireAdmin, async (req, res) => 
   }
 });
 
-app.put('/api/eventos-checkin/:id/ativo', requireAuth, requireAdmin, async (req, res) => {
+app.put('/api/eventos-checkin/:id/ativo', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { ativo } = req.body;
     if (typeof ativo !== 'boolean') return sendError(res, 400, 'ativo deve ser boolean.');
-    const evento = await EventoCheckin.findByIdAndUpdate(req.params.id, { ativo }, { new: true });
+    const evento = await EventoCheckin.findOneAndUpdate({ _id: req.params.id, ...tQ(req) }, { ativo }, { new: true });
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
     invalidateCache();
     res.json(evento);
@@ -1339,7 +1436,7 @@ app.put('/api/eventos-checkin/:id/ativo', requireAuth, requireAdmin, async (req,
   }
 });
 
-app.put('/api/eventos-checkin/:id', requireAuth, requireAdmin, async (req, res) => {
+app.put('/api/eventos-checkin/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { label, ativo, horarioInicio, horarioFim } = req.body || {};
     const update = {};
@@ -1351,7 +1448,7 @@ app.put('/api/eventos-checkin/:id', requireAuth, requireAdmin, async (req, res) 
     if (horarioFim !== undefined) update.horarioFim = hfi || '';
     if (horarioInicio != null && horarioInicio !== '' && !hin) return sendError(res, 400, 'horarioInicio deve ser HH:mm (ex: 19:00).');
     if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm (ex: 22:00).');
-    const evento = await EventoCheckin.findByIdAndUpdate(req.params.id, update, { new: true });
+    const evento = await EventoCheckin.findOneAndUpdate({ _id: req.params.id, ...tQ(req) }, update, { new: true });
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
     invalidateCache();
     res.json(evento);
@@ -1361,9 +1458,9 @@ app.put('/api/eventos-checkin/:id', requireAuth, requireAdmin, async (req, res) 
   }
 });
 
-app.delete('/api/eventos-checkin/:id', requireAuth, requireAdmin, async (req, res) => {
+app.delete('/api/eventos-checkin/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const evento = await EventoCheckin.findByIdAndDelete(req.params.id);
+    const evento = await EventoCheckin.findOneAndDelete({ _id: req.params.id, ...tQ(req) });
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
     invalidateCache();
     res.json({ ok: true, message: 'Evento excluído.' });
@@ -1374,7 +1471,7 @@ app.delete('/api/eventos-checkin/:id', requireAuth, requireAdmin, async (req, re
 });
 
 // Voluntário confirma presença no dia (check-in)
-app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
+app.post('/api/checkins/confirmar', requireAuth, resolveTenant, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
@@ -1392,15 +1489,16 @@ app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
     }
     if (!email) return sendError(res, 403, 'Usuário sem email. Faça login como voluntário.');
 
-    const evento = await EventoCheckin.findById(eventoId).lean();
+    const evento = await EventoCheckin.findOne({ _id: eventoId, ...tQ(req) }).lean();
     if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou inativo.');
     // Se o evento está ativo, aceita check-in a qualquer momento (sem trava de data nem janela de horário).
     const eventDateStr = getEventDateStringSaoPaulo(evento) || new Date(evento.data).toISOString().slice(0, 10);
     const dataCheckin = getDayRangeBrasilia(eventDateStr).start;
-    const existing = await Checkin.findOne({ eventoId, email: email.toLowerCase(), dataCheckin });
+    const existing = await Checkin.findOne({ eventoId, email: email.toLowerCase(), dataCheckin, ...tQ(req) });
     if (existing) return res.json({ message: 'Check-in já realizado.', checkin: existing });
 
     const checkin = await Checkin.create({
+      ...tQ(req),
       email: email.toLowerCase(),
       nome: nome || '',
       ministerio: ministerio || '',
@@ -1412,7 +1510,11 @@ app.post('/api/checkins/confirmar', requireAuth, async (req, res) => {
       eventoId,
       userId: req.userId,
     });
-    try { await ensureVoluntarioInList({ email: email.toLowerCase(), nome: nome || '', ministerio: ministerio || '' }); } catch (_) {}
+    try {
+      await ensureVoluntarioInList({
+        email: email.toLowerCase(), nome: nome || '', ministerio: ministerio || '', igrejaId: req.tenantIgrejaId,
+      });
+    } catch (_) {}
     invalidateCache();
     res.status(201).json(checkin);
   } catch (err) {
@@ -1427,10 +1529,13 @@ app.get('/api/checkin-public/:eventoId', async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug no link.');
     const evento = await EventoCheckin.findById(req.params.eventoId).lean();
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+    if (String(evento.igrejaId) !== String(igrejaDoc._id)) return sendError(res, 404, 'Evento não encontrado.');
     if (evento.ativo !== true) return sendError(res, 404, 'Check-in não está aberto para este evento.');
-    const ministerios = await Ministerio.find({}).sort({ nome: 1 }).select('nome').lean();
+    const ministerios = await Ministerio.find({ igrejaId: igrejaDoc._id }).sort({ nome: 1 }).select('nome').lean();
     const ministeriosList = ministerios.length > 0 ? ministerios.map(m => m.nome).filter(Boolean) : MINISTERIOS_PADRAO_PUBLIC;
     res.json({
       evento: {
@@ -1458,17 +1563,25 @@ app.post('/api/checkin-public', async (req, res) => {
     if (!em || !em.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
     if (!eventoId) return sendError(res, 400, 'Evento é obrigatório.');
     const batizado = batizadoRaw === true || batizadoRaw === 'sim' ? true : (batizadoRaw === false || batizadoRaw === 'nao' ? false : null);
+    const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug ou igrejaSlug no corpo.');
     const evento = await EventoCheckin.findById(eventoId).lean();
     if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
+    if (String(evento.igrejaId) !== String(igrejaDoc._id)) return sendError(res, 404, 'Evento não encontrado.');
     // Se o evento está ativo, aceita check-in a qualquer momento (sem trava de data nem janela de horário).
     const eventDateStr = getEventDateStringSaoPaulo(evento) || new Date(evento.data).toISOString().slice(0, 10);
     const dataCheckin = getDayRangeBrasilia(eventDateStr).start;
-    const existing = await Checkin.findOne({ eventoId, email: em, dataCheckin });
+    const existing = await Checkin.findOne({ eventoId, email: em, dataCheckin, igrejaId: igrejaDoc._id });
     if (existing) {
-      try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim() }); } catch (_) {}
+      try {
+        await ensureVoluntarioInList({
+          email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim(), igrejaId: igrejaDoc._id,
+        });
+      } catch (_) {}
       return res.status(200).json({ message: 'Check-in já realizado.', checkin: existing });
     }
     const checkin = await Checkin.create({
+      igrejaId: igrejaDoc._id,
       email: em,
       nome: (nome || '').toString().trim() || '',
       ministerio: (ministerio || '').toString().trim() || '',
@@ -1479,7 +1592,11 @@ app.post('/api/checkin-public', async (req, res) => {
       batizado: batizado ?? null,
       eventoId: evento._id,
     });
-    try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim() }); } catch (_) {}
+    try {
+      await ensureVoluntarioInList({
+        email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim(), igrejaId: igrejaDoc._id,
+      });
+    } catch (_) {}
     invalidateCache();
     res.status(201).json({ message: 'Check-in realizado!', checkin });
   } catch (err) {
@@ -1490,13 +1607,13 @@ app.post('/api/checkin-public', async (req, res) => {
 
 // ─── Formulários (membros, batismo, apresentação) ───
 // Eventos de formulário (batismo / apresentação) — por data, como check-in
-app.get('/api/eventos-formulario', requireAuth, async (req, res) => {
+app.get('/api/eventos-formulario', requireAuth, resolveTenant, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const { tipo, data } = req.query;
     const isAdmin = String(req.userRole || '').toLowerCase() === 'admin';
-    const query = {};
+    const query = { ...tQ(req) };
     if (tipo && (tipo === 'batismo' || tipo === 'apresentacao')) query.tipo = tipo;
     if (!isAdmin) query.ativo = true;
     if (data) {
@@ -1511,7 +1628,7 @@ app.get('/api/eventos-formulario', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/eventos-formulario', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/eventos-formulario', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { data, label, tipo, ativo, horarioInicio, horarioFim } = req.body || {};
     if (!data) return sendError(res, 400, 'Campo "data" é obrigatório (YYYY-MM-DD ou ISO).');
@@ -1525,6 +1642,7 @@ app.post('/api/eventos-formulario', requireAuth, requireAdmin, async (req, res) 
     if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm.');
     const nomeTipo = tipo === 'batismo' ? 'Batismo' : 'Apresentação de bebês';
     const evento = await EventoFormulario.create({
+      ...tQ(req),
       data: dataOnly,
       label: label || `${nomeTipo} ${dataOnly.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}`,
       tipo,
@@ -1540,11 +1658,11 @@ app.post('/api/eventos-formulario', requireAuth, requireAdmin, async (req, res) 
   }
 });
 
-app.put('/api/eventos-formulario/:id/ativo', requireAuth, requireAdmin, async (req, res) => {
+app.put('/api/eventos-formulario/:id/ativo', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { ativo } = req.body;
     if (typeof ativo !== 'boolean') return sendError(res, 400, 'ativo deve ser boolean.');
-    const evento = await EventoFormulario.findByIdAndUpdate(req.params.id, { ativo }, { new: true });
+    const evento = await EventoFormulario.findOneAndUpdate({ _id: req.params.id, ...tQ(req) }, { ativo }, { new: true });
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
     res.json(evento);
   } catch (err) {
@@ -1553,7 +1671,7 @@ app.put('/api/eventos-formulario/:id/ativo', requireAuth, requireAdmin, async (r
   }
 });
 
-app.put('/api/eventos-formulario/:id', requireAuth, requireAdmin, async (req, res) => {
+app.put('/api/eventos-formulario/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { label, ativo, horarioInicio, horarioFim } = req.body || {};
     const update = {};
@@ -1565,7 +1683,7 @@ app.put('/api/eventos-formulario/:id', requireAuth, requireAdmin, async (req, re
     if (horarioFim !== undefined) update.horarioFim = hfi || '';
     if (horarioInicio != null && horarioInicio !== '' && !hin) return sendError(res, 400, 'horarioInicio deve ser HH:mm.');
     if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm.');
-    const evento = await EventoFormulario.findByIdAndUpdate(req.params.id, update, { new: true });
+    const evento = await EventoFormulario.findOneAndUpdate({ _id: req.params.id, ...tQ(req) }, update, { new: true });
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
     res.json(evento);
   } catch (err) {
@@ -1574,9 +1692,9 @@ app.put('/api/eventos-formulario/:id', requireAuth, requireAdmin, async (req, re
   }
 });
 
-app.delete('/api/eventos-formulario/:id', requireAuth, requireAdmin, async (req, res) => {
+app.delete('/api/eventos-formulario/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const evento = await EventoFormulario.findByIdAndDelete(req.params.id);
+    const evento = await EventoFormulario.findOneAndDelete({ _id: req.params.id, ...tQ(req) });
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
     res.json({ ok: true, message: 'Evento excluído.' });
   } catch (err) {
@@ -1589,10 +1707,13 @@ app.delete('/api/eventos-formulario/:id', requireAuth, requireAdmin, async (req,
 app.get('/api/formulario-publico/:tipo/:eventoId', async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug no link.');
     const { tipo, eventoId } = req.params;
     if (tipo !== 'batismo' && tipo !== 'apresentacao') return sendError(res, 400, 'Tipo inválido.');
     const evento = await EventoFormulario.findById(eventoId).lean();
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+    if (String(evento.igrejaId) !== String(igrejaDoc._id)) return sendError(res, 404, 'Evento não encontrado.');
     if (evento.tipo !== tipo) return sendError(res, 404, 'Evento não encontrado.');
     if (evento.ativo !== true) return sendError(res, 404, 'Formulário não está aberto para este evento.');
     const nomeTipo = tipo === 'batismo' ? 'Batismo' : 'Apresentação de Bebês';
@@ -1623,14 +1744,18 @@ app.post('/api/formulario-publico', async (req, res) => {
 
     if (tipo === 'batismo') {
       if (!eventoId) return sendError(res, 400, 'eventoId é obrigatório.');
+      const igrejaDoc = await publicIgrejaFromRequest(req);
+      if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Envie "igreja" (slug) no corpo.');
       const evento = await EventoFormulario.findById(eventoId).lean();
       if (!evento || evento.tipo !== 'batismo' || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou formulário encerrado.');
+      if (String(evento.igrejaId) !== String(igrejaDoc._id)) return sendError(res, 404, 'Evento não encontrado.');
       const nomeCompleto = (body.nomeCompleto || '').trim();
       const email = (body.email || '').trim().toLowerCase();
       if (!nomeCompleto) return sendError(res, 400, 'Nome completo é obrigatório.');
       if (!email || !email.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
       const dataNascimento = body.dataNascimento ? parseNascimento(body.dataNascimento) : undefined;
       const doc = await FormularioBatismo.create({
+        igrejaId: igrejaDoc._id,
         eventoId: evento._id,
         nomeCompleto,
         dataNascimento: dataNascimento || undefined,
@@ -1646,8 +1771,11 @@ app.post('/api/formulario-publico', async (req, res) => {
 
     if (tipo === 'apresentacao') {
       if (!eventoId) return sendError(res, 400, 'eventoId é obrigatório.');
+      const igrejaDoc = await publicIgrejaFromRequest(req);
+      if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Envie "igreja" (slug) no corpo.');
       const evento = await EventoFormulario.findById(eventoId).lean();
       if (!evento || evento.tipo !== 'apresentacao' || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou formulário encerrado.');
+      if (String(evento.igrejaId) !== String(igrejaDoc._id)) return sendError(res, 404, 'Evento não encontrado.');
       const nomeMae = (body.nomeMae || '').trim();
       const nomePai = (body.nomePai || '').trim();
       const quantidadeCriancas = Math.max(0, parseInt(body.quantidadeCriancas, 10) || 0);
@@ -1662,6 +1790,7 @@ app.post('/api/formulario-publico', async (req, res) => {
       const emailContato = (body.emailContato || '').trim().toLowerCase();
       if (!emailContato || !emailContato.includes('@')) return sendError(res, 400, 'E-mail de contato é obrigatório e deve ser válido.');
       const doc = await FormularioApresentacao.create({
+        igrejaId: igrejaDoc._id,
         eventoId: evento._id,
         nomeMae,
         nomePai,
@@ -1687,6 +1816,8 @@ app.post('/api/formulario-publico', async (req, res) => {
 app.post('/api/formularios/membro', async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Envie "igreja" (slug) no corpo.');
     const body = req.body || {};
     const email = (body.email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
@@ -1694,6 +1825,7 @@ app.post('/api/formularios/membro', async (req, res) => {
     if (!nomeCompleto) return sendError(res, 400, 'Nome completo é obrigatório.');
     const dataNascimento = body.dataNascimento ? parseNascimento(body.dataNascimento) : undefined;
     await FormularioMembro.create({
+      igrejaId: igrejaDoc._id,
       nomeCompleto,
       dataNascimento: dataNascimento || undefined,
       email,
@@ -1714,11 +1846,11 @@ app.post('/api/formularios/membro', async (req, res) => {
 });
 
 // Admin: listar inscrições formulário membros
-app.get('/api/formularios/membro', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/formularios/membro', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    const list = await FormularioMembro.find({}).sort({ createdAt: -1 }).lean();
+    const list = await FormularioMembro.find({ ...tQ(req) }).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     console.error(err);
@@ -1727,10 +1859,12 @@ app.get('/api/formularios/membro', requireAuth, requireAdmin, async (req, res) =
 });
 
 // Admin: listar inscrições batismo por evento
-app.get('/api/formularios/batismo/:eventoId', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/formularios/batismo/:eventoId', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
-    const list = await FormularioBatismo.find({ eventoId: req.params.eventoId }).sort({ createdAt: -1 }).lean();
+    const ev = await EventoFormulario.findOne({ _id: req.params.eventoId, ...tQ(req) }).select('_id').lean();
+    if (!ev) return res.json([]);
+    const list = await FormularioBatismo.find({ eventoId: req.params.eventoId, ...tQ(req) }).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     console.error(err);
@@ -1739,10 +1873,12 @@ app.get('/api/formularios/batismo/:eventoId', requireAuth, requireAdmin, async (
 });
 
 // Admin: listar inscrições apresentação por evento
-app.get('/api/formularios/apresentacao/:eventoId', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/formularios/apresentacao/:eventoId', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
-    const list = await FormularioApresentacao.find({ eventoId: req.params.eventoId }).sort({ createdAt: -1 }).lean();
+    const ev = await EventoFormulario.findOne({ _id: req.params.eventoId, ...tQ(req) }).select('_id').lean();
+    if (!ev) return res.json([]);
+    const list = await FormularioApresentacao.find({ eventoId: req.params.eventoId, ...tQ(req) }).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     console.error(err);
@@ -1754,11 +1890,16 @@ app.get('/api/formularios/apresentacao/:eventoId', requireAuth, requireAdmin, as
 app.get('/api/me/perfil', requireAuth, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   try {
-    const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email').lean())?.email);
+    const userRow = req.userId
+      ? await User.findById(req.userId).select('email fotoUrl igrejaId').lean()
+      : await User.findOne({ email: (req.userEmail || '').toLowerCase().trim() }).select('email fotoUrl igrejaId').lean();
+    const email = (req.userEmail || userRow?.email || '').toLowerCase().trim();
     if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
+    const volFilter = { email };
+    if (userRow?.igrejaId) volFilter.igrejaId = userRow.igrejaId;
     const [perfil, user] = await Promise.all([
-      Voluntario.findOne({ email: email.toLowerCase() }).lean(),
-      req.userId ? User.findById(req.userId).select('fotoUrl').lean() : User.findOne({ email: email.toLowerCase() }).select('fotoUrl').lean(),
+      Voluntario.findOne(volFilter).lean(),
+      Promise.resolve(userRow),
     ]);
     if (!perfil) return res.json({ fotoUrl: user?.fotoUrl ?? null });
     const areasStr = Array.isArray(perfil.areas) ? perfil.areas.join(', ') : (perfil.areas || '');
@@ -1771,8 +1912,10 @@ app.get('/api/me/perfil', requireAuth, async (req, res) => {
 
 app.put('/api/me/perfil', requireAuth, async (req, res) => {
   try {
-    const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email').lean())?.email);
+    const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email igrejaId').lean())?.email);
     if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
+    const uRow = req.userId ? await User.findById(req.userId).select('igrejaId').lean() : await User.findOne({ email: email.toLowerCase() }).select('igrejaId').lean();
+    if (!uRow?.igrejaId) return sendError(res, 400, 'Conta sem igreja vinculada. Contate o administrador.');
     const body = { ...req.body };
     delete body.email;
     delete body._id;
@@ -1792,8 +1935,8 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
     if (body.estado != null) body.estado = normalizarEstado(body.estado);
     if (body.cidade != null) body.cidade = normalizarCidade(body.cidade);
     const perfil = await Voluntario.findOneAndUpdate(
-      { email: email.toLowerCase() },
-      { $set: body },
+      { email: email.toLowerCase(), igrejaId: uRow.igrejaId },
+      { $set: body, $setOnInsert: { email: email.toLowerCase(), igrejaId: uRow.igrejaId, ativo: true, fonte: 'manual' } },
       { new: true, upsert: true, runValidators: true }
     ).lean();
     invalidateCache();
@@ -1805,7 +1948,7 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
 });
 
 // Revisar texto de email com LLM (Grok): devolve HTML profissional (links como botões, títulos em negrito).
-app.post('/api/email/review-llm', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/email/review-llm', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const body = req.body || {};
     const raw = (body.text ?? body.content ?? '').toString().trim();
@@ -1948,7 +2091,7 @@ app.get('/api/versiculo-dia', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/send-email', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/send-email', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   const { to, subject, html, text, voluntarios: voluntariosMap } = req.body;
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
@@ -2013,8 +2156,13 @@ app.post('/api/send-email', requireAuth, requireAdmin, async (req, res) => {
 // ==================== NOVOS ENDPOINTS DE USUÁRIOS ====================
 
 // POST /api/auth/register - Registrar novo usuário
+// Body/query: igreja=slug (default celeiro-sp) — voluntário vincula à igreja do link.
 app.post('/api/auth/register', async (req, res) => {
   try {
+    const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (!igrejaDoc) {
+      return res.status(404).json({ error: 'Igreja não encontrada. Informe o slug no campo ou query "igreja".' });
+    }
     const { email, nome, senha } = req.body || {};
     if (!email || !nome || !senha) {
       return res.status(400).json({ error: 'Email, nome e senha são obrigatórios.' });
@@ -2025,17 +2173,38 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(409).json({ error: 'Email já registrado.' });
     }
     
-    const user = new User({ email: email.toLowerCase(), nome, senha, role: 'voluntario' });
+    const user = new User({
+      email: email.toLowerCase(), nome, senha, role: 'voluntario', igrejaId: igrejaDoc._id,
+    });
     await user.save();
-    try { await ensureVoluntarioInList({ email: user.email, nome: user.nome }); } catch (_) {}
+    try { await ensureVoluntarioInList({ email: user.email, nome: user.nome, igrejaId: igrejaDoc._id }); } catch (_) {}
     try { await vincularCheckinsAoUsuario(user._id, user.email); } catch (_) {}
     invalidateCache();
 
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
-    authTokens.set(token, { user: user.nome || user.email, userId: user._id, role: user.role, email: user.email, expiresAt });
-    
-    res.status(201).json({ token, user: user.toJSON(), expiresAt });
+    const { token, expiresAt } = await createAuthTokenForUser(user);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const roleFinal = 'voluntario';
+    const igrejaIdStr = String(igrejaDoc._id);
+    const isMasterAdmin = MASTER_ADMIN_EMAIL && (user.email || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
+    res.status(201).json({
+      token,
+      user: {
+        ...user.toJSON(),
+        role: roleFinal,
+        ministerioId: null,
+        ministerioNome: null,
+        ministerioIds: [],
+        ministerioNomes: [],
+        fotoUrl: user.fotoUrl || null,
+        mustChangePassword: false,
+        isMasterAdmin,
+        igrejaId: igrejaIdStr,
+        igrejaNome: igrejaDoc.nome,
+        igrejaSlug: igrejaDoc.slug,
+        isGlobalAdmin: false,
+      },
+      expiresAt,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao registrar usuário.' });
@@ -2139,11 +2308,44 @@ app.post('/api/auth/login-email', async (req, res) => {
     await user.save();
     try { await vincularCheckinsAoUsuario(user._id, user.email); } catch (_) {}
 
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
-    authTokens.set(token, { user: user.nome || user.email, userId: user._id, role: user.role, email: user.email, expiresAt });
-
-    res.json({ token, user: user.toJSON(), expiresAt });
+    let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
+    if (ministerioIds.length === 0 && user.ministerioId) {
+      ministerioIds = [user.ministerioId];
+      user.ministerioIds = ministerioIds;
+      await user.save();
+    }
+    const ministerioNomes = [];
+    if (ministerioIds.length > 0) {
+      const minQ = { _id: { $in: ministerioIds } };
+      if (user.igrejaId) minQ.igrejaId = user.igrejaId;
+      const mins = await Ministerio.find(minQ).select('nome').lean();
+      mins.forEach(m => { if (m && m.nome) ministerioNomes.push(m.nome); });
+    }
+    const ministerioId = ministerioIds[0] || null;
+    const ministerioNome = ministerioNomes[0] || null;
+    const roleNorm = String(user.role || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') || 'voluntario';
+    const roleFinal = roleNorm === 'lider' || roleNorm.includes('lider') ? 'lider' : roleNorm;
+    const igrejaIdStr = user.igrejaId ? String(user.igrejaId) : null;
+    const isGlobalAdmin = roleFinal === 'admin' && !user.igrejaId;
+    const mustChangePassword = user.mustChangePassword === true;
+    const { token, expiresAt } = await createAuthTokenForUser(user);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const isMasterAdmin = MASTER_ADMIN_EMAIL && (user.email || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
+    let igrejaNome = null;
+    let igrejaSlug = null;
+    if (user.igrejaId) {
+      const ig = await Igreja.findById(user.igrejaId).select('nome slug').lean();
+      if (ig) { igrejaNome = ig.nome; igrejaSlug = ig.slug; }
+    }
+    res.json({
+      token,
+      user: {
+        nome: user.nome, email: user.email, role: roleFinal, ministerioId, ministerioNome, ministerioIds, ministerioNomes,
+        fotoUrl: user.fotoUrl || null, mustChangePassword, isMasterAdmin,
+        igrejaId: igrejaIdStr, igrejaNome, igrejaSlug, isGlobalAdmin,
+      },
+      expiresAt,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao fazer login.' });
@@ -2184,7 +2386,7 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
 });
 
 // POST /api/users - Criar usuário (admin only). Senha temporária; usuário deve trocar no primeiro acesso.
-app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { email, nome, senha, role, ministerioIds } = req.body || {};
     const em = (email || '').toString().trim().toLowerCase();
@@ -2205,9 +2407,12 @@ app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
       ministerioIds: (roleVal === 'lider' || roleVal === 'admin') ? rawIds : [],
       ativo: true,
       mustChangePassword: true,
+      igrejaId: req.tenantIgrejaId,
     });
     await user.save();
-    try { await ensureVoluntarioInList({ email: user.email, nome: user.nome }); } catch (_) {}
+    try {
+      await ensureVoluntarioInList({ email: user.email, nome: user.nome, igrejaId: req.tenantIgrejaId });
+    } catch (_) {}
     invalidateCache();
     const created = await User.findById(user._id).select('-senha -resetToken -resetTokenExpires').populate('ministerioIds', 'nome').lean();
     res.status(201).json(created);
@@ -2218,15 +2423,15 @@ app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // GET /api/ministros - Listar ministérios (admin)
-app.get('/api/ministros', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/ministros', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
-    const list = await Ministerio.find({}).sort({ nome: 1 }).lean();
+    const list = await Ministerio.find({ ...tQ(req) }).sort({ nome: 1 }).lean();
     
     // Otimização: busca todos os líderes de uma vez (evita N+1)
     const ministerioIds = list.map(m => m._id);
-    const allLeaders = await User.find({ ministerioIds: { $in: ministerioIds }, ativo: true }).select('nome email role ministerioIds').lean();
+    const allLeaders = await User.find({ ministerioIds: { $in: ministerioIds }, ativo: true, ...tQ(req) }).select('nome email role ministerioIds').lean();
     const leadersByMinist = {};
     allLeaders.forEach(u => {
       (u.ministerioIds || []).forEach(mid => {
@@ -2244,16 +2449,16 @@ app.get('/api/ministros', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // POST /api/ministros - Criar ministério (admin)
-app.post('/api/ministros', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/ministros', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
     const nome = String(req.body?.nome || '').trim();
     if (!nome) return sendError(res, 400, 'Nome do ministério é obrigatório.');
     const slug = nome.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-    const existing = await Ministerio.findOne({ $or: [{ nome }, { slug }] });
+    const existing = await Ministerio.findOne({ $or: [{ nome }, { slug }], ...tQ(req) });
     if (existing) return sendError(res, 400, 'Ministério com esse nome já existe.');
-    const doc = await Ministerio.create({ nome, slug: slug || nome });
+    const doc = await Ministerio.create({ nome, slug: slug || nome, ...tQ(req) });
     res.status(201).json(doc);
   } catch (err) {
     console.error(err);
@@ -2262,31 +2467,31 @@ app.post('/api/ministros', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // PUT /api/ministros/:id - Atualizar ministério ou atribuir líderes (admin). liderIds = array de userId.
-app.put('/api/ministros/:id', requireAuth, requireAdmin, async (req, res) => {
+app.put('/api/ministros/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { nome, ativo, liderId, liderIds } = req.body;
-    const minist = await Ministerio.findById(req.params.id);
+    const minist = await Ministerio.findOne({ _id: req.params.id, ...tQ(req) });
     if (!minist) return sendError(res, 404, 'Ministério não encontrado.');
     if (nome != null) minist.nome = String(nome).trim();
     if (ativo !== undefined) minist.ativo = !!ativo;
     await minist.save();
     const newLiderIds = Array.isArray(liderIds) ? liderIds.filter(Boolean) : (liderId ? [liderId] : undefined);
     if (newLiderIds !== undefined) {
-      const exLideres = await User.find({ ministerioIds: minist._id }).select('_id role ministerioIds').lean();
+      const exLideres = await User.find({ ministerioIds: minist._id, ...tQ(req) }).select('_id role ministerioIds').lean();
       for (const u of exLideres) {
         const newIds = (u.ministerioIds || []).filter(id => String(id) !== String(minist._id));
         await User.findByIdAndUpdate(u._id, { ministerioIds: newIds, ...(newIds.length === 0 && u.role !== 'admin' ? { role: 'voluntario' } : {}) });
-        await RoleHistory.create({ userId: u._id, fromRole: u.role || 'lider', toRole: newIds.length === 0 && u.role !== 'admin' ? 'voluntario' : (u.role || 'lider'), ministerioId: minist._id, changedBy: req.userId });
+        await RoleHistory.create({ igrejaId: req.tenantIgrejaId, userId: u._id, fromRole: u.role || 'lider', toRole: newIds.length === 0 && u.role !== 'admin' ? 'voluntario' : (u.role || 'lider'), ministerioId: minist._id, changedBy: req.userId });
       }
       for (const uid of newLiderIds) {
-        const u = await User.findById(uid).select('ministerioIds role').lean();
+        const u = await User.findOne({ _id: uid, ...tQ(req) }).select('ministerioIds role').lean();
         if (!u) continue;
         const ids = [...(u.ministerioIds || []).map(id => id)];
         if (ids.some(id => String(id) === String(minist._id))) continue;
         ids.push(minist._id);
         const newRole = u.role === 'admin' ? 'admin' : 'lider';
         await User.findByIdAndUpdate(uid, { ministerioIds: ids, role: newRole });
-        await RoleHistory.create({ userId: uid, fromRole: u.role || 'voluntario', toRole: newRole, ministerioId: minist._id, changedBy: req.userId });
+        await RoleHistory.create({ igrejaId: req.tenantIgrejaId, userId: uid, fromRole: u.role || 'voluntario', toRole: newRole, ministerioId: minist._id, changedBy: req.userId });
       }
     }
     res.json(minist);
@@ -2297,17 +2502,17 @@ app.put('/api/ministros/:id', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // DELETE /api/ministros/:id - Excluir ministério (admin)
-app.delete('/api/ministros/:id', requireAuth, requireAdmin, async (req, res) => {
+app.delete('/api/ministros/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const minist = await Ministerio.findById(req.params.id);
+    const minist = await Ministerio.findOne({ _id: req.params.id, ...tQ(req) });
     if (!minist) return sendError(res, 404, 'Ministério não encontrado.');
-    const exLideres = await User.find({ ministerioIds: minist._id }).select('_id role ministerioIds').lean();
+    const exLideres = await User.find({ ministerioIds: minist._id, ...tQ(req) }).select('_id role ministerioIds').lean();
     for (const u of exLideres) {
       const newIds = (u.ministerioIds || []).filter(id => String(id) !== String(minist._id));
       await User.findByIdAndUpdate(u._id, { ministerioIds: newIds, ...(newIds.length === 0 && u.role !== 'admin' ? { role: 'voluntario' } : {}) });
-      await RoleHistory.create({ userId: u._id, fromRole: u.role || 'lider', toRole: newIds.length === 0 && u.role !== 'admin' ? 'voluntario' : (u.role || 'lider'), ministerioId: minist._id, changedBy: req.userId });
+      await RoleHistory.create({ igrejaId: req.tenantIgrejaId, userId: u._id, fromRole: u.role || 'lider', toRole: newIds.length === 0 && u.role !== 'admin' ? 'voluntario' : (u.role || 'lider'), ministerioId: minist._id, changedBy: req.userId });
     }
-    await Ministerio.findByIdAndDelete(minist._id);
+    await Ministerio.findOneAndDelete({ _id: minist._id, ...tQ(req) });
     res.json({ ok: true, message: 'Ministério excluído.' });
   } catch (err) {
     console.error(err);
@@ -2316,13 +2521,13 @@ app.delete('/api/ministros/:id', requireAuth, requireAdmin, async (req, res) => 
 });
 
 // GET /api/users/foto - Foto de um usuário por email (admin ou líder, para exibir no perfil)
-app.get('/api/users/foto', requireAuth, async (req, res) => {
+app.get('/api/users/foto', requireAuth, resolveTenant, async (req, res) => {
   try {
     const role = String(req.userRole || '').toLowerCase();
     if (role !== 'admin' && role !== 'lider') return res.status(403).json({ error: 'Acesso negado.' });
     const email = (req.query.email || '').trim().toLowerCase();
     if (!email) return res.status(400).json({ error: 'Parâmetro email é obrigatório.' });
-    const user = await User.findOne({ email }).select('fotoUrl').lean();
+    const user = await User.findOne({ email, ...tQ(req) }).select('fotoUrl').lean();
     res.json({ fotoUrl: user?.fotoUrl || null });
   } catch (err) {
     console.error(err);
@@ -2331,12 +2536,12 @@ app.get('/api/users/foto', requireAuth, async (req, res) => {
 });
 
 // GET /api/users - Listar usuários (admin only). Query: search (nome/email), ativo (true|false).
-app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
     const { search, ativo } = req.query || {};
-    const filter = {};
+    const filter = { ...tQ(req) };
     if (ativo === 'true') filter.ativo = true;
     if (ativo === 'false') filter.ativo = false;
     if (search && typeof search === 'string' && search.trim()) {
@@ -2352,11 +2557,11 @@ app.get('/api/users', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // GET /api/users/by-email?email=xxx - Buscar usuário por email (admin, para definir líderes)
-app.get('/api/users/by-email', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/users/by-email', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const email = (req.query.email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) return sendError(res, 400, 'Email inválido.');
-    const user = await User.findOne({ email }, '-senha -resetToken -resetTokenExpires').populate('ministerioIds', 'nome').lean();
+    const user = await User.findOne({ email, ...tQ(req) }, '-senha -resetToken -resetTokenExpires').populate('ministerioIds', 'nome').lean();
     if (!user) return sendError(res, 404, 'Nenhum usuário encontrado com este email.');
     res.json(user);
   } catch (err) {
@@ -2366,9 +2571,9 @@ app.get('/api/users/by-email', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // GET /api/users/:id/history - Histórico de alteração de role (admin)
-app.get('/api/users/:id/history', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/users/:id/history', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const list = await RoleHistory.find({ userId: req.params.id }).sort({ createdAt: -1 }).populate('changedBy', 'nome').populate('ministerioId', 'nome').lean();
+    const list = await RoleHistory.find({ userId: req.params.id, ...tQ(req) }).sort({ createdAt: -1 }).populate('changedBy', 'nome').populate('ministerioId', 'nome').lean();
     res.json(list);
   } catch (err) {
     console.error(err);
@@ -2377,10 +2582,10 @@ app.get('/api/users/:id/history', requireAuth, requireAdmin, async (req, res) =>
 });
 
 // PUT /api/users/:id - Editar usuário e role (admin); registra histórico. ministerioIds = array (líder pode ter vários; admin também pode ter).
-app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
+app.put('/api/users/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { nome, role, ativo, ministerioId, ministerioIds } = req.body;
-    const user = await User.findById(req.params.id);
+    const user = await User.findOne({ _id: req.params.id, ...tQ(req) });
     if (!user) return sendError(res, 404, 'Usuário não encontrado.');
     const fromRole = user.role;
     const updates = {};
@@ -2397,13 +2602,18 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
     } else if (rawIds !== undefined && (newRole === 'lider' || newRole === 'admin')) {
       updates.ministerioIds = rawIds.filter(Boolean);
     }
-    const updated = await User.findByIdAndUpdate(req.params.id, updates, { new: true }).populate('ministerioIds', 'nome');
+    const updated = await User.findOneAndUpdate({ _id: req.params.id, ...tQ(req) }, updates, { new: true }).populate('ministerioIds', 'nome');
     if (newRole === 'voluntario') {
-      try { await ensureVoluntarioInList({ email: updated.email, nome: updated.nome }); } catch (_) {}
+      try {
+        await ensureVoluntarioInList({
+          email: updated.email, nome: updated.nome, igrejaId: updated.igrejaId || req.tenantIgrejaId,
+        });
+      } catch (_) {}
       invalidateCache();
     }
     if (role !== undefined && role !== fromRole) {
       await RoleHistory.create({
+        igrejaId: req.tenantIgrejaId,
         userId: user._id,
         fromRole,
         toRole: role,
@@ -2412,6 +2622,7 @@ app.put('/api/users/:id', requireAuth, requireAdmin, async (req, res) => {
       });
     } else if (rawIds !== undefined && (newRole === 'lider' || newRole === 'admin')) {
       await RoleHistory.create({
+        igrejaId: req.tenantIgrejaId,
         userId: user._id,
         fromRole: newRole,
         toRole: newRole,
@@ -2445,7 +2656,7 @@ app.delete('/api/users/:id', requireAuth, requireMasterAdmin, async (req, res) =
 
 // POST /api/fix-datacheckin - Corrige dataCheckin de check-ins com eventoId (admin only).
 // Necessário uma vez: bug antigo em getEventDateStringSaoPaulo causava data -1 dia.
-app.post('/api/fix-datacheckin', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/fix-datacheckin', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
@@ -2479,13 +2690,13 @@ app.post('/api/fix-datacheckin', requireAuth, requireAdmin, async (req, res) => 
 });
 
 // POST /api/migrate - Migrar dados das CSVs para o MongoDB (admin only)
-app.post('/api/migrate', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/migrate', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado. Configure MONGODB_URI no .env.');
     if (!VOLUNTARIOS_CSV_PATH && !CSV_URL) return sendError(res, 400, 'VOLUNTARIOS_CSV_PATH ou CSV_URL não configurado.');
-    const volResult = await syncVoluntarios();
-    const checkResult = CHECKIN_CSV_PATH ? await syncCheckins() : { inserted: 0, updated: 0, skipped: true };
+    const volResult = await syncVoluntarios(req.tenantIgrejaId);
+    const checkResult = CHECKIN_CSV_PATH ? await syncCheckins(req.tenantIgrejaId) : { inserted: 0, updated: 0, skipped: true };
 
     res.json({ 
       success: true, 
@@ -2502,7 +2713,7 @@ app.post('/api/migrate', requireAuth, requireAdmin, async (req, res) => {
 // POST /api/send-cadastro-incompleto - Envia email de convite de cadastro para voluntários
 // que fizeram check-in mas não têm perfil completo (Voluntario com nome preenchido). Admin only.
 // ?dry=true → apenas lista os elegíveis sem enviar.
-app.post('/api/send-cadastro-incompleto', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/send-cadastro-incompleto', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
@@ -2514,12 +2725,15 @@ app.post('/api/send-cadastro-incompleto', requireAuth, requireAdmin, async (req,
 
     // Emails únicos com check-in
     const checkinsAgg = await Checkin.aggregate([
+      { $match: { ...tQ(req) } },
       { $group: { _id: { $toLower: '$email' }, nome: { $first: '$nome' } } },
       { $match: { _id: { $ne: null, $nin: ['', null] } } },
     ]);
 
     // Voluntarios com perfil (nome preenchido)
-    const perfis = await Voluntario.find({ email: { $exists: true, $ne: '' }, nome: { $exists: true, $ne: '' } }).select('email').lean();
+    const perfis = await Voluntario.find({
+      email: { $exists: true, $ne: '' }, nome: { $exists: true, $ne: '' }, ...tQ(req),
+    }).select('email').lean();
     const emailsComPerfil = new Set(perfis.map(v => (v.email || '').toLowerCase().trim()));
 
     const elegíveis = checkinsAgg
@@ -2568,12 +2782,13 @@ app.post('/api/send-cadastro-incompleto', requireAuth, requireAdmin, async (req,
 // GET /api/escalas — lista escalas (admin e líder: todas, inclusive antigas/inativas para histórico)
 // ?light=1 — retorna escalas sem aggregation (rápido); frontend pode carregar contagens depois
 const ESCALAS_LIST_LIMIT = 80;
-app.get('/api/escalas', requireAuth, async (req, res) => {
+app.get('/api/escalas', requireAuth, resolveTenant, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
     const light = req.query.light === '1' || req.query.light === 'true';
-    const query = (isAdmin || isLider) ? {} : { ativo: true };
+    const base = { ...tQ(req) };
+    const query = (isAdmin || isLider) ? { ...base } : { ...base, ativo: true };
     const escalas = await Escala.find(query).sort({ createdAt: -1 }).limit(ESCALAS_LIST_LIMIT).select('nome data descricao ativo createdAt').lean();
     const ids = escalas.map(e => e._id);
     if (ids.length === 0) return res.json([]);
@@ -2581,7 +2796,7 @@ app.get('/api/escalas', requireAuth, async (req, res) => {
       return res.json(escalas.map(e => ({ ...e, totalCandidaturas: 0, totalAprovados: 0 })));
     }
 
-    let countMatch = { escalaId: { $in: ids } };
+    let countMatch = { escalaId: { $in: ids }, igrejaId: req.tenantIgrejaId };
     if (isLider) {
       const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length
         ? req.userMinisterioNomes.map(String).map(s => s.trim()).filter(Boolean)
@@ -2591,9 +2806,9 @@ app.get('/api/escalas', requireAuth, async (req, res) => {
           { ministerio: { $in: nomes } },
           ...nomes.map((n) => ({ ministerio: new RegExp(escapeRegex(n), 'i') })),
         ];
-        countMatch = { escalaId: { $in: ids }, $or: orConditions };
+        countMatch = { escalaId: { $in: ids }, igrejaId: req.tenantIgrejaId, $or: orConditions };
       } else {
-        countMatch = { escalaId: { $in: ids }, ministerio: '__nenhum__' };
+        countMatch = { escalaId: { $in: ids }, igrejaId: req.tenantIgrejaId, ministerio: '__nenhum__' };
       }
     }
     const counts = await Candidatura.aggregate([
@@ -2611,15 +2826,16 @@ app.get('/api/escalas', requireAuth, async (req, res) => {
 });
 
 // GET /api/escalas/candidaturas-all — todas as candidaturas com info de escala (admin: todas; líder: seus ministérios)
-app.get('/api/escalas/candidaturas-all', requireAuth, async (req, res) => {
+app.get('/api/escalas/candidaturas-all', requireAuth, resolveTenant, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
     if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
 
-    const escalas = await Escala.find((isAdmin || isLider) ? {} : { ativo: true }).sort({ createdAt: -1 }).lean();
+    const escBase = { ...tQ(req) };
+    const escalas = await Escala.find((isAdmin || isLider) ? { ...escBase } : { ...escBase, ativo: true }).sort({ createdAt: -1 }).lean();
     const ids = escalas.map((e) => e._id);
-    let query = { escalaId: { $in: ids } };
+    let query = { escalaId: { $in: ids }, igrejaId: req.tenantIgrejaId };
     if (isLider) {
       const nomes = req.userMinisterioNomes?.length ? req.userMinisterioNomes.map((n) => String(n).trim()).filter(Boolean) : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
       if (!nomes.length) return res.json([]);
@@ -2627,7 +2843,7 @@ app.get('/api/escalas/candidaturas-all', requireAuth, async (req, res) => {
         { ministerio: { $in: nomes } },
         ...nomes.map((n) => ({ ministerio: new RegExp(escapeRegex(n), 'i') })),
       ];
-      query = { escalaId: { $in: ids }, $or: orConditions };
+      query = { escalaId: { $in: ids }, igrejaId: req.tenantIgrejaId, $or: orConditions };
     }
     const candidaturas = await Candidatura.find(query).sort({ createdAt: -1 }).lean();
     if (!candidaturas.length) return res.json([]);
@@ -2640,11 +2856,11 @@ app.get('/api/escalas/candidaturas-all', requireAuth, async (req, res) => {
     const condFalta = { $cond: { if: { $eq: ['$status', 'falta'] }, then: 1, else: 0 } };
     const [statsAgg, checkinsAgg] = await Promise.all([
       Candidatura.aggregate([
-        { $match: { email: { $in: emails } } },
+        { $match: { email: { $in: emails }, igrejaId: req.tenantIgrejaId } },
         { $group: { _id: '$email', totalParticipacoes: { $sum: condAprovado }, totalDesistencias: { $sum: condDesistencia }, totalFaltas: { $sum: condFalta } } },
       ]),
       Checkin.aggregate([
-        { $match: { email: { $in: emails } } },
+        { $match: { email: { $in: emails }, igrejaId: req.tenantIgrejaId } },
         { $group: { _id: { $toLower: '$email' }, totalCheckins: { $sum: 1 }, ministerios: { $addToSet: '$ministerio' } } },
       ]),
     ]);
@@ -2684,7 +2900,7 @@ app.get('/api/escalas/candidaturas-all', requireAuth, async (req, res) => {
 });
 
 // POST /api/candidaturas/bulk-status — atualiza status de várias candidaturas de uma vez
-app.post('/api/candidaturas/bulk-status', requireAuth, async (req, res) => {
+app.post('/api/candidaturas/bulk-status', requireAuth, resolveTenant, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
@@ -2696,7 +2912,7 @@ app.post('/api/candidaturas/bulk-status', requireAuth, async (req, res) => {
     const idList = Array.isArray(ids) ? ids.filter((id) => id && String(id).trim()).map(String) : [];
     if (!idList.length) return sendError(res, 400, 'Informe ao menos um id.');
 
-    const candidaturas = await Candidatura.find({ _id: { $in: idList } }).lean();
+    const candidaturas = await Candidatura.find({ _id: { $in: idList }, ...tQ(req) }).lean();
     const nomes = isLider ? (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean) : [];
     if (isLider && nomes.length) {
       const validas = candidaturas.filter((c) => {
@@ -2710,12 +2926,12 @@ app.post('/api/candidaturas/bulk-status', requireAuth, async (req, res) => {
     if (status === 'aprovado') update.aprovadoPor = req.userId;
     if (status === 'aprovado') update.aprovadoEm = new Date();
 
-    const result = await Candidatura.updateMany({ _id: { $in: idList } }, { $set: update });
+    const result = await Candidatura.updateMany({ _id: { $in: idList }, ...tQ(req) }, { $set: update });
     if (status === 'aprovado' && result.modifiedCount > 0) {
       for (const c of candidaturas) {
         if (c.status !== 'aprovado' && c.email && !c.emailEnviado) {
           try {
-            const escala = await Escala.findById(c.escalaId).lean();
+            const escala = await Escala.findOne({ _id: c.escalaId, ...tQ(req) }).lean();
             const resend = new Resend(process.env.RESEND_API_KEY);
             if (process.env.RESEND_API_KEY && escala) {
               await resend.emails.send({
@@ -2725,7 +2941,7 @@ app.post('/api/candidaturas/bulk-status', requireAuth, async (req, res) => {
                 subject: `Participação confirmada — ${escala.nome || 'Escala'}`,
                 html: `<p>Olá! Sua participação na escala <strong>${escala.nome}</strong> foi confirmada. Obrigado por servir!</p>`,
               });
-              await Candidatura.updateOne({ _id: c._id }, { emailEnviado: true });
+              await Candidatura.updateOne({ _id: c._id, ...tQ(req) }, { emailEnviado: true });
             }
           } catch (_) {}
         }
@@ -2744,13 +2960,13 @@ function escapeCsv(val) {
   const s = String(val ?? '').replace(/"/g, '""');
   return /[,"\n\r]/.test(s) ? `"${s}"` : s;
 }
-app.get('/api/escalas/export-csv', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/escalas/export-csv', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
-    const escalas = await Escala.find({}).sort({ createdAt: -1 }).lean();
+    const escalas = await Escala.find({ ...tQ(req) }).sort({ createdAt: -1 }).lean();
     const ids = escalas.map((e) => e._id);
-    const candidaturas = await Candidatura.find({ escalaId: { $in: ids } }).sort({ ministerio: 1, nome: 1 }).lean();
+    const candidaturas = await Candidatura.find({ escalaId: { $in: ids }, ...tQ(req) }).sort({ ministerio: 1, nome: 1 }).lean();
     const escalaMap = new Map(escalas.map((e) => [String(e._id), e]));
     const header = ['Escala', 'Data', 'Nome', 'Email', 'Telefone', 'Ministério', 'Status'];
     const rows = candidaturas.map((c) => {
@@ -2769,11 +2985,12 @@ app.get('/api/escalas/export-csv', requireAuth, requireAdmin, async (req, res) =
 });
 
 // POST /api/escalas — cria escala (admin only)
-app.post('/api/escalas', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/escalas', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { nome, data, descricao, ativo } = req.body || {};
     if (!nome || !String(nome).trim()) return sendError(res, 400, 'Nome é obrigatório.');
     const escala = await Escala.create({
+      ...tQ(req),
       nome: String(nome).trim(),
       data: data ? parseDateOnlyToUTC(data) : null,
       descricao: (descricao || '').trim(),
@@ -2785,7 +3002,7 @@ app.post('/api/escalas', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // PUT /api/escalas/:id — atualiza escala (admin only)
-app.put('/api/escalas/:id', requireAuth, requireAdmin, async (req, res) => {
+app.put('/api/escalas/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { nome, data, descricao, ativo } = req.body || {};
     const update = {};
@@ -2793,18 +3010,18 @@ app.put('/api/escalas/:id', requireAuth, requireAdmin, async (req, res) => {
     if (data !== undefined) update.data = data ? parseDateOnlyToUTC(data) : null;
     if (descricao !== undefined) update.descricao = String(descricao).trim();
     if (typeof ativo === 'boolean') update.ativo = ativo;
-    const escala = await Escala.findByIdAndUpdate(req.params.id, update, { new: true });
+    const escala = await Escala.findOneAndUpdate({ _id: req.params.id, ...tQ(req) }, update, { new: true });
     if (!escala) return sendError(res, 404, 'Escala não encontrada.');
     res.json(escala);
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
 // DELETE /api/escalas/:id — exclui escala (admin only, só se sem candidaturas)
-app.delete('/api/escalas/:id', requireAuth, requireAdmin, async (req, res) => {
+app.delete('/api/escalas/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const count = await Candidatura.countDocuments({ escalaId: req.params.id });
+    const count = await Candidatura.countDocuments({ escalaId: req.params.id, ...tQ(req) });
     if (count > 0) return sendError(res, 400, `Esta escala tem ${count} candidatura(s). Remova-as antes de excluir.`);
-    const escala = await Escala.findByIdAndDelete(req.params.id);
+    const escala = await Escala.findOneAndDelete({ _id: req.params.id, ...tQ(req) });
     if (!escala) return sendError(res, 404, 'Escala não encontrada.');
     res.json({ ok: true });
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
@@ -2813,13 +3030,16 @@ app.delete('/api/escalas/:id', requireAuth, requireAdmin, async (req, res) => {
 // GET /api/escala-publica/:id — info pública da escala para o form de candidatura. ?ministerio=NOME = link por ministério (só esse ministério pode se inscrever).
 app.get('/api/escala-publica/:id', async (req, res) => {
   try {
+    const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug no link.');
     const id = (req.params.id || '').trim();
     const ministerioParam = (req.query.ministerio || '').toString().trim();
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return sendError(res, 400, 'ID da escala inválido.');
     }
-    const escala = await Escala.findById(id).select('nome data descricao ativo').lean();
+    const escala = await Escala.findById(id).select('nome data descricao ativo igrejaId').lean();
     if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+    if (String(escala.igrejaId) !== String(igrejaDoc._id)) return sendError(res, 404, 'Escala não encontrada.');
     if (!escala.ativo) {
       return res.status(200).json({
         concluida: true,
@@ -2827,7 +3047,7 @@ app.get('/api/escala-publica/:id', async (req, res) => {
         escala: { _id: escala._id, nome: escala.nome, data: escala.data, descricao: escala.descricao },
       });
     }
-    const ministerios = await Ministerio.find({ ativo: true }).sort({ nome: 1 }).select('nome').lean();
+    const ministerios = await Ministerio.find({ ativo: true, igrejaId: igrejaDoc._id }).sort({ nome: 1 }).select('nome').lean();
     const ministeriosList = ministerios.length > 0 ? ministerios.map(m => m.nome).filter(Boolean) : MINISTERIOS_PADRAO_PUBLIC;
     let ministerioFixo = null;
     if (ministerioParam) {
@@ -2860,7 +3080,7 @@ app.get('/api/escala-publica/:id', async (req, res) => {
 
 // ─── Fechamento de inscrições por ministério (líder) ─────────────────────────────
 // Abre/fecha apenas a inscrição de um ministério dentro de uma escala, mesmo com a escala geral ativa.
-app.get('/api/escalas/:id/inscricoes-por-ministerio', requireAuth, async (req, res) => {
+app.get('/api/escalas/:id/inscricoes-por-ministerio', requireAuth, resolveTenant, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
@@ -2869,12 +3089,15 @@ app.get('/api/escalas/:id/inscricoes-por-ministerio', requireAuth, async (req, r
     const escalaId = req.params.id;
     if (!escalaId || !mongoose.Types.ObjectId.isValid(escalaId)) return sendError(res, 400, 'ID da escala inválido.');
 
+    const escalaOk = await Escala.findOne({ _id: escalaId, ...tQ(req) }).select('_id').lean();
+    if (!escalaOk) return sendError(res, 404, 'Escala não encontrada.');
+
     const ministerioParam = (req.query.ministerio || '').toString().trim();
     const ministerioLeaderDefault = isLider ? (req.userMinisterioNome || '').toString().trim() : '';
     const ministerioRequested = ministerioParam || ministerioLeaderDefault;
     if (!ministerioRequested) return sendError(res, 400, 'Informe o ministério.');
 
-    const ministerios = await Ministerio.find({ ativo: true }).sort({ nome: 1 }).select('nome').lean();
+    const ministerios = await Ministerio.find({ ativo: true, ...tQ(req) }).sort({ nome: 1 }).select('nome').lean();
     const canon = ministerios.find((m) => (m?.nome || '').trim().toLowerCase() === ministerioRequested.toLowerCase());
     if (!canon) return sendError(res, 400, 'Ministério inválido.');
 
@@ -2902,7 +3125,7 @@ app.get('/api/escalas/:id/inscricoes-por-ministerio', requireAuth, async (req, r
   }
 });
 
-app.put('/api/escalas/:id/inscricoes-por-ministerio', requireAuth, async (req, res) => {
+app.put('/api/escalas/:id/inscricoes-por-ministerio', requireAuth, resolveTenant, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
@@ -2911,13 +3134,16 @@ app.put('/api/escalas/:id/inscricoes-por-ministerio', requireAuth, async (req, r
     const escalaId = req.params.id;
     if (!escalaId || !mongoose.Types.ObjectId.isValid(escalaId)) return sendError(res, 400, 'ID da escala inválido.');
 
+    const escalaOk = await Escala.findOne({ _id: escalaId, ...tQ(req) }).select('_id').lean();
+    if (!escalaOk) return sendError(res, 404, 'Escala não encontrada.');
+
     const body = req.body || {};
     const ministerioRequested = (body.ministerio || req.userMinisterioNome || '').toString().trim();
     const ativo = typeof body.ativo === 'boolean' ? body.ativo : undefined;
     if (!ministerioRequested) return sendError(res, 400, 'Informe o ministério.');
     if (ativo === undefined) return sendError(res, 400, 'Informe "ativo" (boolean).');
 
-    const ministerios = await Ministerio.find({ ativo: true }).sort({ nome: 1 }).select('nome').lean();
+    const ministerios = await Ministerio.find({ ativo: true, ...tQ(req) }).sort({ nome: 1 }).select('nome').lean();
     const canon = ministerios.find((m) => (m?.nome || '').trim().toLowerCase() === ministerioRequested.toLowerCase());
     if (!canon) return sendError(res, 400, 'Ministério inválido.');
 
@@ -2943,23 +3169,26 @@ app.put('/api/escalas/:id/inscricoes-por-ministerio', requireAuth, async (req, r
 });
 
 // POST /api/candidaturas — candidatura pública (sem auth). Quem se candidata é considerado voluntário. Ministério deve estar na lista permitida.
+// Query ?igreja=slug ou body.igrejaSlug / tenant (default celeiro-sp).
 app.post('/api/candidaturas', async (req, res) => {
   try {
+    const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use o parâmetro igreja (slug) no formulário.');
     const { escalaId, nome, email, telefone, ministerio } = req.body || {};
     const em = (email || '').toString().trim().toLowerCase();
     if (!em || !em.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
     if (!escalaId) return sendError(res, 400, 'Escala é obrigatória.');
     if (!ministerio) return sendError(res, 400, 'Ministério é obrigatório.');
-    const escala = await Escala.findById(escalaId).lean();
+    const escala = await Escala.findOne({ _id: escalaId, igrejaId: igrejaDoc._id }).lean();
     if (!escala || !escala.ativo) return sendError(res, 404, 'Escala não encontrada ou não está ativa.');
-    const ministerios = await Ministerio.find({ ativo: true }).sort({ nome: 1 }).select('nome').lean();
+    const ministerios = await Ministerio.find({ ativo: true, igrejaId: igrejaDoc._id }).sort({ nome: 1 }).select('nome').lean();
     const ministeriosList = ministerios.length > 0 ? ministerios.map(m => m.nome).filter(Boolean) : MINISTERIOS_PADRAO_PUBLIC;
     const ministerioTrim = (ministerio || '').toString().trim();
     const ministerioValido = ministeriosList.find((m) => (m || '').trim().toLowerCase() === ministerioTrim.toLowerCase());
     if (!ministerioValido) return sendError(res, 400, 'Ministério inválido. Use o link enviado pelo seu líder para o seu ministério.');
-    const existing = await Candidatura.findOne({ escalaId, email: em });
+    const existing = await Candidatura.findOne({ escalaId, email: em, igrejaId: igrejaDoc._id });
     if (existing) {
-      try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim() }); } catch (_) {}
+      try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim(), igrejaId: igrejaDoc._id }); } catch (_) {}
       return res.status(200).json({ message: 'Você já se candidatou para esta escala.', candidatura: existing });
     }
     const ministerioCanonico = ministerioValido;
@@ -2973,6 +3202,7 @@ app.post('/api/candidaturas', async (req, res) => {
       return sendError(res, 403, `Inscrições fechadas para o ministério ${ministerioCanonico}.`);
     }
     const candidatura = await Candidatura.create({
+      igrejaId: igrejaDoc._id,
       escalaId,
       nome: (nome || '').toString().trim(),
       email: em,
@@ -2980,7 +3210,7 @@ app.post('/api/candidaturas', async (req, res) => {
       ministerio: ministerioCanonico,
     });
     // Garante que o candidato apareça na lista de voluntários
-    try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: ministerioCanonico }); } catch (_) {}
+    try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: ministerioCanonico, igrejaId: igrejaDoc._id }); } catch (_) {}
 
     // Email de confirmação de recebimento
     const apiKey = process.env.RESEND_API_KEY;
@@ -3035,7 +3265,7 @@ app.post('/api/candidaturas', async (req, res) => {
 
 // GET /api/escalas/:id/candidaturas — lista candidaturas de uma escala (com stats de histórico)
 // Admin: vê todos. Líder: só candidaturas do(s) ministério(s) que lidera
-app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
+app.get('/api/escalas/:id/candidaturas', requireAuth, resolveTenant, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
@@ -3046,7 +3276,10 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
       return sendError(res, 400, 'ID da escala inválido.');
     }
 
-    let query = { escalaId };
+    const escala = await Escala.findOne({ _id: escalaId, ...tQ(req) }).lean();
+    if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+
+    let query = { escalaId, ...tQ(req) };
     if (isLider) {
       const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length
         ? req.userMinisterioNomes.map(String).map(s => s.trim()).filter(Boolean)
@@ -3065,25 +3298,23 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
           }
         });
       });
-      query = { escalaId, $or: orConditions };
+      query = { escalaId, ...tQ(req), $or: orConditions };
     }
     const candidaturas = await Candidatura.find(query).sort({ createdAt: -1 }).lean();
     if (!candidaturas.length) return res.json([]);
-
-    const escala = await Escala.findById(escalaId).lean();
     const emails = [...new Set(candidaturas.map(c => c.email).filter(Boolean))];
     const liderMinisterios = isLider ? (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean) : [];
 
     // Stats históricos de candidaturas por email (lowercase para lookup consistente)
     const statsAgg = await Candidatura.aggregate([
-      { $match: { email: { $in: emails } } },
+      { $match: { email: { $in: emails }, igrejaId: req.tenantIgrejaId } },
       { $group: { _id: { $toLower: '$email' }, totalParticipacoes: { $sum: { $cond: [{ $eq: ['$status', 'aprovado'] }, 1, 0] } }, totalDesistencias: { $sum: { $cond: [{ $eq: ['$status', 'desistencia'] }, 1, 0] } }, totalFaltas: { $sum: { $cond: [{ $eq: ['$status', 'falta'] }, 1, 0] } } } },
     ]);
     const statsMap = new Map(statsAgg.map(s => [s._id, s]));
 
     // Check-ins por email (total + ministerios para jaServiuMinLider)
     const checkinsAgg = await Checkin.aggregate([
-      { $match: { email: { $in: emails } } },
+      { $match: { email: { $in: emails }, igrejaId: req.tenantIgrejaId } },
       { $group: { _id: { $toLower: '$email' }, totalCheckins: { $sum: 1 }, ministerios: { $addToSet: '$ministerio' } } },
     ]);
     const checkinsMap = new Map(checkinsAgg.map(c => [c._id, { total: Number(c.totalCheckins || 0), ministerios: (c.ministerios || []).filter(Boolean) }]));
@@ -3126,7 +3357,7 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, async (req, res) => {
 });
 
 // PUT /api/candidaturas/:id/status — atualiza status de candidatura
-app.put('/api/candidaturas/:id/status', requireAuth, async (req, res) => {
+app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
@@ -3136,7 +3367,7 @@ app.put('/api/candidaturas/:id/status', requireAuth, async (req, res) => {
     const validStatus = ['pendente', 'aprovado', 'desistencia', 'falta'];
     if (!validStatus.includes(status)) return sendError(res, 400, `Status inválido. Use: ${validStatus.join(', ')}`);
 
-    const candidatura = await Candidatura.findById(req.params.id).lean();
+    const candidatura = await Candidatura.findOne({ _id: req.params.id, ...tQ(req) }).lean();
     if (!candidatura) return sendError(res, 404, 'Candidatura não encontrada.');
 
     // Líder só pode alterar candidaturas do seu ministério
@@ -3155,14 +3386,14 @@ app.put('/api/candidaturas/:id/status', requireAuth, async (req, res) => {
     const update = { status };
     if (status === 'aprovado') { update.aprovadoPor = req.userId; update.aprovadoEm = new Date(); }
 
-    const updated = await Candidatura.findByIdAndUpdate(req.params.id, update, { new: true }).lean();
+    const updated = await Candidatura.findOneAndUpdate({ _id: req.params.id, ...tQ(req) }, update, { new: true }).lean();
 
     // Envia email de confirmação ao aprovar
     if (status === 'aprovado' && !candidatura.emailEnviado && candidatura.email) {
       const apiKey = process.env.RESEND_API_KEY;
       if (apiKey) {
         try {
-          const escala = await Escala.findById(candidatura.escalaId).lean();
+          const escala = await Escala.findOne({ _id: candidatura.escalaId, ...tQ(req) }).lean();
           const resend = new Resend(apiKey);
           const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
           const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
@@ -3214,7 +3445,7 @@ app.put('/api/candidaturas/:id/status', requireAuth, async (req, res) => {
 </table>
 </body></html>`,
           });
-          if (!error) await Candidatura.updateOne({ _id: candidatura._id }, { emailEnviado: true });
+          if (!error) await Candidatura.updateOne({ _id: candidatura._id, ...tQ(req) }, { emailEnviado: true });
         } catch (_) {}
       }
     }
@@ -3224,14 +3455,14 @@ app.put('/api/candidaturas/:id/status', requireAuth, async (req, res) => {
 });
 
 // GET /api/minhas-candidaturas — candidaturas do usuário logado
-app.get('/api/minhas-candidaturas', requireAuth, async (req, res) => {
+app.get('/api/minhas-candidaturas', requireAuth, resolveTenant, async (req, res) => {
   try {
     const email = (req.userEmail || '').toLowerCase().trim();
     if (!email) return res.json([]);
-    const candidaturas = await Candidatura.find({ email }).sort({ createdAt: -1 }).lean();
+    const candidaturas = await Candidatura.find({ email, ...tQ(req) }).sort({ createdAt: -1 }).lean();
     // Enriquece com nome da escala
     const escalaIds = [...new Set(candidaturas.map(c => String(c.escalaId)))];
-    const escalas = await Escala.find({ _id: { $in: escalaIds } }).select('nome data').lean();
+    const escalas = await Escala.find({ _id: { $in: escalaIds }, ...tQ(req) }).select('nome data').lean();
     const escalaMap = new Map(escalas.map(e => [String(e._id), e]));
     const result = candidaturas.map(c => ({
       ...c,

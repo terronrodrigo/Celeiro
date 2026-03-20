@@ -1,10 +1,10 @@
 import mongoose from 'mongoose';
 
 const voluntarioSchema = new mongoose.Schema({
+  igrejaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Igreja', required: true },
   email: {
     type: String,
     required: true,
-    unique: true,
     lowercase: true,
     trim: true,
   },
@@ -31,6 +31,7 @@ const voluntarioSchema = new mongoose.Schema({
 }, { 
   timestamps: true,
   indexes: [
+    { igrejaId: 1, email: 1 },
     { email: 1 },
     { ministerio: 1 },
     { estado: 1 },
@@ -41,7 +42,9 @@ const voluntarioSchema = new mongoose.Schema({
 });
 
 // Índice composto para queries comuns
+voluntarioSchema.index({ igrejaId: 1, email: 1 }, { unique: true });
 voluntarioSchema.index({ ativo: 1, ministerio: 1 });
+voluntarioSchema.index({ igrejaId: 1, ativo: 1, ministerio: 1 });
 voluntarioSchema.index({ ativo: 1, estado: 1 });
 
 export default mongoose.model('Voluntario', voluntarioSchema);

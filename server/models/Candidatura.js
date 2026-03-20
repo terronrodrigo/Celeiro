@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 const candidaturaSchema = new mongoose.Schema({
+  igrejaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Igreja', required: true },
   escalaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Escala', required: true },
   nome: { type: String, trim: true, default: '' },
   email: { type: String, lowercase: true, trim: true, default: '' },
@@ -16,7 +17,9 @@ const candidaturaSchema = new mongoose.Schema({
   emailEnviado: { type: Boolean, default: false },
 }, { timestamps: true });
 
+candidaturaSchema.index({ igrejaId: 1, escalaId: 1, email: 1 });
 candidaturaSchema.index({ escalaId: 1, email: 1 });
+candidaturaSchema.index({ igrejaId: 1, escalaId: 1, ministerio: 1, status: 1 });
 candidaturaSchema.index({ escalaId: 1, ministerio: 1, status: 1 });
 candidaturaSchema.index({ email: 1, status: 1 });
 

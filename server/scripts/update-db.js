@@ -13,6 +13,7 @@ import Checkin from '../models/Checkin.js';
 import EventoCheckin from '../models/EventoCheckin.js';
 import Ministerio from '../models/Ministerio.js';
 import RoleHistory from '../models/RoleHistory.js';
+import Igreja from '../models/Igreja.js';
 
 const MONGODB_URI = (process.env.MONGODB_URI || '').trim();
 if (!MONGODB_URI) {
@@ -27,6 +28,7 @@ const models = [
   { name: 'EventoCheckin', model: EventoCheckin },
   { name: 'Ministerio', model: Ministerio },
   { name: 'RoleHistory', model: RoleHistory },
+  { name: 'Igreja', model: Igreja },
 ];
 
 async function main() {

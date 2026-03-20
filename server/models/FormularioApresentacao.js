@@ -6,6 +6,7 @@ const criancaSchema = new mongoose.Schema({
 }, { _id: false });
 
 const formularioApresentacaoSchema = new mongoose.Schema({
+  igrejaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Igreja', required: true },
   eventoId: { type: mongoose.Schema.Types.ObjectId, ref: 'EventoFormulario', required: true },
   nomeMae: { type: String, trim: true, default: '' },
   nomePai: { type: String, trim: true, default: '' },
@@ -18,7 +19,9 @@ const formularioApresentacaoSchema = new mongoose.Schema({
   compromissoEducar: { type: String, trim: true, default: '' }, // sim, não
 }, { timestamps: true });
 
+formularioApresentacaoSchema.index({ igrejaId: 1, eventoId: 1 });
 formularioApresentacaoSchema.index({ eventoId: 1 });
+formularioApresentacaoSchema.index({ igrejaId: 1, emailContato: 1, eventoId: 1 });
 formularioApresentacaoSchema.index({ emailContato: 1, eventoId: 1 });
 
 export default mongoose.model('FormularioApresentacao', formularioApresentacaoSchema);

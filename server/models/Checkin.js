@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 const checkinSchema = new mongoose.Schema({
+  igrejaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Igreja', required: true },
   email: {
     type: String,
     required: true,
@@ -19,6 +20,7 @@ const checkinSchema = new mongoose.Schema({
 }, {
   timestamps: true,
   indexes: [
+    { igrejaId: 1, email: 1, ministerio: 1, dataCheckin: 1 },
     { email: 1, ministerio: 1, dataCheckin: 1 },
     { ministerio: 1, dataCheckin: 1 },
     { ministerio: 1, timestampMs: -1 }, // Para sort rápido na consulta de check-ins do líder
