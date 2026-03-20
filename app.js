@@ -2811,9 +2811,18 @@ async function fetchEscalas() {
   if (isVol) {
     if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando suas escalas…</p></div>';
     try {
-      const r = await authFetch(`${API_BASE}/api/minhas-candidaturas`);
-      if (!r.ok) throw new Error('Falha');
-      renderEscalasVoluntario(await r.json());
+      const [rCand, rOpen] = await Promise.all([
+        authFetch(`${API_BASE}/api/minhas-candidaturas`),
+        authFetch(`${API_BASE}/api/escalas?light=1`),
+      ]);
+      if (!rCand.ok) throw new Error('Falha');
+      const myCands = await rCand.json();
+      let openEscalas = [];
+      if (rOpen && rOpen.ok) {
+        openEscalas = await rOpen.json();
+        openEscalas = Array.isArray(openEscalas) ? openEscalas : [];
+      }
+      renderEscalasVoluntario(myCands, openEscalas);
     } catch (e) {
       if (e.message === 'AUTH_REQUIRED') return;
       if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Erro ao carregar. Tente novamente.</p></div>';
@@ -3610,13 +3619,59 @@ function renderEscalasCandidatosLider() {
   renderAnaliseTab();
 }
 
-function renderEscalasVoluntario(list) {
+function renderEscalasVoluntario(list, openEscalas) {
   const container = document.getElementById('escalasContent');
   if (!container) return;
-  if (!Array.isArray(list) || !list.length) {
-    container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Você ainda não se candidatou para nenhuma escala. Quando um líder compartilhar um link de escala, use-o para se candidatar.</p></div>';
+  const myCands = Array.isArray(list) ? list : [];
+  const openList = Array.isArray(openEscalas) ? openEscalas : [];
+  const openEscala = openList.length ? openList[0] : null; // /api/escalas?light=1 vem ordenado por createdAt desc
+  const openEscalaId = openEscala?._id ? String(openEscala._id) : '';
+  const candOpen = openEscalaId ? myCands.find((c) => String(c.escalaId) === openEscalaId) : null;
+
+  const renderCtaEscalaAberta = () => {
+    if (!openEscala) return '';
+    const hasCand = !!candOpen;
+    const status = candOpen ? statusEscalaBadge(candOpen.status) : '';
+    const btnDisabled = hasCand ? 'disabled' : '';
+    const btnLabel = hasCand ? 'Já se candidatou' : 'Me candidatar';
+    return `
+      <div class="filters-card" style="margin-bottom:16px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <h3 style="font-size:1.05rem;margin-bottom:4px">Escala aberta: ${escapeHtml(openEscala.nome || '—')}</h3>
+            <div style="color:var(--text-muted);font-size:.9em;margin-bottom:8px">
+              Data: ${escapeHtml(formatEscalaDateOnly(openEscala.data || ''))}
+            </div>
+            ${status ? `<div style="margin-top:4px">${status}</div>` : ''}
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" id="btnMeCandidatarEscalaAberta" ${btnDisabled}>
+            ${escapeHtml(btnLabel)}
+          </button>
+        </div>
+        ${hasCand ? `<div style="margin-top:8px;color:var(--text-muted);font-size:.88em">Seu status atual pode ser conferido na lista abaixo.</div>` : ''}
+      </div>
+    `;
+  };
+
+  if (myCands.length === 0) {
+    if (openEscala) {
+      container.innerHTML = `
+        ${renderCtaEscalaAberta()}
+        <div class="filters-card">
+          <p class="auth-subtitle">Você ainda não se candidatou para nenhuma escala. Use o botão acima para se inscrever.</p>
+        </div>
+      `;
+      container.querySelector('#btnMeCandidatarEscalaAberta')?.addEventListener('click', () => {
+        if (!openEscala) return;
+        showEscalaPublicOverlay();
+        loadEscalaPublic(String(openEscala._id), '');
+      });
+      return;
+    }
+    container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Você ainda não se candidatou para nenhuma escala. Quando existir uma escala aberta, você verá o botão para se candidatar aqui.</p></div>';
     return;
   }
+
   const rows = list.map(c => {
     const data = formatEscalaDateOnly(c.escalaData);
     return `<tr>
@@ -3626,7 +3681,9 @@ function renderEscalasVoluntario(list) {
       <td data-label="Status">${statusEscalaBadge(c.status)}</td>
     </tr>`;
   }).join('');
+
   container.innerHTML = `
+    ${renderCtaEscalaAberta()}
     <div class="table-card">
       <div class="chart-header"><h2>Minhas escalas</h2></div>
       <div class="table-wrapper">
@@ -3637,6 +3694,12 @@ function renderEscalasVoluntario(list) {
       </div>
     </div>
   `;
+
+  container.querySelector('#btnMeCandidatarEscalaAberta')?.addEventListener('click', () => {
+    if (!openEscala) return;
+    showEscalaPublicOverlay();
+    loadEscalaPublic(String(openEscala._id), '');
+  });
 }
 
 let candidaturasEscalaList = [];
