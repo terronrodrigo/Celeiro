@@ -745,7 +745,7 @@ app.post('/api/login', async (req, res) => {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       return res.json({
         token,
-        user: { nome: ADMIN_USER, email: null, role: 'admin', fotoUrl: adminFotoUrl },
+        user: { nome: ADMIN_USER, email: null, role: 'admin', fotoUrl: adminFotoUrl, isGlobalAdmin: true },
         expiresAt,
       });
     }
@@ -869,6 +869,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
     payload.isMasterAdmin = (req.userEmail || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
   }
   if (igrejaSlug) payload.igrejaSlug = igrejaSlug;
+  payload.isGlobalAdmin = !!req.authIsGlobalAdmin;
   res.json(payload);
 });
 

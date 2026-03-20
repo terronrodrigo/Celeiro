@@ -324,6 +324,30 @@ body {
   gap: 16px;
 }
 
+.igreja-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.igreja-select-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.igreja-select {
+  min-width: 160px;
+  max-width: min(220px, 42vw);
+  padding: 8px 10px;
+  font-size: 0.875rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
 .search-box {
   display: flex;
   align-items: center;

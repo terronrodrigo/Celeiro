@@ -118,6 +118,7 @@ let authMinisterioNomes = [];
 let authFotoUrl = null;
 let authMustChangePassword = false;
 let authIsMasterAdmin = false;
+let authIsGlobalAdmin = false;
 let authVerified = false;
 let eventosCheckin = [];
 let eventosBatismo = [];
@@ -335,6 +336,7 @@ function updateAuthUi() {
   if (cadastroLinkSection) cadastroLinkSection.style.display = isLogged && isAdmin ? '' : 'none';
   const brdidSection = document.getElementById('brdidVerificacaoSection');
   if (brdidSection) brdidSection.style.display = isLogged && isAdmin ? '' : 'none';
+  void refreshIgrejaSelector();
 }
 
 /** Limpa dados em memória e DOM de conteúdo por usuário, para não exibir tela do login anterior ao trocar de perfil. */
@@ -381,12 +383,13 @@ function setAuthSession(data) {
   authFotoUrl = (user && user.fotoUrl) ? user.fotoUrl : (data?.fotoUrl != null ? data.fotoUrl : null);
   authMustChangePassword = !!(user?.mustChangePassword || data?.mustChangePassword);
   authIsMasterAdmin = !!(user?.isMasterAdmin || data?.isMasterAdmin);
+  authIsGlobalAdmin = !!(typeof user === 'object' && user !== null && user.isGlobalAdmin === true) || !!(data?.isGlobalAdmin === true);
   const igrejaSlug = (user?.igrejaSlug || data?.user?.igrejaSlug || '').toString().trim().toLowerCase() || 'celeiro-sp';
   if (authToken) {
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
       token: authToken, user: authUser, role: authRole, email: authEmail,
       ministerioId: authMinisterioId, ministerioNome: authMinisterioNome, ministerioIds: authMinisterioIds, ministerioNomes: authMinisterioNomes,
-      fotoUrl: authFotoUrl, mustChangePassword: authMustChangePassword, isMasterAdmin: authIsMasterAdmin, igrejaSlug,
+      fotoUrl: authFotoUrl, mustChangePassword: authMustChangePassword, isMasterAdmin: authIsMasterAdmin, isGlobalAdmin: authIsGlobalAdmin, igrejaSlug,
     }));
   }
   updateAuthUi();
@@ -404,10 +407,84 @@ function clearAuthSession() {
   authFotoUrl = null;
   authMustChangePassword = false;
   authIsMasterAdmin = false;
+  authIsGlobalAdmin = false;
   authVerified = false;
   localStorage.removeItem(AUTH_STORAGE_KEY);
   clearUserContent();
   updateAuthUi();
+}
+
+/** Salva slug da igreja (contexto admin global) no mesmo objeto da sessão. */
+function persistIgrejaSlugToStorage(slug) {
+  const s = (slug || 'celeiro-sp').toString().trim().toLowerCase() || 'celeiro-sp';
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    const o = raw ? JSON.parse(raw) : {};
+    if (!o.token && !authToken) return;
+    o.igrejaSlug = s;
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(o));
+  } catch (_) {}
+}
+
+/** Limpa dados carregados da API para trocar de tenant sem perder a view atual. */
+function clearTenantScopedData() {
+  voluntarios = [];
+  resumo = {};
+  checkins = [];
+  checkinResumo = {};
+  allCheckins = [];
+  eventosCheckin = [];
+  eventoSelecionadoHoje = null;
+  selectedEmails.clear();
+  ministrosList = [];
+  usersList = [];
+  checkinsMinisterio = [];
+  checkinMinisterioResumo = {};
+  escalasList = [];
+  escalaAtiva = null;
+  candidaturasAll = [];
+  candidaturasEscalaList = [];
+  candidaturasEscalaId = null;
+  candidaturasAnaliseFilters = {};
+  escalasPreSelectId = null;
+  eventosBatismo = [];
+  eventosApresentacao = [];
+  if (voluntariosBody) voluntariosBody.innerHTML = '';
+  if (checkinBody) checkinBody.innerHTML = '';
+}
+
+let igrejaSelectorLoading = false;
+async function refreshIgrejaSelector() {
+  const wrap = document.getElementById('igrejaSelectWrap');
+  const sel = document.getElementById('topIgrejaSelect');
+  if (!wrap || !sel) return;
+  const show = !!(authToken && authVerified && authIsGlobalAdmin && authRole === 'admin');
+  wrap.style.display = show ? 'flex' : 'none';
+  if (!show) return;
+  if (igrejaSelectorLoading) return;
+  igrejaSelectorLoading = true;
+  try {
+    const r = await fetch(`${API_BASE}/api/igrejas`, { headers: getAuthHeaders() });
+    if (!r.ok) {
+      sel.innerHTML = '';
+      return;
+    }
+    const list = await r.json();
+    if (!Array.isArray(list) || list.length === 0) {
+      sel.innerHTML = '<option value="celeiro-sp">Nenhuma igreja</option>';
+      return;
+    }
+    const current = getTenantSlugForLinks();
+    sel.innerHTML = list.map((g) => `<option value="${escapeAttr(g.slug)}">${escapeHtml(g.nome || g.slug)}</option>`).join('');
+    const has = list.some((g) => (g.slug || '').toLowerCase() === current);
+    const val = has ? current : String(list[0].slug || 'celeiro-sp').toLowerCase();
+    sel.value = val;
+    if (val !== current) persistIgrejaSlugToStorage(val);
+  } catch (_) {
+    sel.innerHTML = '';
+  } finally {
+    igrejaSelectorLoading = false;
+  }
 }
 
 /** Normaliza role para comparação: trim, lowercase e remove acentos ("líder" -> "lider"). */
@@ -454,6 +531,7 @@ async function verifyAuth() {
     authFotoUrl = data.fotoUrl != null ? data.fotoUrl : authFotoUrl;
     authMustChangePassword = !!data.mustChangePassword;
     authIsMasterAdmin = data.isMasterAdmin !== undefined ? !!data.isMasterAdmin : authIsMasterAdmin;
+    authIsGlobalAdmin = data.isGlobalAdmin === true;
     const stored = localStorage.getItem(AUTH_STORAGE_KEY);
     if (stored && authToken) {
       try {
@@ -468,6 +546,7 @@ async function verifyAuth() {
         parsed.fotoUrl = authFotoUrl;
         parsed.mustChangePassword = authMustChangePassword;
         parsed.isMasterAdmin = authIsMasterAdmin;
+        parsed.isGlobalAdmin = authIsGlobalAdmin;
         if (data.igrejaSlug) parsed.igrejaSlug = String(data.igrejaSlug).trim().toLowerCase();
         else if (!parsed.igrejaSlug) parsed.igrejaSlug = 'celeiro-sp';
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
@@ -4218,6 +4297,29 @@ async function handleLogout() {
 document.getElementById('btnRefresh')?.addEventListener('click', fetchAllData);
 document.getElementById('btnRetry')?.addEventListener('click', fetchAllData);
 
+document.getElementById('topIgrejaSelect')?.addEventListener('change', async () => {
+  if (!authIsGlobalAdmin || !authToken) return;
+  const sel = document.getElementById('topIgrejaSelect');
+  if (!sel) return;
+  persistIgrejaSlugToStorage(sel.value);
+  const viewKeep = currentView || 'resumo';
+  clearTenantScopedData();
+  showLoading(true);
+  try {
+    await Promise.all([
+      fetchVoluntarios({ showGlobalLoading: false }),
+      fetchCheckins(),
+    ]);
+    setView(viewKeep, { skipFetch: false });
+    const cadastroLinkInput = document.getElementById('cadastroLinkInput');
+    if (cadastroLinkInput) cadastroLinkInput.value = getCadastroLinkUrl();
+  } catch (e) {
+    console.error(e);
+  } finally {
+    showLoading(false);
+  }
+});
+
 function debounce(fn, ms) {
   let t;
   return function (...args) {
@@ -4840,7 +4942,8 @@ navItems.forEach(item => {
 
 function getCadastroLinkUrl() {
   const base = window.location.origin + window.location.pathname;
-  return base.replace(/\/$/, '') + '#cadastro';
+  const ig = encodeURIComponent(getTenantSlugForLinks());
+  return `${base.replace(/\/$/, '')}?igreja=${ig}#cadastro`;
 }
 
 function showCadastroPublico() {
@@ -5383,9 +5486,10 @@ window.addEventListener('pageshow', function(ev) {
       authFotoUrl = parsed.fotoUrl != null ? parsed.fotoUrl : null;
       authMustChangePassword = !!parsed.mustChangePassword;
       authIsMasterAdmin = !!parsed.isMasterAdmin;
+      authIsGlobalAdmin = !!parsed.isGlobalAdmin;
       if (!parsed.igrejaSlug) parsed.igrejaSlug = 'celeiro-sp';
     } catch (_) {
-      authToken = ''; authUser = ''; authRole = 'admin'; authEmail = null; authMinisterioId = null; authMinisterioNome = null; authMinisterioIds = []; authMinisterioNomes = []; authFotoUrl = null; authMustChangePassword = false; authIsMasterAdmin = false;
+      authToken = ''; authUser = ''; authRole = 'admin'; authEmail = null; authMinisterioId = null; authMinisterioNome = null; authMinisterioIds = []; authMinisterioNomes = []; authFotoUrl = null; authMustChangePassword = false; authIsMasterAdmin = false; authIsGlobalAdmin = false;
     }
   }
   updateAuthUi();
