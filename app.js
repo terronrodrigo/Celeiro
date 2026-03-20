@@ -5174,6 +5174,38 @@ function hideFormularioMembroPublico() {
   if (authToken && contentEl) contentEl.style.display = 'block';
 }
 
+// Quando o usuário entra no dashboard autenticado, escondemos quaisquer overlays públicos
+// que possam ter ficado visíveis por conta de query params/hash (ex.: ?batismo=...).
+function hideAllPublicOverlays() {
+  [
+    'cadastroOverlay',
+    'formularioMembroOverlay',
+    'formularioBatismoPublicOverlay',
+    'formularioApresentacaoPublicOverlay',
+    'checkinPublicOverlay',
+    'escalaPublicOverlay',
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  // Garante que a área do dashboard volte a aparecer.
+  if (contentEl) contentEl.style.display = 'block';
+  if (authOverlay) authOverlay.style.display = 'none';
+}
+
+function clearPublicOverlayQueryParamsAndHash() {
+  try {
+    const url = new URL(window.location.href);
+    ['checkin', 'batismo', 'apresentacao', 'escala'].forEach((k) => url.searchParams.delete(k));
+    url.hash = '';
+    const qs = url.searchParams.toString();
+    url.search = qs ? `?${qs}` : '';
+    window.history.replaceState({}, '', url.toString());
+  } catch (_) {
+    // Se algo der errado, não impede o dashboard.
+  }
+}
+
 function showFormularioBatismoPublicOverlay() {
   preparePublicFormSession();
   const overlay = document.getElementById('formularioBatismoPublicOverlay');
@@ -5565,6 +5597,8 @@ window.addEventListener('pageshow', function(ev) {
   ]).then(ok => {
     if (ok && authMustChangePassword) return;
     if (ok) {
+      hideAllPublicOverlays();
+      clearPublicOverlayQueryParamsAndHash();
       const isVol = authRole === 'voluntario';
       const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
       const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
