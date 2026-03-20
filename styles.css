@@ -1229,7 +1229,6 @@ body {
   position: static !important;
   inset: auto !important;
   z-index: auto !important;
-  display: block !important;
   padding: 24px;
   background: transparent;
   backdrop-filter: none;
@@ -1243,7 +1242,6 @@ body {
   position: static !important;
   inset: auto !important;
   z-index: auto !important;
-  display: block !important;
   align-items: flex-start !important;
   justify-content: flex-start !important;
   background: transparent !important;
