@@ -4054,6 +4054,7 @@ function restoreDashboardFromPublicForm() {
 
 function showEscalaPublicOverlay() {
   preparePublicFormSession();
+  hideAllPublicOverlays();
   const overlay = document.getElementById('escalaPublicOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
@@ -5289,6 +5290,7 @@ let formularioApresentacaoPublicEventoId = null;
 
 function showFormularioMembroPublico() {
   preparePublicFormSession();
+  hideAllPublicOverlays();
   const overlay = document.getElementById('formularioMembroOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
@@ -5338,6 +5340,7 @@ function clearPublicOverlayQueryParamsAndHash() {
 
 function showFormularioBatismoPublicOverlay() {
   preparePublicFormSession();
+  hideAllPublicOverlays();
   const overlay = document.getElementById('formularioBatismoPublicOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
@@ -5348,6 +5351,7 @@ function showFormularioBatismoPublicOverlay() {
 
 function showFormularioApresentacaoPublicOverlay() {
   preparePublicFormSession();
+  hideAllPublicOverlays();
   const overlay = document.getElementById('formularioApresentacaoPublicOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
