@@ -5,6 +5,21 @@
 
 import { getSession, setSession, clearSession, createLoginCode, verifyLoginCode, normalizePhone } from './sessions.js';
 import User from '../models/User.js';
+import Igreja from '../models/Igreja.js';
+import { DEFAULT_IGREJA_SLUG } from '../tenant-context.js';
+
+/** Mesmo email em várias igrejas: prioriza conta do tenant legado (Celeiro) no WhatsApp. */
+async function findUserForWhatsAppByEmail(emailLower) {
+  const list = await User.find({ email: emailLower, ativo: true }).lean();
+  if (list.length === 0) return null;
+  if (list.length === 1) return list[0];
+  const ig = await Igreja.findOne({ slug: DEFAULT_IGREJA_SLUG }).select('_id').lean();
+  if (ig) {
+    const hit = list.find((u) => u.igrejaId && String(u.igrejaId) === String(ig._id));
+    if (hit) return hit;
+  }
+  return list[0];
+}
 
 const API_BASE = (process.env.APP_URL || process.env.API_BASE || `http://localhost:${process.env.PORT || 3001}`).replace(/\/$/, '');
 const GROK_API_KEY = (process.env.GROK_API_KEY || process.env.XAI_API_KEY || '').trim();
@@ -161,7 +176,7 @@ export async function processMessage(whatsappId, text, sendCodeToWhatsApp, creat
       return 'Olá! Sou o assistente do Celeiro. Para continuar, digite seu *email* cadastrado na plataforma.';
     }
     if (msg.includes('@')) {
-      const user = await User.findOne({ email: msg.trim().toLowerCase(), ativo: true }).lean();
+      const user = await findUserForWhatsAppByEmail(msg.trim().toLowerCase());
       if (!user) return 'Email não encontrado. Verifique ou peça ao admin para cadastrar.';
       const code = createLoginCode(user.email, phone);
       if (sendCodeToWhatsApp) {
@@ -174,7 +189,9 @@ export async function processMessage(whatsappId, text, sendCodeToWhatsApp, creat
       const verified = verifyLoginCode(phone, code);
       if (!verified) return 'Código inválido ou expirado. Tente novamente com seu email.';
       const { email } = verified;
-      const userForSession = await User.findOne({ email: email.toLowerCase(), ativo: true }).populate('ministerioIds', 'nome').lean();
+      const row = await findUserForWhatsAppByEmail(email.toLowerCase());
+      if (!row) return 'Código inválido ou expirado.';
+      const userForSession = await User.findById(row._id).populate('ministerioIds', 'nome').lean();
       if (!userForSession) return 'Código inválido ou expirado.';
       if (!createAuthTokenForUser) return 'Erro de configuração. Contate o admin.';
       const { token } = await createAuthTokenForUser(userForSession);

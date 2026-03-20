@@ -688,6 +688,147 @@ async function getCeleiroIgrejaIdForLegacyImport() {
   return g._id;
 }
 
+/** Slug enviado pelo cliente ao escolher “admin global” quando o email existe em mais de um contexto. */
+const GLOBAL_LOGIN_SLUG = '_global';
+
+async function collectActiveUsersMatchingPassword(emailLower, senhaPlain) {
+  const candidates = await User.find({ email: emailLower });
+  const out = [];
+  for (const u of candidates) {
+    if (!u.ativo) continue;
+    // eslint-disable-next-line no-await-in-loop
+    if (await u.compararSenha(senhaPlain)) out.push(u);
+  }
+  return out;
+}
+
+async function choicesForMultiTenantLogin(users) {
+  const igrejas = [];
+  for (const u of users) {
+    if (!u.igrejaId) {
+      igrejas.push({ igrejaSlug: GLOBAL_LOGIN_SLUG, igrejaNome: 'Admin global (acesso a todas as igrejas)' });
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const ig = await Igreja.findById(u.igrejaId).select('nome slug').lean();
+    igrejas.push({
+      igrejaSlug: ig?.slug || String(u.igrejaId),
+      igrejaNome: ig?.nome || 'Igreja',
+    });
+  }
+  return igrejas;
+}
+
+/**
+ * Mesmo email pode ter User distinto por igreja (igrejaId). Se várias contas batem com a senha, exige igrejaSlug.
+ */
+async function resolveUserForEmailPasswordLogin(emailLower, senhaPlain, igrejaSlugRaw) {
+  const matches = await collectActiveUsersMatchingPassword(emailLower, senhaPlain);
+  if (matches.length === 0) {
+    return { ok: false, status: 401, body: { error: 'Usuário ou senha inválidos.' } };
+  }
+
+  const slugOpt = (igrejaSlugRaw || '').toString().trim();
+  const slugLower = slugOpt.toLowerCase();
+
+  if (matches.length === 1) {
+    return { ok: true, user: matches[0] };
+  }
+
+  if (!slugOpt) {
+    const igrejas = await choicesForMultiTenantLogin(matches);
+    return {
+      ok: false,
+      status: 409,
+      body: {
+        error: 'Este email está cadastrado em mais de uma igreja. Escolha em qual deseja entrar.',
+        needIgrejaChoice: true,
+        igrejas,
+      },
+    };
+  }
+
+  let pool;
+  if (slugLower === GLOBAL_LOGIN_SLUG || slugLower === 'global') {
+    pool = matches.filter((u) => !u.igrejaId);
+  } else {
+    const ig = await Igreja.findOne({ slug: slugOpt }).lean();
+    if (!ig) {
+      return { ok: false, status: 400, body: { error: 'Igreja não encontrada para este slug.' } };
+    }
+    const igId = String(ig._id);
+    pool = matches.filter((u) => u.igrejaId && String(u.igrejaId) === igId);
+  }
+
+  if (pool.length === 1) return { ok: true, user: pool[0] };
+  if (pool.length === 0) {
+    return {
+      ok: false,
+      status: 400,
+      body: { error: 'Não há conta com este email nesta igreja. Verifique a senha ou a igreja.' },
+    };
+  }
+  const igrejas = await choicesForMultiTenantLogin(matches);
+  return {
+    ok: false,
+    status: 409,
+    body: {
+      error: 'Este email está cadastrado em mais de uma igreja. Escolha em qual deseja entrar.',
+      needIgrejaChoice: true,
+      igrejas,
+    },
+  };
+}
+
+async function finalizeDbUserLogin(res, user, { withCheckinLink = false } = {}) {
+  user.ultimoAcesso = new Date();
+  await user.save();
+  if (withCheckinLink) {
+    try {
+      await vincularCheckinsAoUsuario(user._id, user.email);
+    } catch (_) {}
+  }
+
+  let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
+  if (ministerioIds.length === 0 && user.ministerioId) {
+    ministerioIds = [user.ministerioId];
+    user.ministerioIds = ministerioIds;
+    await user.save();
+  }
+  const ministerioNomes = [];
+  if (ministerioIds.length > 0) {
+    const minQ = { _id: { $in: ministerioIds } };
+    if (user.igrejaId) minQ.igrejaId = user.igrejaId;
+    const mins = await Ministerio.find(minQ).select('nome').lean();
+    mins.forEach(m => { if (m && m.nome) ministerioNomes.push(m.nome); });
+  }
+  const ministerioId = ministerioIds[0] || null;
+  const ministerioNome = ministerioNomes[0] || null;
+  const roleNorm = String(user.role || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') || 'voluntario';
+  const roleFinal = roleNorm === 'lider' || roleNorm.includes('lider') ? 'lider' : roleNorm;
+  const igrejaIdStr = user.igrejaId ? String(user.igrejaId) : null;
+  const isGlobalAdmin = roleFinal === 'admin' && !user.igrejaId;
+  const mustChangePassword = user.mustChangePassword === true;
+  const { token, expiresAt } = await createAuthTokenForUser(user);
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  const isMasterAdmin = MASTER_ADMIN_EMAIL && (user.email || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
+  let igrejaNome = null;
+  let igrejaSlug = null;
+  if (user.igrejaId) {
+    const ig = await Igreja.findById(user.igrejaId).select('nome slug').lean();
+    if (ig) { igrejaNome = ig.nome; igrejaSlug = ig.slug; }
+  }
+  return res.json({
+    token,
+    user: {
+      nome: user.nome, email: user.email, role: roleFinal, ministerioId, ministerioNome, ministerioIds, ministerioNomes,
+      fotoUrl: user.fotoUrl || null, mustChangePassword, isMasterAdmin,
+      igrejaId: igrejaIdStr, igrejaNome, igrejaSlug, isGlobalAdmin,
+    },
+    expiresAt,
+  });
+}
+
 // Setup inicial: criar primeiro admin (após deploy). Protegido por SETUP_SECRET.
 app.get('/api/setup/status', async (_req, res) => {
   try {
@@ -719,8 +860,10 @@ app.post('/api/setup', async (req, res) => {
     const hasAdmin = await User.exists({ role: 'admin' });
     if (hasAdmin) return res.status(400).json({ error: 'Já existe um admin. Use login normal.' });
 
-    const existing = await User.findOne({ email: emailVal });
-    if (existing) return res.status(400).json({ error: 'Este email já está cadastrado. Use outra conta ou faça login.' });
+    const existingGlobal = await User.exists({ email: emailVal, igrejaId: null });
+    if (existingGlobal) {
+      return res.status(400).json({ error: 'Este email já está cadastrado como admin global. Use outra conta ou faça login.' });
+    }
 
     const user = new User({ email: emailVal, nome: nomeVal, senha: senhaVal, role: 'admin' });
     await user.save();
@@ -742,7 +885,8 @@ app.post('/api/login', async (req, res) => {
     if (ADMIN_USER && ADMIN_PASS && login === ADMIN_USER && senha === ADMIN_PASS) {
       let adminFotoUrl = null;
       try {
-        const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
+        const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase(), igrejaId: null }).select('fotoUrl').lean()
+          || await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
         if (adminUser && adminUser.fotoUrl) adminFotoUrl = adminUser.fotoUrl;
       } catch (_) {}
       const token = crypto.randomBytes(32).toString('hex');
@@ -759,53 +903,13 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    // 2) Login por email (User/voluntário)
-    const user = await User.findOne({ email: login.toLowerCase() });
-    if (!user) return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
-    if (!user.ativo) return res.status(403).json({ error: 'Usuário desativado.' });
-    const valida = await user.compararSenha(senha);
-    if (!valida) return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
-    user.ultimoAcesso = new Date();
-    await user.save();
-
-    let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
-    if (ministerioIds.length === 0 && user.ministerioId) {
-      ministerioIds = [user.ministerioId];
-      user.ministerioIds = ministerioIds;
-      await user.save();
+    // 2) Login por email (User) — pode haver mais de uma conta com o mesmo email (igrejas diferentes)
+    const igrejaSlugLogin = (req.body.igrejaSlug || req.body.igreja || '').toString().trim();
+    const resolved = await resolveUserForEmailPasswordLogin(login.toLowerCase(), senha, igrejaSlugLogin);
+    if (!resolved.ok) {
+      return res.status(resolved.status).json(resolved.body);
     }
-    const ministerioNomes = [];
-    if (ministerioIds.length > 0) {
-      const minQ = { _id: { $in: ministerioIds } };
-      if (user.igrejaId) minQ.igrejaId = user.igrejaId;
-      const mins = await Ministerio.find(minQ).select('nome').lean();
-      mins.forEach(m => { if (m && m.nome) ministerioNomes.push(m.nome); });
-    }
-    const ministerioId = ministerioIds[0] || null;
-    const ministerioNome = ministerioNomes[0] || null;
-    const roleNorm = String(user.role || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') || 'voluntario';
-    const roleFinal = roleNorm === 'lider' || roleNorm.includes('lider') ? 'lider' : roleNorm;
-    const igrejaIdStr = user.igrejaId ? String(user.igrejaId) : null;
-    const isGlobalAdmin = roleFinal === 'admin' && !user.igrejaId;
-    const mustChangePassword = user.mustChangePassword === true;
-    const { token, expiresAt } = await createAuthTokenForUser(user);
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    const isMasterAdmin = MASTER_ADMIN_EMAIL && (user.email || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
-    let igrejaNome = null;
-    let igrejaSlug = null;
-    if (user.igrejaId) {
-      const ig = await Igreja.findById(user.igrejaId).select('nome slug').lean();
-      if (ig) { igrejaNome = ig.nome; igrejaSlug = ig.slug; }
-    }
-    return res.json({
-      token,
-      user: {
-        nome: user.nome, email: user.email, role: roleFinal, ministerioId, ministerioNome, ministerioIds, ministerioNomes,
-        fotoUrl: user.fotoUrl || null, mustChangePassword, isMasterAdmin,
-        igrejaId: igrejaIdStr, igrejaNome, igrejaSlug, isGlobalAdmin,
-      },
-      expiresAt,
-    });
+    return finalizeDbUserLogin(res, resolved.user, { withCheckinLink: false });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao fazer login.' });
@@ -852,7 +956,8 @@ app.get('/api/me', requireAuth, async (req, res) => {
         }
       }
     } else if (req.userRole === 'admin' && ADMIN_USER) {
-      const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
+      const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase(), igrejaId: null }).select('fotoUrl').lean()
+        || await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
       if (adminUser && adminUser.fotoUrl) fotoUrl = adminUser.fotoUrl;
     }
     const email = userEmail;
@@ -1061,7 +1166,8 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
     const emails = [...new Set(normalizedAll.map(v => (v.email || '').toLowerCase().trim()).filter(Boolean))];
     const usersByEmail = {};
     if (emails.length > 0) {
-      const users = await User.find({ email: { $in: emails } }).select('email fotoUrl').lean();
+      const uq = { email: { $in: emails }, igrejaId: req.tenantIgrejaId };
+      const users = await User.find(uq).select('email fotoUrl').lean();
       users.forEach(u => { if (u.email) usersByEmail[u.email.toLowerCase()] = u.fotoUrl || null; });
     }
     normalizedAll.forEach(v => {
@@ -1212,7 +1318,8 @@ app.get('/api/checkins', requireAuth, resolveTenant, async (req, res) => {
     const emailsCheckin = [...new Set(checkinsData.map(c => (c.email || '').toLowerCase().trim()).filter(Boolean))];
     const fotoByEmail = {};
     if (emailsCheckin.length > 0) {
-      const users = await User.find({ email: { $in: emailsCheckin } }).select('email fotoUrl').lean();
+      const uqCh = { email: { $in: emailsCheckin }, igrejaId: req.tenantIgrejaId };
+      const users = await User.find(uqCh).select('email fotoUrl').lean();
       users.forEach(u => { if (u.email) fotoByEmail[u.email.toLowerCase()] = u.fotoUrl || null; });
     }
     const normalized = checkinsData.map(c => {
@@ -1910,9 +2017,15 @@ app.get('/api/formularios/apresentacao/:eventoId', requireAuth, resolveTenant, r
 app.get('/api/me/perfil', requireAuth, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   try {
+    const emailLookup = (req.userEmail || '').toLowerCase().trim();
     const userRow = req.userId
       ? await User.findById(req.userId).select('email fotoUrl igrejaId').lean()
-      : await User.findOne({ email: (req.userEmail || '').toLowerCase().trim() }).select('email fotoUrl igrejaId').lean();
+      : await User.findOne({
+        email: emailLookup,
+        ...(req.authIgrejaIdStr && mongoose.Types.ObjectId.isValid(req.authIgrejaIdStr)
+          ? { igrejaId: req.authIgrejaIdStr }
+          : { igrejaId: null }),
+      }).select('email fotoUrl igrejaId').lean();
     const email = (req.userEmail || userRow?.email || '').toLowerCase().trim();
     if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
     const volFilter = { email };
@@ -1934,7 +2047,14 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
   try {
     const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email igrejaId').lean())?.email);
     if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
-    const uRow = req.userId ? await User.findById(req.userId).select('igrejaId').lean() : await User.findOne({ email: email.toLowerCase() }).select('igrejaId').lean();
+    const uRow = req.userId
+      ? await User.findById(req.userId).select('igrejaId').lean()
+      : await User.findOne({
+        email: email.toLowerCase(),
+        ...(req.authIgrejaIdStr && mongoose.Types.ObjectId.isValid(req.authIgrejaIdStr)
+          ? { igrejaId: req.authIgrejaIdStr }
+          : { igrejaId: null }),
+      }).select('igrejaId').lean();
     if (!uRow?.igrejaId) return sendError(res, 400, 'Conta sem igreja vinculada. Contate o administrador.');
     const body = { ...req.body };
     delete body.email;
@@ -2188,9 +2308,9 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Email, nome e senha são obrigatórios.' });
     }
     
-    const existe = await User.findOne({ email: email.toLowerCase() });
+    const existe = await User.findOne({ email: email.toLowerCase(), igrejaId: igrejaDoc._id });
     if (existe) {
-      return res.status(409).json({ error: 'Email já registrado.' });
+      return res.status(409).json({ error: 'Email já registrado nesta igreja.' });
     }
     
     const user = new User({
@@ -2240,13 +2360,41 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     if (!email || !email.includes('@')) {
       return res.status(400).json({ error: 'Informe um email válido.' });
     }
-    const user = await User.findOne({ email }).select('nome senha googleId resetToken resetTokenExpires').lean();
-    if (!user || !user.senha) {
+    const igrejaSlugFp = (req.body?.igrejaSlug || req.body?.igreja || '').toString().trim();
+    const candidates = await User.find({ email }).select('_id nome senha googleId igrejaId').lean();
+    const withPwd = candidates.filter((u) => u.senha);
+    if (withPwd.length === 0) {
       return res.json({ message: genericMessage });
     }
+
+    let user;
+    if (withPwd.length === 1) {
+      [user] = withPwd;
+    } else if (!igrejaSlugFp) {
+      const igrejas = await choicesForMultiTenantLogin(withPwd);
+      return res.status(409).json({
+        error: 'Este email está cadastrado em mais de uma igreja. Escolha em qual deseja redefinir a senha.',
+        needIgrejaChoice: true,
+        igrejas,
+      });
+    } else {
+      const slugLower = igrejaSlugFp.toLowerCase();
+      let pool;
+      if (slugLower === GLOBAL_LOGIN_SLUG || slugLower === 'global') {
+        pool = withPwd.filter((u) => !u.igrejaId);
+      } else {
+        const ig = await Igreja.findOne({ slug: igrejaSlugFp }).lean();
+        if (!ig) return res.json({ message: genericMessage });
+        const igId = String(ig._id);
+        pool = withPwd.filter((u) => u.igrejaId && String(u.igrejaId) === igId);
+      }
+      if (pool.length !== 1) return res.json({ message: genericMessage });
+      [user] = pool;
+    }
+
     const resetToken = crypto.randomBytes(32).toString('hex');
     await User.updateOne(
-      { email },
+      { _id: user._id },
       { $set: { resetToken, resetTokenExpires: new Date(Date.now() + RESET_TOKEN_EXPIRES_MS) } }
     );
     const baseUrl = (process.env.APP_URL || '').trim() || `${req.protocol || 'https'}://${req.get('host') || req.headers.host || ''}`;
@@ -2304,68 +2452,16 @@ app.post('/api/auth/reset-password', async (req, res) => {
 // POST /api/auth/login-email - Login com email e senha
 app.post('/api/auth/login-email', async (req, res) => {
   try {
-    const { email, senha } = req.body || {};
+    const { email, senha, igrejaSlug: igrejaSlugBody } = req.body || {};
     if (!email || !senha) {
       return res.status(400).json({ error: 'Email e senha são obrigatórios.' });
     }
-    
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) {
-      return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+    const igrejaSlugLogin = (igrejaSlugBody || req.body?.igreja || '').toString().trim();
+    const resolved = await resolveUserForEmailPasswordLogin(email.toLowerCase(), senha, igrejaSlugLogin);
+    if (!resolved.ok) {
+      return res.status(resolved.status).json(resolved.body);
     }
-    
-    if (!user.ativo) {
-      return res.status(403).json({ error: 'Usuário desativado.' });
-    }
-    
-    const valida = await user.compararSenha(senha);
-    if (!valida) {
-      return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
-    }
-    
-    // Atualizar último acesso
-    user.ultimoAcesso = new Date();
-    await user.save();
-    try { await vincularCheckinsAoUsuario(user._id, user.email); } catch (_) {}
-
-    let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
-    if (ministerioIds.length === 0 && user.ministerioId) {
-      ministerioIds = [user.ministerioId];
-      user.ministerioIds = ministerioIds;
-      await user.save();
-    }
-    const ministerioNomes = [];
-    if (ministerioIds.length > 0) {
-      const minQ = { _id: { $in: ministerioIds } };
-      if (user.igrejaId) minQ.igrejaId = user.igrejaId;
-      const mins = await Ministerio.find(minQ).select('nome').lean();
-      mins.forEach(m => { if (m && m.nome) ministerioNomes.push(m.nome); });
-    }
-    const ministerioId = ministerioIds[0] || null;
-    const ministerioNome = ministerioNomes[0] || null;
-    const roleNorm = String(user.role || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') || 'voluntario';
-    const roleFinal = roleNorm === 'lider' || roleNorm.includes('lider') ? 'lider' : roleNorm;
-    const igrejaIdStr = user.igrejaId ? String(user.igrejaId) : null;
-    const isGlobalAdmin = roleFinal === 'admin' && !user.igrejaId;
-    const mustChangePassword = user.mustChangePassword === true;
-    const { token, expiresAt } = await createAuthTokenForUser(user);
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-    const isMasterAdmin = MASTER_ADMIN_EMAIL && (user.email || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
-    let igrejaNome = null;
-    let igrejaSlug = null;
-    if (user.igrejaId) {
-      const ig = await Igreja.findById(user.igrejaId).select('nome slug').lean();
-      if (ig) { igrejaNome = ig.nome; igrejaSlug = ig.slug; }
-    }
-    res.json({
-      token,
-      user: {
-        nome: user.nome, email: user.email, role: roleFinal, ministerioId, ministerioNome, ministerioIds, ministerioNomes,
-        fotoUrl: user.fotoUrl || null, mustChangePassword, isMasterAdmin,
-        igrejaId: igrejaIdStr, igrejaNome, igrejaSlug, isGlobalAdmin,
-      },
-      expiresAt,
-    });
+    return finalizeDbUserLogin(res, resolved.user, { withCheckinLink: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Erro ao fazer login.' });
@@ -2416,8 +2512,8 @@ app.post('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res
     if (!senhaVal || senhaVal.length < 6) return sendError(res, 400, 'Senha temporária é obrigatória (mínimo 6 caracteres).');
     const roleVal = (role || 'voluntario').toString().toLowerCase();
     if (!['admin', 'voluntario', 'lider'].includes(roleVal)) return sendError(res, 400, 'Perfil inválido.');
-    const existing = await User.findOne({ email: em });
-    if (existing) return sendError(res, 409, 'Já existe um usuário com este email.');
+    const existing = await User.findOne({ email: em, igrejaId: req.tenantIgrejaId });
+    if (existing) return sendError(res, 409, 'Já existe um usuário com este email nesta igreja.');
     const rawIds = Array.isArray(ministerioIds) ? ministerioIds.filter(Boolean) : [];
     const user = new User({
       email: em,

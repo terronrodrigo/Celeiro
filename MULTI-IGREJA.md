@@ -70,7 +70,7 @@ O servidor, ao resolver `escalaId` / `eventoId`, deve validar que o documento pe
 1. Criar documento **Celeiro São Paulo** (`slug: celeiro-sp`).
 2. Criar documento **Inc São Paulo** (`slug: inc-sp`) — listas vazias.
 3. Script único de migração: para cada coleção com `igrejaId` novo, setar `igrejaId = id do Celeiro` em todos os documentos que ainda não têm.
-4. Ajustar índices: trocar `unique: true` em `Voluntario.email` por índice composto `{ email: 1, igrejaId: 1 }` (e planejar deduplicação se necessário).
+4. Ajustar índices: trocar `unique: true` em `Voluntario.email` por índice composto `{ email: 1, igrejaId: 1 }` (e planejar deduplicação se necessário). O mesmo vale para **`User`**: unicidade é `(email, igrejaId)` — a mesma pessoa pode ter contas diferentes (cargos distintos) na Inc e no Celeiro. Após alterar o modelo, rode `npm run update-db` no servidor para sincronizar índices (remove o índice único antigo só em `email`).
 5. Rodar `npm run update-db` (ou script de sync de índices) após deploy.
 
 ### Planilha Google Sheets / CSV (`VOLUNTARIOS_CSV_PATH`, `CSV_URL`, check-ins CSV)
@@ -85,6 +85,10 @@ cd server && npm run fix-planilha-celeiro
 ```
 
 O script `migrate-multi-igreja.js` também corrige esses registros ao ser executado de novo.
+
+### Login com o mesmo email em várias igrejas
+
+Se existirem **duas contas** (`User`) com o mesmo email (Celeiro e Inc, por exemplo), o login pede **qual igreja** (`409` + `needIgrejaChoice`). O front exibe um select; na API envie `igrejaSlug` no body (valor `_global` para admin sem `igrejaId`). “Esqueci a senha” segue a mesma lógica quando há ambiguidade.
 
 ## 7. Fases de implementação sugeridas
 

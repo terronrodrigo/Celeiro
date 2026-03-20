@@ -1101,6 +1101,10 @@
           <label for="loginPass">Senha</label>
           <input type="password" id="loginPass" autocomplete="current-password" placeholder="••••••••">
         </div>
+        <div class="form-group" id="loginIgrejaWrap" style="display: none;">
+          <label for="loginIgrejaSelect">Entrar em qual igreja?</label>
+          <select id="loginIgrejaSelect" class="auth-select" aria-label="Igreja para login"></select>
+        </div>
         <p id="loginError" class="auth-error"></p>
         <button type="submit" class="btn btn-primary" id="btnLogin">Entrar</button>
         <p class="auth-footer-link"><a href="#" id="linkEsqueciSenha">Esqueci a senha</a></p>
@@ -1140,6 +1144,10 @@
         <div class="form-group">
           <label for="forgotEmail">Email</label>
           <input type="email" id="forgotEmail" placeholder="seu@email.com" autocomplete="email">
+        </div>
+        <div class="form-group" id="forgotIgrejaWrap" style="display: none;">
+          <label for="forgotIgrejaSelect">Igreja da conta</label>
+          <select id="forgotIgrejaSelect" class="auth-select" aria-label="Igreja para redefinir senha"></select>
         </div>
         <p id="forgotError" class="auth-error"></p>
         <p id="forgotSuccess" class="auth-success" style="display: none;"></p>

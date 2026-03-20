@@ -4242,21 +4242,44 @@ async function handleLogin(e) {
     if (loginError) loginError.textContent = 'Informe email/usuário e senha.';
     return;
   }
+  const loginIgrejaWrap = document.getElementById('loginIgrejaWrap');
+  const loginIgrejaSelect = document.getElementById('loginIgrejaSelect');
+  const igrejaSlugChosen = (loginIgrejaWrap && loginIgrejaWrap.style.display !== 'none' && loginIgrejaSelect?.value)
+    ? loginIgrejaSelect.value.trim()
+    : '';
   if (btnLogin) {
     btnLogin.disabled = true;
     btnLogin.textContent = 'Entrando...';
   }
+  let loginSucceeded = false;
   try {
+    const payload = { username: login, email: login, password };
+    if (igrejaSlugChosen) payload.igrejaSlug = igrejaSlugChosen;
     const r = await fetch(`${API_BASE}/api/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: login, email: login, password }),
+      body: JSON.stringify(payload),
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      if (loginError) loginError.textContent = data.error || 'Falha ao autenticar.';
+    if (r.status === 409 && data.needIgrejaChoice && Array.isArray(data.igrejas) && data.igrejas.length > 0) {
+      fillIgrejaChoiceSelect(loginIgrejaSelect, data.igrejas);
+      if (loginIgrejaWrap) loginIgrejaWrap.style.display = 'block';
+      if (loginIgrejaSelect) loginIgrejaSelect.setAttribute('required', 'required');
+      if (loginError) {
+        loginError.style.color = 'var(--text-secondary, #a1a1aa)';
+        loginError.textContent = data.error || 'Escolha a igreja e clique em Entrar de novo.';
+      }
       return;
     }
+    if (!r.ok) {
+      if (loginError) {
+        loginError.style.color = '';
+        loginError.textContent = data.error || 'Falha ao autenticar.';
+      }
+      return;
+    }
+    loginSucceeded = true;
+    resetLoginIgrejaChoiceUi();
     setAuthSession(data);
     if (authMustChangePassword) {
       updateAuthUi();
@@ -4275,7 +4298,7 @@ async function handleLogin(e) {
   } catch (err) {
     if (loginError) loginError.textContent = err.message || 'Erro de rede.';
   } finally {
-    if (loginPass) loginPass.value = '';
+    if (loginSucceeded && loginPass) loginPass.value = '';
     if (btnLogin) {
       btnLogin.disabled = false;
       btnLogin.textContent = 'Entrar';
@@ -4756,9 +4779,39 @@ function resizeImageForAvatar(file) {
 btnConfirmarCheckin?.addEventListener('click', confirmarCheckin);
 document.getElementById('btnPerfilConfirmarCheckin')?.addEventListener('click', confirmarCheckinDesdePerfil);
 
+function resetLoginIgrejaChoiceUi() {
+  const wrap = document.getElementById('loginIgrejaWrap');
+  const sel = document.getElementById('loginIgrejaSelect');
+  if (wrap) wrap.style.display = 'none';
+  if (sel) {
+    sel.innerHTML = '';
+    sel.removeAttribute('required');
+  }
+}
+
+function resetForgotIgrejaChoiceUi() {
+  const wrap = document.getElementById('forgotIgrejaWrap');
+  const sel = document.getElementById('forgotIgrejaSelect');
+  if (wrap) wrap.style.display = 'none';
+  if (sel) sel.innerHTML = '';
+}
+
+function fillIgrejaChoiceSelect(selectEl, igrejas) {
+  if (!selectEl || !Array.isArray(igrejas)) return;
+  selectEl.innerHTML = '';
+  igrejas.forEach((o) => {
+    const opt = document.createElement('option');
+    opt.value = o.igrejaSlug || '';
+    opt.textContent = o.igrejaNome || o.igrejaSlug || 'Igreja';
+    selectEl.appendChild(opt);
+  });
+}
+
 function showAuthCard(card) {
   [loginCard, registerCard, setupCard, forgotPasswordCard, resetPasswordCard, mustChangePasswordCard].forEach(c => { if (c) c.style.display = 'none'; });
   if (card) card.style.display = 'block';
+  if (card === loginCard) resetLoginIgrejaChoiceUi();
+  if (card === forgotPasswordCard) resetForgotIgrejaChoiceUi();
 }
 
 async function fetchSetupStatus() {
@@ -4844,16 +4897,29 @@ document.getElementById('forgotPasswordForm')?.addEventListener('submit', async 
   const errEl = document.getElementById('forgotError');
   const okEl = document.getElementById('forgotSuccess');
   const btn = document.getElementById('btnForgotSubmit');
+  const forgotIgrejaWrap = document.getElementById('forgotIgrejaWrap');
+  const forgotIgrejaSelect = document.getElementById('forgotIgrejaSelect');
   if (errEl) errEl.textContent = '';
   if (okEl) { okEl.style.display = 'none'; okEl.textContent = ''; }
   const email = (document.getElementById('forgotEmail')?.value || '').trim().toLowerCase();
   if (!email || !email.includes('@')) { if (errEl) errEl.textContent = 'Informe um email válido.'; return; }
+  const igrejaSlug = (forgotIgrejaWrap && forgotIgrejaWrap.style.display !== 'none' && forgotIgrejaSelect?.value)
+    ? forgotIgrejaSelect.value.trim()
+    : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
   try {
-    const r = await fetch(`${API_BASE}/api/auth/forgot-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    const body = { email, ...(igrejaSlug ? { igrejaSlug } : {}) };
+    const r = await fetch(`${API_BASE}/api/auth/forgot-password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await r.json().catch(() => ({}));
+    if (r.status === 409 && data.needIgrejaChoice && Array.isArray(data.igrejas) && data.igrejas.length > 0) {
+      fillIgrejaChoiceSelect(forgotIgrejaSelect, data.igrejas);
+      if (forgotIgrejaWrap) forgotIgrejaWrap.style.display = 'block';
+      if (errEl) errEl.textContent = data.error || 'Escolha a igreja e envie de novo.';
+      return;
+    }
     if (okEl) { okEl.textContent = data.message || 'Se o email estiver cadastrado, você receberá um link para redefinir a senha.'; okEl.style.display = 'block'; }
-    if (errEl) errEl.textContent = '';
+    if (errEl) errEl.textContent = data.error || '';
+    if (r.ok && forgotIgrejaWrap) forgotIgrejaWrap.style.display = 'none';
   } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Enviar link'; } }
 });

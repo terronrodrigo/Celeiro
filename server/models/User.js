@@ -5,7 +5,6 @@ const userSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
-    unique: true,
     lowercase: true,
   },
   nome: {
@@ -55,6 +54,9 @@ const userSchema = new mongoose.Schema({
 }, {
   timestamps: false,
 });
+
+// Mesmo email pode existir em igrejas diferentes (contas distintas)
+userSchema.index({ email: 1, igrejaId: 1 }, { unique: true });
 
 // Índices para performance
 userSchema.index({ role: 1 });
