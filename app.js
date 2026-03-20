@@ -3606,6 +3606,55 @@ function renderEscalasCandidatosLider() {
     container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Nenhuma escala disponível no momento.</p></div>';
     return;
   }
+
+  const leaderMinisterios = Array.isArray(authMinisterioNomes) && authMinisterioNomes.length > 0
+    ? authMinisterioNomes
+    : (authMinisterioNome ? [authMinisterioNome] : []);
+  const leaderMinisteriosClean = [...new Set(leaderMinisterios.map(m => String(m || '').trim()).filter(Boolean))];
+
+  const openEscalas = (Array.isArray(escalasList) ? escalasList : []).filter(e => e && e.ativo !== false);
+  const ig = getTenantSlugForLinks();
+
+  const openLinksHtml = (openEscalas.length && leaderMinisteriosClean.length)
+    ? `
+      <section class="filters-row" style="margin-bottom:16px">
+        <div class="filters-card" style="width:100%">
+          <h3 style="font-size:1.05rem;margin-bottom:10px">Escalas abertas (copie o link)</h3>
+          <p class="auth-subtitle" style="margin:0 0 14px;color:var(--text-muted);font-size:.95em">
+            Links já pré-parametrizados para o seu(s) ministério(s).
+          </p>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            ${openEscalas.map(e => `
+              <div style="border-top:1px solid var(--border-color);padding-top:12px">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                  <div>
+                    <div style="font-weight:700">${escapeHtml(e.nome || '—')}</div>
+                    <div style="color:var(--text-muted);font-size:.9em;margin-top:2px">
+                      Data: ${escapeHtml(formatEscalaDateOnly(e.data || ''))}
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+                    ${leaderMinisteriosClean.map((m) => `
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-primary"
+                        data-escala-open-copy="${escapeAttr(String(e._id))}"
+                        data-escala-open-copy-ministerio="${escapeAttr(String(m))}"
+                        title="Copiar link para seu ministério"
+                      >
+                        Copiar link (${escapeHtml(m)})
+                      </button>
+                    `).join('')}
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </section>
+    `
+    : '';
+
   const escalasOptions = escalasList.map((e) => {
     return `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome)}</option>`;
   }).join('');
@@ -3614,9 +3663,24 @@ function renderEscalasCandidatosLider() {
   const datasUnicas = [...new Set(candidaturasAll.map((c) => escalaDataToYMD(c.escalaData)).filter(Boolean))].sort().reverse();
   const datasOptions = datasUnicas.map((d) => `<option value="${escapeAttr(d)}">${formatEscalaDateOnly(d)}</option>`).join('');
 
-  container.innerHTML = buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasOptions);
+  container.innerHTML = openLinksHtml + buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasOptions);
   bindAnalisePanelEvents(container);
   renderAnaliseTab();
+
+  container.querySelectorAll('[data-escala-open-copy]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const escalaId = btn.getAttribute('data-escala-open-copy') || '';
+      const ministerio = btn.getAttribute('data-escala-open-copy-ministerio') || '';
+      if (!escalaId || !ministerio) return;
+      const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}?escala=${encodeURIComponent(escalaId)}&ministerio=${encodeURIComponent(ministerio)}&igreja=${encodeURIComponent(ig)}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        alert('Link copiado!');
+      } catch (_) {
+        prompt('Copie o link:', url);
+      }
+    });
+  });
 }
 
 function renderEscalasVoluntario(list, openEscalas) {
