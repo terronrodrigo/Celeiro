@@ -5279,6 +5279,7 @@ document.getElementById('cadastroWhatsapp')?.addEventListener('blur', function (
 });
 
 window.addEventListener('hashchange', () => {
+  hideAllPublicOverlays();
   if (window.location.hash === '#cadastro') showCadastroPublico();
   else if (window.location.hash === '#formulario-membro') showFormularioMembroPublico();
   else { hideCadastroPublico(); hideFormularioMembroPublico(); }
@@ -5632,6 +5633,8 @@ document.getElementById('formularioApresentacaoForm')?.addEventListener('submit'
 });
 
 function initPublicFormOrDashboard() {
+  // Evita sobreposição de overlays públicos por estado anterior/cached navigation.
+  hideAllPublicOverlays();
   const urlSearchParams = new URLSearchParams(window.location.search);
   const checkinParam = urlSearchParams.get('checkin');
   if (checkinParam) {
@@ -5694,6 +5697,8 @@ window.addEventListener('pageshow', function(ev) {
 });
 
 (() => {
+  // Sempre inicia com overlays públicos fechados; cada fluxo abre apenas o necessário.
+  hideAllPublicOverlays();
   if (initPublicFormOrDashboard()) return;
   if (window.location.hash === '#cadastro') {
     showCadastroPublico();
