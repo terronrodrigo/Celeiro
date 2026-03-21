@@ -65,6 +65,8 @@ Opções (recomendado combinar slug + ids internos):
 
 O servidor, ao resolver `escalaId` / `eventoId`, deve validar que o documento pertence à **igreja** indicada no link (ou inferida por um único tenant legado durante migração).
 
+**Links copiados no painel** (check-in, batismo, apresentação, escala) passam a incluir `&igreja=<slug>` automaticamente. Sem isso, quem abre o link **sem** estar logado (ou com sessão de outra igreja) cai no tenant padrão (`celeiro-sp` ou `DEFAULT_IGREJA_SLUG`) e a API responde **“evento não encontrado”** — o ID existe, mas em outra igreja. Links antigos podem ser corrigidos acrescentando `&igreja=inc-sp` (ou o slug correto).
+
 ## 6. Migração dos dados atuais
 
 1. Criar documento **Celeiro São Paulo** (`slug: celeiro-sp`).

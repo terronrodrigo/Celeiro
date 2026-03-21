@@ -1336,7 +1336,10 @@ async function fetchEventosCheckin() {
         eventosCheckinBody.querySelectorAll('[data-event-link]').forEach(btn => {
           btn.addEventListener('click', () => {
             const id = btn.getAttribute('data-event-link');
-            const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}?checkin=${encodeURIComponent(id)}`;
+            const ig = encodeURIComponent(getTenantSlugForLinks());
+            const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}`;
+            // ?igreja= é obrigatório em rotas públicas multi-tenant; sem isso o padrão vira celeiro-sp e o evento "some".
+            const url = `${base}?checkin=${encodeURIComponent(id)}&igreja=${ig}`;
             navigator.clipboard.writeText(url).then(() => alert('Link copiado! Compartilhe para as pessoas fazerem check-in (email + ministério).')).catch(() => prompt('Copie o link:', url));
           });
         });
@@ -1487,7 +1490,9 @@ async function fetchFormularios() {
         eventosBatismoBody.querySelectorAll('[data-form-link="batismo"]').forEach(btn => {
           btn.addEventListener('click', () => {
             const id = btn.getAttribute('data-event-id');
-            const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}?batismo=${encodeURIComponent(id)}`;
+            const ig = encodeURIComponent(getTenantSlugForLinks());
+            const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}`;
+            const url = `${base}?batismo=${encodeURIComponent(id)}&igreja=${ig}`;
             navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie o link:', url));
           });
         });
@@ -1519,7 +1524,9 @@ async function fetchFormularios() {
         eventosApresentacaoBody.querySelectorAll('[data-form-link="apresentacao"]').forEach(btn => {
           btn.addEventListener('click', () => {
             const id = btn.getAttribute('data-event-id');
-            const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}?apresentacao=${encodeURIComponent(id)}`;
+            const ig = encodeURIComponent(getTenantSlugForLinks());
+            const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}`;
+            const url = `${base}?apresentacao=${encodeURIComponent(id)}&igreja=${ig}`;
             navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie o link:', url));
           });
         });
