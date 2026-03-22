@@ -640,7 +640,7 @@ const VIEW_META = {
   'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico de presenças.', role: 'voluntario' },
   'escalas-criar': { title: 'Criar escalas', subtitle: 'Crie e edite escalas, copie links de candidatura.', role: 'admin' },
   escalas: { title: 'Escala', subtitle: 'Candidatos e aprovação de voluntários.', role: 'admin' },
-  formularios: { title: 'Formulários', subtitle: 'Novos membros, batismo e apresentação de bebês.', role: 'admin' },
+  formularios: { title: 'Formulários', subtitle: 'Novos membros, consolidação, batismo e apresentação de bebês.', role: 'admin' },
 };
 
 function setView(view, options) {
@@ -1406,28 +1406,40 @@ async function toggleEventoAtivo(eventoId) {
 
 function getFormularioMembroLinkUrl() {
   const base = window.location.origin + window.location.pathname;
-  return base.replace(/\/$/, '') + '#formulario-membro';
+  const ig = encodeURIComponent(getTenantSlugForLinks());
+  return `${base.replace(/\/$/, '')}?igreja=${ig}#formulario-membro`;
+}
+
+function getFormularioConsolidacaoLinkUrl() {
+  const base = window.location.origin + window.location.pathname;
+  const ig = encodeURIComponent(getTenantSlugForLinks());
+  return `${base.replace(/\/$/, '')}?igreja=${ig}#formulario-consolidacao`;
 }
 
 async function fetchFormularios() {
   if (!authToken) return;
   try {
-    const [rBatismo, rApres, rMembro] = await Promise.all([
+    const [rBatismo, rApres, rMembro, rCons] = await Promise.all([
       authFetch(`${API_BASE}/api/eventos-formulario?tipo=batismo&_t=${Date.now()}`),
       authFetch(`${API_BASE}/api/eventos-formulario?tipo=apresentacao&_t=${Date.now()}`),
       authFetch(`${API_BASE}/api/formularios/membro?_t=${Date.now()}`),
+      authFetch(`${API_BASE}/api/formularios/consolidacao?_t=${Date.now()}`),
     ]);
     if (currentView !== 'formularios') return;
     eventosBatismo = rBatismo.ok ? (await rBatismo.json()) || [] : [];
     eventosApresentacao = rApres.ok ? (await rApres.json()) || [] : [];
     const membrosList = rMembro?.ok ? (await rMembro.json()) || [] : [];
     const totalMembros = Array.isArray(membrosList) ? membrosList.length : 0;
+    const consList = rCons?.ok ? (await rCons.json()) || [] : [];
+    const totalCons = Array.isArray(consList) ? consList.length : 0;
     const countBatismo = document.getElementById('eventosBatismoCount');
     const countApres = document.getElementById('eventosApresentacaoCount');
     if (countBatismo) countBatismo.textContent = `(${eventosBatismo.length})`;
     if (countApres) countApres.textContent = `(${eventosApresentacao.length})`;
     const totalMembroEl = document.getElementById('formulariosMembroCount');
     if (totalMembroEl) totalMembroEl.textContent = `(${totalMembros})`;
+    const totalConsEl = document.getElementById('formulariosConsolidacaoCount');
+    if (totalConsEl) totalConsEl.textContent = `(${totalCons})`;
     const totalBatismoEl = document.getElementById('formulariosBatismoTotalCount');
     const totalApresEl = document.getElementById('formulariosApresentacaoTotalCount');
 
@@ -1467,6 +1479,8 @@ async function fetchFormularios() {
 
     const formularioMembroLinkInput = document.getElementById('formularioMembroLinkInput');
     if (formularioMembroLinkInput) formularioMembroLinkInput.value = getFormularioMembroLinkUrl();
+    const formularioConsolidacaoLinkInput = document.getElementById('formularioConsolidacaoLinkInput');
+    if (formularioConsolidacaoLinkInput) formularioConsolidacaoLinkInput.value = getFormularioConsolidacaoLinkUrl();
     if (eventosBatismoBody) {
       if (!eventosBatismo.length) {
         eventosBatismoBody.innerHTML = '<tr><td colspan="6">Nenhum evento. Clique em "Novo evento de batismo" para criar.</td></tr>';
@@ -3066,6 +3080,70 @@ async function exportFormularioMembroCsv() {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'formularios-novos-membros-export.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (err) {
+    alert(err.message || 'Erro ao exportar.');
+  } finally {
+    setViewLoading('formularios', false);
+  }
+}
+
+async function exportFormularioConsolidacaoCsv() {
+  if (!authToken) return updateAuthUi();
+  try {
+    setViewLoading('formularios', true);
+    const r = await authFetch(`${API_BASE}/api/formularios/consolidacao?_t=${Date.now()}`);
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || body.message || 'Falha ao carregar dados.');
+    const items = Array.isArray(body) ? body : [];
+    if (!items.length) return alert('Nenhum formulário de Consolidação para exportar.');
+
+    const header = [
+      'Nome completo',
+      'Data nascimento',
+      'Idade',
+      'Gênero',
+      'Estado civil',
+      'Batismo nas águas',
+      'WhatsApp',
+      'E-mail (opcional)',
+      'Bairro e cidade',
+      'Decisão hoje',
+      'Grupo de oração',
+      'Pode contato',
+      'Melhor dia',
+      'Melhor horário',
+      'Preferência contato',
+      'Pedido / oração',
+      'Criado em',
+    ];
+
+    const rows = items.map((c) => ([
+      c.nomeCompleto || '',
+      formatDatePtBR(c.dataNascimento),
+      c.idade || '',
+      c.genero || '',
+      c.estadoCivil || '',
+      c.batizadoAguas || '',
+      c.telefoneWhatsapp || '',
+      c.emailOpcional || '',
+      c.bairroCidade || '',
+      c.decisaoHoje || '',
+      c.grupoOracao || '',
+      c.podeContato || '',
+      c.melhorDiaContato || '',
+      c.melhorHorarioContato || '',
+      c.preferenciaContato || '',
+      c.pedidoOracao || '',
+      formatDateTimePtBR(c.createdAt),
+    ]).map(escapeCsv).join(','));
+
+    const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'formularios-consolidacao-export.csv';
     a.click();
     URL.revokeObjectURL(a.href);
   } catch (err) {
@@ -4858,6 +4936,16 @@ document.getElementById('btnExportCheckinMinisterio')?.addEventListener('click',
 document.getElementById('checkinMinisterioData')?.addEventListener('change', () => fetchCheckinsMinisterio());
 document.getElementById('btnExportCheckinsCsv')?.addEventListener('click', () => exportCheckinsCsv());
 document.getElementById('btnExportFormularioMembroCsv')?.addEventListener('click', () => exportFormularioMembroCsv());
+document.getElementById('btnExportFormularioConsolidacaoCsv')?.addEventListener('click', () => exportFormularioConsolidacaoCsv());
+document.getElementById('btnCopiarLinkFormularioConsolidacao')?.addEventListener('click', () => {
+  const input = document.getElementById('formularioConsolidacaoLinkInput');
+  const url = input?.value || getFormularioConsolidacaoLinkUrl();
+  if (!url) return;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = document.getElementById('btnCopiarLinkFormularioConsolidacao');
+    if (btn) { const t = btn.textContent; btn.textContent = 'Copiado!'; setTimeout(() => { btn.textContent = t; }, 2000); }
+  }).catch(() => prompt('Copie o link:', url));
+});
 document.getElementById('btnExportFormularioBatismoCsv')?.addEventListener('click', () => exportFormularioBatismoCsv());
 document.getElementById('btnExportFormularioApresentacaoCsv')?.addEventListener('click', () => exportFormularioApresentacaoCsv());
 
@@ -5289,7 +5377,8 @@ window.addEventListener('hashchange', () => {
   hideAllPublicOverlays();
   if (window.location.hash === '#cadastro') showCadastroPublico();
   else if (window.location.hash === '#formulario-membro') showFormularioMembroPublico();
-  else { hideCadastroPublico(); hideFormularioMembroPublico(); }
+  else if (window.location.hash === '#formulario-consolidacao') showFormularioConsolidacaoPublico();
+  else { hideCadastroPublico(); hideFormularioMembroPublico(); hideFormularioConsolidacaoPublico(); }
 });
 
 let checkinPublicEventoId = null;
@@ -5314,12 +5403,31 @@ function hideFormularioMembroPublico() {
   if (authToken && contentEl) contentEl.style.display = 'block';
 }
 
+function showFormularioConsolidacaoPublico() {
+  preparePublicFormSession();
+  hideAllPublicOverlays();
+  const overlay = document.getElementById('formularioConsolidacaoOverlay');
+  const auth = document.getElementById('authOverlay');
+  const content = document.getElementById('content');
+  if (overlay) overlay.style.display = 'block';
+  if (auth) auth.style.display = 'none';
+  if (content) content.style.display = 'none';
+}
+
+function hideFormularioConsolidacaoPublico() {
+  const overlay = document.getElementById('formularioConsolidacaoOverlay');
+  if (overlay) overlay.style.display = 'none';
+  updateAuthUi();
+  if (authToken && contentEl) contentEl.style.display = 'block';
+}
+
 // Quando o usuário entra no dashboard autenticado, escondemos quaisquer overlays públicos
 // que possam ter ficado visíveis por conta de query params/hash (ex.: ?batismo=...).
 function hideAllPublicOverlays() {
   [
     'cadastroOverlay',
     'formularioMembroOverlay',
+    'formularioConsolidacaoOverlay',
     'formularioBatismoPublicOverlay',
     'formularioApresentacaoPublicOverlay',
     'checkinPublicOverlay',
@@ -5527,6 +5635,19 @@ document.getElementById('linkSairFormularioMembro')?.addEventListener('click', (
   hideFormularioMembroPublico();
 });
 
+document.getElementById('linkSairFormularioConsolidacao')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  window.location.hash = '';
+  hideFormularioConsolidacaoPublico();
+});
+
+document.getElementById('formConsWhatsapp')?.addEventListener('blur', function () {
+  const v = this.value?.trim();
+  if (!v) return;
+  const formatted = formatarWhatsApp(v);
+  if (formatted) this.value = formatted;
+});
+
 document.getElementById('formularioMembroForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('formularioMembroError');
@@ -5546,17 +5667,65 @@ document.getElementById('formularioMembroForm')?.addEventListener('submit', asyn
     querMembroCeleiro: (document.getElementById('formMembroQuerMembro')?.value || '').trim() || '',
     compromissoRespeitar: (document.getElementById('formMembroCompromisso')?.value || '').trim() || '',
     testemunho: (document.getElementById('formMembroTestemunho')?.value || '').trim() || '',
+    igrejaSlug: getTenantSlugForLinks(),
   };
   if (!payload.email || !payload.email.includes('@')) { if (errEl) errEl.textContent = 'E-mail é obrigatório e deve ser válido.'; return; }
   if (!payload.nomeCompleto) { if (errEl) errEl.textContent = 'Nome completo é obrigatório.'; return; }
   if (btn) btn.disabled = true;
   try {
-    const r = await fetch(`${API_BASE}/api/formularios/membro`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const r = await fetch(`${API_BASE}/api/formularios/membro?igreja=${encodeURIComponent(getTenantSlugForLinks())}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao enviar.'; return; }
     if (successEl) { successEl.textContent = data.message || 'Formulário enviado com sucesso!'; successEl.style.display = 'block'; }
     if (errEl) errEl.textContent = '';
     document.getElementById('formularioMembroForm')?.reset();
+  } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
+  finally { if (btn) btn.disabled = false; }
+});
+
+document.getElementById('formularioConsolidacaoForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('formularioConsolidacaoError');
+  const successEl = document.getElementById('formularioConsolidacaoSuccess');
+  const btn = document.getElementById('btnFormularioConsolidacaoSubmit');
+  if (errEl) errEl.textContent = '';
+  if (successEl) successEl.style.display = 'none';
+  const emailOpcional = (document.getElementById('formConsEmailOpcional')?.value || '').trim().toLowerCase();
+  if (emailOpcional && !emailOpcional.includes('@')) {
+    if (errEl) errEl.textContent = 'E-mail opcional inválido.';
+    return;
+  }
+  const payload = {
+    nomeCompleto: (document.getElementById('formConsNome')?.value || '').trim(),
+    dataNascimento: (document.getElementById('formConsNascimento')?.value || '').trim() || undefined,
+    idade: (document.getElementById('formConsIdade')?.value || '').trim(),
+    genero: (document.getElementById('formConsGenero')?.value || '').trim(),
+    estadoCivil: (document.getElementById('formConsEstadoCivil')?.value || '').trim(),
+    batizadoAguas: (document.getElementById('formConsBatizado')?.value || '').trim(),
+    telefoneWhatsapp: (document.getElementById('formConsWhatsapp')?.value || '').trim(),
+    emailOpcional: emailOpcional || undefined,
+    bairroCidade: (document.getElementById('formConsBairroCidade')?.value || '').trim(),
+    decisaoHoje: (document.getElementById('formConsDecisao')?.value || '').trim(),
+    grupoOracao: (document.getElementById('formConsGrupoOracao')?.value || '').trim(),
+    podeContato: (document.getElementById('formConsPodeContato')?.value || '').trim(),
+    melhorDiaContato: (document.getElementById('formConsMelhorDia')?.value || '').trim() || undefined,
+    melhorHorarioContato: (document.getElementById('formConsMelhorHorario')?.value || '').trim() || undefined,
+    preferenciaContato: (document.getElementById('formConsPreferenciaContato')?.value || '').trim() || undefined,
+    pedidoOracao: (document.getElementById('formConsPedidoOracao')?.value || '').trim(),
+    igrejaSlug: getTenantSlugForLinks(),
+  };
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${API_BASE}/api/formularios/consolidacao?igreja=${encodeURIComponent(getTenantSlugForLinks())}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao enviar.'; return; }
+    if (successEl) { successEl.textContent = data.message || 'Formulário enviado com sucesso!'; successEl.style.display = 'block'; }
+    if (errEl) errEl.textContent = '';
+    document.getElementById('formularioConsolidacaoForm')?.reset();
   } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
   finally { if (btn) btn.disabled = false; }
 });
@@ -5713,6 +5882,10 @@ window.addEventListener('pageshow', function(ev) {
   }
   if (window.location.hash === '#formulario-membro') {
     showFormularioMembroPublico();
+    return;
+  }
+  if (window.location.hash === '#formulario-consolidacao') {
+    showFormularioConsolidacaoPublico();
     return;
   }
   const stored = localStorage.getItem(AUTH_STORAGE_KEY);

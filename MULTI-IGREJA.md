@@ -21,7 +21,7 @@ Cada registro representa uma organização.
 | `Ministerio` | Lista e cadastro por igreja |
 | `Escala` + `Candidatura` + `EscalaInscricoesPorMinisterio` | Escalas e inscrições só da igreja |
 | `EventoCheckin` + `Checkin` | Eventos e registros só da igreja |
-| `EventoFormulario` + formulários (`FormularioMembro`, etc.) | Eventos e respostas por igreja |
+| `EventoFormulario` + formulários (`FormularioMembro`, `FormularioConsolidacao`, etc.) | Eventos e respostas por igreja |
 | `User` (líder / voluntário) | Cada usuário “operacional” pertence a **uma** igreja (ou lista, se no futuro alguém puder atuar em duas — raro) |
 | `RoleHistory` | Histórico de perfil no contexto da igreja |
 | `Voluntario` | Ideal: **único por `(email + igrejaId)`** — mesma pessoa pode existir nas duas igrejas com o mesmo email |

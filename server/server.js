@@ -24,6 +24,7 @@ import Candidatura from './models/Candidatura.js';
 import EscalaInscricoesPorMinisterio from './models/EscalaInscricoesPorMinisterio.js';
 import EventoFormulario from './models/EventoFormulario.js';
 import FormularioMembro from './models/FormularioMembro.js';
+import FormularioConsolidacao from './models/FormularioConsolidacao.js';
 import FormularioBatismo from './models/FormularioBatismo.js';
 import FormularioApresentacao from './models/FormularioApresentacao.js';
 import { normalizarEstado, normalizarCidade } from './utils/normalize-locale.js';
@@ -179,6 +180,7 @@ const formularioPublicLimiter = rateLimit({
 });
 app.use('/api/formulario-publico', formularioPublicLimiter);
 app.use('/api/formularios/membro', cadastroLimiter);
+app.use('/api/formularios/consolidacao', cadastroLimiter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -2023,6 +2025,86 @@ app.get('/api/formularios/membro', requireAuth, resolveTenant, requireAdmin, asy
     if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const list = await FormularioMembro.find({ ...tQ(req) }).sort({ createdAt: -1 }).lean();
+    res.json(list);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao listar inscrições.');
+  }
+});
+
+// Cadastro público: Consolidação / Acolhimento (baseado no fluxo de decisão e acompanhamento)
+app.post('/api/formularios/consolidacao', async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Envie "igreja" na URL (?igreja=slug) ou "igrejaSlug" no corpo.');
+    const body = req.body || {};
+    const nomeCompleto = (body.nomeCompleto || '').trim();
+    if (!nomeCompleto) return sendError(res, 400, 'Nome completo é obrigatório.');
+    const idade = (body.idade || '').trim();
+    if (!idade) return sendError(res, 400, 'Idade é obrigatória.');
+    const genero = (body.genero || '').trim();
+    if (!genero) return sendError(res, 400, 'Gênero é obrigatório.');
+    const estadoCivil = (body.estadoCivil || '').trim();
+    if (!estadoCivil) return sendError(res, 400, 'Estado civil é obrigatório.');
+    const batizadoAguas = (body.batizadoAguas || '').trim();
+    if (!batizadoAguas) return sendError(res, 400, 'Informe sobre o batismo nas águas.');
+    const telefoneWhatsapp = (body.telefoneWhatsapp || '').trim();
+    if (!telefoneWhatsapp) return sendError(res, 400, 'WhatsApp é obrigatório.');
+    const bairroCidade = (body.bairroCidade || '').trim();
+    if (!bairroCidade) return sendError(res, 400, 'Bairro e cidade são obrigatórios.');
+    const decisaoHoje = (body.decisaoHoje || '').trim();
+    if (!decisaoHoje) return sendError(res, 400, 'Informe a decisão de hoje.');
+    const grupoOracao = (body.grupoOracao || '').trim();
+    if (!grupoOracao) return sendError(res, 400, 'Responda sobre o Grupo de Oração.');
+    const podeContato = (body.podeContato || '').trim();
+    if (!podeContato) return sendError(res, 400, 'Informe se podemos entrar em contato.');
+    const pedidoOracao = (body.pedidoOracao || '').trim();
+    if (!pedidoOracao) return sendError(res, 400, 'O campo de ajuda/oração é obrigatório.');
+
+    let emailOpcional = (body.emailOpcional || '').trim().toLowerCase();
+    if (emailOpcional && !emailOpcional.includes('@')) return sendError(res, 400, 'E-mail opcional inválido.');
+
+    const dataNascimento = body.dataNascimento ? parseNascimento(body.dataNascimento) : undefined;
+    if (dataNascimento) {
+      const t = dataNascimento.getTime();
+      if (Number.isNaN(t) || t > Date.now() || t < new Date(1920, 0, 1).getTime()) {
+        return sendError(res, 400, 'Data de nascimento inválida.');
+      }
+    }
+
+    await FormularioConsolidacao.create({
+      igrejaId: igrejaDoc._id,
+      nomeCompleto,
+      dataNascimento: dataNascimento || undefined,
+      idade,
+      genero,
+      estadoCivil,
+      batizadoAguas,
+      telefoneWhatsapp,
+      bairroCidade,
+      decisaoHoje,
+      grupoOracao,
+      podeContato,
+      melhorDiaContato: (body.melhorDiaContato || '').trim() || '',
+      melhorHorarioContato: (body.melhorHorarioContato || '').trim() || '',
+      preferenciaContato: (body.preferenciaContato || '').trim() || '',
+      pedidoOracao,
+      emailOpcional: emailOpcional || '',
+    });
+    return res.status(201).json({ ok: true, message: 'Formulário enviado com sucesso! Nossa equipe entrará em contato quando aplicável.' });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao enviar formulário.');
+  }
+});
+
+// Admin: listar inscrições Consolidação
+app.get('/api/formularios/consolidacao', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const list = await FormularioConsolidacao.find({ ...tQ(req) }).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     console.error(err);

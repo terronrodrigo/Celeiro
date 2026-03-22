@@ -15,6 +15,7 @@ import EventoCheckin from '../models/EventoCheckin.js';
 import Checkin from '../models/Checkin.js';
 import EventoFormulario from '../models/EventoFormulario.js';
 import FormularioMembro from '../models/FormularioMembro.js';
+import FormularioConsolidacao from '../models/FormularioConsolidacao.js';
 import FormularioBatismo from '../models/FormularioBatismo.js';
 import FormularioApresentacao from '../models/FormularioApresentacao.js';
 import Voluntario from '../models/Voluntario.js';
@@ -54,6 +55,7 @@ async function main() {
   await run('EventoCheckin', () => EventoCheckin.updateMany({ igrejaId: { $exists: false } }, set));
   await run('EventoFormulario', () => EventoFormulario.updateMany({ igrejaId: { $exists: false } }, set));
   await run('FormularioMembro', () => FormularioMembro.updateMany({ igrejaId: { $exists: false } }, set));
+  await run('FormularioConsolidacao', () => FormularioConsolidacao.updateMany({ igrejaId: { $exists: false } }, set));
   await run('Voluntario', () => Voluntario.updateMany({ igrejaId: { $exists: false } }, set));
   await run('RoleHistory', () => RoleHistory.updateMany({ igrejaId: { $exists: false } }, { $set: { igrejaId: celeiroId } }));
 

@@ -560,6 +560,23 @@
               </div>
             </div>
           </section>
+          <section class="filters-row" style="margin-top:8px">
+            <div class="filters-card cadastro-link-box">
+              <div class="cadastro-link-content">
+                <span class="cadastro-link-label">Link formulário <strong>Consolidação</strong> (acolhimento):</span>
+                <input type="text" id="formularioConsolidacaoLinkInput" class="cadastro-link-input" readonly>
+                <button type="button" class="btn btn-primary btn-sm" id="btnCopiarLinkFormularioConsolidacao">Copiar link</button>
+              </div>
+            </div>
+            <div class="filters-card cadastro-link-box">
+              <div class="cadastro-link-content">
+                <span class="cadastro-link-label">Exportar:</span>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnExportFormularioConsolidacaoCsv">Consolidação (CSV)</button>
+                <span class="cadastro-link-label" style="margin-left:12px">Preenchidos:</span>
+                <span id="formulariosConsolidacaoCount" class="list-count">(0)</span>
+              </div>
+            </div>
+          </section>
           <div class="table-card" style="margin-top:16px">
             <div class="chart-header"><h2>Eventos de Batismo</h2></div>
             <p class="auth-subtitle">Crie eventos por data e compartilhe o link. Eventos: <span id="eventosBatismoCount" class="list-count">(0)</span> · Preenchidos: <span id="formulariosBatismoTotalCount" class="list-count">(0)</span></p>
@@ -965,6 +982,45 @@
         <p id="checkinPublicSuccess" class="auth-success" style="display: none;"></p>
         <button type="submit" class="btn btn-primary" id="btnCheckinPublicSubmit">Confirmar check-in</button>
       </form>
+    </div>
+  </div>
+
+  <!-- Formulário público: Consolidação / Acolhimento -->
+  <div id="formularioConsolidacaoOverlay" class="auth-overlay cadastro-overlay public-form-page" style="display: none;">
+    <div class="auth-card cadastro-card">
+      <div class="auth-header">
+        <div class="logo"><span class="logo-icon">◇</span><span class="logo-text">Celeiro SP</span></div>
+        <p class="auth-subtitle">Formulário de Consolidação</p>
+        <p class="form-hint" style="margin-top:8px;line-height:1.45">Estamos felizes com sua decisão. Suas informações serão tratadas com sigilo e usadas para nossa equipe de voluntários caminhar com você.</p>
+      </div>
+      <form id="formularioConsolidacaoForm" class="auth-form cadastro-form">
+        <div class="form-group"><label for="formConsNome">Nome completo (sem abreviações)</label><input type="text" id="formConsNome" placeholder="Nome completo" required autocomplete="name"></div>
+        <div class="form-row form-row-2">
+          <div class="form-group"><label for="formConsNascimento">Data de nascimento</label><input type="date" id="formConsNascimento" min="1920-01-01" max="2100-12-31"></div>
+          <div class="form-group"><label for="formConsIdade">Idade</label><input type="text" id="formConsIdade" placeholder="Ex.: 32" required inputmode="numeric"></div>
+        </div>
+        <div class="form-row form-row-2">
+          <div class="form-group"><label for="formConsGenero">Gênero</label><select id="formConsGenero" required><option value="">Selecione</option><option value="Masculino">Masculino</option><option value="Feminino">Feminino</option></select></div>
+          <div class="form-group"><label for="formConsEstadoCivil">Estado civil</label><select id="formConsEstadoCivil" required><option value="">Selecione</option><option value="Solteiro(a)">Solteiro(a)</option><option value="Casado(a)">Casado(a)</option><option value="Outro">Outro</option></select></div>
+        </div>
+        <div class="form-group"><label for="formConsBatizado">Você já é batizado(a) nas águas?</label><select id="formConsBatizado" required><option value="">Selecione</option><option value="Sim, já sou batizado(a).">Sim, já sou batizado(a).</option><option value="Ainda não, mas gostaria de saber mais sobre o batismo.">Ainda não, mas gostaria de saber mais sobre o batismo.</option><option value="Ainda não fui batizado(a).">Ainda não fui batizado(a).</option></select></div>
+        <div class="form-group"><label for="formConsWhatsapp">Número do WhatsApp</label><input type="tel" id="formConsWhatsapp" placeholder="+55 11 9XXXX-XXXX" maxlength="22" required autocomplete="tel"></div>
+        <div class="form-group"><label for="formConsEmailOpcional">E-mail (opcional)</label><input type="email" id="formConsEmailOpcional" placeholder="seu@email.com" autocomplete="email"></div>
+        <div class="form-group"><label for="formConsBairroCidade">Bairro e cidade onde mora</label><input type="text" id="formConsBairroCidade" placeholder="Bairro, cidade" required></div>
+        <div class="form-group"><label for="formConsDecisao">Hoje você tomou qual decisão?</label><select id="formConsDecisao" required><option value="">Selecione</option><option value="Aceitei Jesus pela primeira vez">Aceitei Jesus pela primeira vez</option><option value="Reafirmei minha fé">Reafirmei minha fé</option><option value="Estou retomando minha caminhada">Estou retomando minha caminhada</option></select></div>
+        <div class="form-group"><label for="formConsGrupoOracao">Gostaria de participar de um Grupo de Oração próximo à sua casa?</label><select id="formConsGrupoOracao" required><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option><option value="Gostaria de saber mais">Gostaria de saber mais</option></select></div>
+        <div class="form-group"><label for="formConsPodeContato">Podemos entrar em contato para dar as boas-vindas e compartilhar uma palavra de oração?</label><select id="formConsPodeContato" required><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
+        <div class="form-row form-row-2">
+          <div class="form-group"><label for="formConsMelhorDia">Melhor dia para contato</label><select id="formConsMelhorDia"><option value="">—</option><option value="Segunda-feira">Segunda-feira</option><option value="Terça-feira">Terça-feira</option><option value="Quarta-feira">Quarta-feira</option><option value="Quinta-feira">Quinta-feira</option><option value="Sexta-feira">Sexta-feira</option><option value="Sábado">Sábado</option><option value="Domingo">Domingo</option><option value="Qualquer dia da semana">Qualquer dia da semana</option></select></div>
+          <div class="form-group"><label for="formConsMelhorHorario">Melhor horário</label><select id="formConsMelhorHorario"><option value="">—</option><option value="Manhã (09h às 12h)">Manhã (09h às 12h)</option><option value="Tarde (12h às 18h)">Tarde (12h às 18h)</option><option value="Noite (após as 18h)">Noite (após as 18h)</option><option value="Horário comercial (08h às 18h)">Horário comercial (08h às 18h)</option></select></div>
+        </div>
+        <div class="form-group"><label for="formConsPreferenciaContato">De que maneira prefere ser contactado(a)?</label><select id="formConsPreferenciaContato"><option value="">—</option><option value="Mensagem via WhatsApp">Mensagem via WhatsApp</option><option value="Ligação">Ligação</option></select></div>
+        <div class="form-group"><label for="formConsPedidoOracao">Existe algo em que a igreja possa te ajudar ou orar por você neste momento?</label><textarea id="formConsPedidoOracao" rows="4" required placeholder="Compartilhe com a gente..."></textarea></div>
+        <p id="formularioConsolidacaoError" class="auth-error"></p>
+        <p id="formularioConsolidacaoSuccess" class="auth-success" style="display: none;"></p>
+        <button type="submit" class="btn btn-primary" id="btnFormularioConsolidacaoSubmit">Enviar</button>
+      </form>
+      <p class="auth-footer-link"><a href="#" id="linkSairFormularioConsolidacao">Voltar ao login</a></p>
     </div>
   </div>
 
@@ -1412,6 +1468,6 @@
     })();
   </script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="app.js?v=1.0.9"></script>
+  <script src="app.js?v=1.0.10"></script>
 </body>
 </html>
