@@ -577,6 +577,37 @@
               </div>
             </div>
           </section>
+          <p class="auth-subtitle" style="margin-top:16px;margin-bottom:8px">Envie e-mail às pessoas que preencheram os formulários (usa o mesmo compositor da aba Voluntários). Só aparecem linhas com e-mail válido para Consolidação.</p>
+          <div class="table-card" style="margin-top:8px">
+            <div class="chart-header">
+              <h2>Novos Membros — contato por e-mail</h2>
+              <div class="table-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="btnFormularioMembroEmailSelectAll">Selecionar / limpar todos</button>
+                <button type="button" class="btn btn-primary btn-sm" id="btnFormularioMembroEmailSend">✉️ Enviar e-mail aos selecionados</button>
+              </div>
+            </div>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th class="col-check"></th><th>Nome</th><th>E-mail</th><th>Enviado em</th></tr></thead>
+                <tbody id="formulariosMembroEmailBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="table-card" style="margin-top:16px">
+            <div class="chart-header">
+              <h2>Consolidação — contato por e-mail</h2>
+              <div class="table-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="btnFormularioConsolidacaoEmailSelectAll">Selecionar / limpar todos</button>
+                <button type="button" class="btn btn-primary btn-sm" id="btnFormularioConsolidacaoEmailSend">✉️ Enviar e-mail aos selecionados</button>
+              </div>
+            </div>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th class="col-check"></th><th>Nome</th><th>E-mail</th><th>Enviado em</th></tr></thead>
+                <tbody id="formulariosConsolidacaoEmailBody"></tbody>
+              </table>
+            </div>
+          </div>
           <div class="table-card" style="margin-top:16px">
             <div class="chart-header"><h2>Eventos de Batismo</h2></div>
             <p class="auth-subtitle">Crie eventos por data e compartilhe o link. Eventos: <span id="eventosBatismoCount" class="list-count">(0)</span> · Preenchidos: <span id="formulariosBatismoTotalCount" class="list-count">(0)</span></p>
@@ -1322,7 +1353,7 @@
           <label>Mensagem para envio (edite abaixo)</label>
           <div id="emailBodyEditor" class="email-body-editor" contenteditable="true" data-placeholder="Após Revisar com IA, o HTML aparecerá aqui. Você pode editar. Ou digite/cole HTML ou texto diretamente."></div>
         </div>
-        <p class="form-hint">Use <code>[nome]</code> para substituir pelo nome do voluntário. Os emails são enviados pelo disparador da plataforma.</p>
+        <p class="form-hint">Use <code>[nome]</code> para substituir pelo nome do destinatário (voluntário ou pessoa que preencheu um formulário). Os e-mails são enviados pelo disparador da plataforma.</p>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-ghost" id="modalCancel">Cancelar</button>
@@ -1468,6 +1499,6 @@
     })();
   </script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="app.js?v=1.0.10"></script>
+  <script src="app.js?v=1.0.11"></script>
 </body>
 </html>

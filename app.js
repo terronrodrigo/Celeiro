@@ -107,6 +107,8 @@ let checkins = [];
 let checkinResumo = {};
 let ministerioChart = null;
 const selectedEmails = new Set();
+/** email (lowercase) → nome para personalizar [nome] em envios da aba Formulários (inscritos que não são voluntários). */
+let emailExtraRecipientNames = {};
 let authToken = '';
 let authUser = '';
 let authRole = 'admin';
@@ -1416,6 +1418,72 @@ function getFormularioConsolidacaoLinkUrl() {
   return `${base.replace(/\/$/, '')}?igreja=${ig}#formulario-consolidacao`;
 }
 
+function renderFormularioInscricoesEmailRows(tbodyId, rows, emailKey, nomeKey) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  if (!Array.isArray(rows) || !rows.length) {
+    tbody.innerHTML = '<tr><td colspan="4">Nenhuma inscrição ainda.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map((row) => {
+    const email = String(row[emailKey] || '').trim().toLowerCase();
+    const nome = String(row[nomeKey] || '').trim();
+    const hasEmail = email.includes('@');
+    const dataStr = formatDateTimePtBR(row.createdAt);
+    const cbAttrs = hasEmail
+      ? ` data-email="${escapeAttr(email)}" data-nome="${escapeAttr(nome)}"`
+      : ' disabled title="Inscrição sem e-mail — peça o contato por outro canal"';
+    return `<tr>
+      <td class="col-check"><input type="checkbox" class="formulario-email-cb"${cbAttrs}></td>
+      <td>${escapeHtml(nome || '—')}</td>
+      <td>${hasEmail ? escapeHtml(email) : '<span class="list-count">Sem e-mail</span>'}</td>
+      <td>${escapeHtml(dataStr || '—')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function toggleSelectAllFormularioEmailCbs(tbodyId) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  const cbs = [...tbody.querySelectorAll('input.formulario-email-cb:not(:disabled)')];
+  if (!cbs.length) return;
+  const allOn = cbs.every((cb) => cb.checked);
+  cbs.forEach((cb) => { cb.checked = !allOn; });
+}
+
+function openEmailModalFromFormularioTbody(tbodyId) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  const cbs = tbody.querySelectorAll('input.formulario-email-cb:checked:not(:disabled)');
+  const recipients = [];
+  cbs.forEach((cb) => {
+    const email = (cb.getAttribute('data-email') || '').trim().toLowerCase();
+    const nome = (cb.getAttribute('data-nome') || '').trim();
+    if (email.includes('@')) recipients.push({ email, nome });
+  });
+  if (!recipients.length) {
+    alert('Selecione ao menos uma inscrição com e-mail válido.');
+    return;
+  }
+  selectedEmails.clear();
+  emailExtraRecipientNames = {};
+  recipients.forEach(({ email, nome }) => {
+    selectedEmails.add(email);
+    if (nome) emailExtraRecipientNames[email] = nome;
+  });
+  openModal();
+}
+
+function resolveNomeForSendEmail(email) {
+  const em = (email || '').toLowerCase().trim();
+  const volList = Array.isArray(voluntarios) ? voluntarios : [];
+  const voluntariosByEmail = new Map(volList.map((v) => [(v.email || '').toLowerCase(), v]));
+  const v = voluntariosByEmail.get(em);
+  if (v?.nome) return v.nome;
+  if (emailExtraRecipientNames[em]) return emailExtraRecipientNames[em];
+  return '';
+}
+
 async function fetchFormularios() {
   if (!authToken) return;
   try {
@@ -1481,6 +1549,10 @@ async function fetchFormularios() {
     if (formularioMembroLinkInput) formularioMembroLinkInput.value = getFormularioMembroLinkUrl();
     const formularioConsolidacaoLinkInput = document.getElementById('formularioConsolidacaoLinkInput');
     if (formularioConsolidacaoLinkInput) formularioConsolidacaoLinkInput.value = getFormularioConsolidacaoLinkUrl();
+
+    renderFormularioInscricoesEmailRows('formulariosMembroEmailBody', membrosList, 'email', 'nomeCompleto');
+    renderFormularioInscricoesEmailRows('formulariosConsolidacaoEmailBody', consList, 'emailOpcional', 'nomeCompleto');
+
     if (eventosBatismoBody) {
       if (!eventosBatismo.length) {
         eventosBatismoBody.innerHTML = '<tr><td colspan="6">Nenhum evento. Clique em "Novo evento de batismo" para criar.</td></tr>';
@@ -4334,15 +4406,12 @@ async function sendEmails() {
   let totalFailed = 0;
 
   try {
-    const volList = Array.isArray(voluntarios) ? voluntarios : [];
-    const voluntariosByEmail = new Map(volList.map(v => [(v.email || '').toLowerCase(), v]));
-
     for (let i = 0; i < to.length; i += BATCH_SIZE) {
       const chunk = to.slice(i, i + BATCH_SIZE);
       const voluntariosMap = {};
-      chunk.forEach(email => {
-        const v = voluntariosByEmail.get(email);
-        if (v?.nome) voluntariosMap[email] = v.nome;
+      chunk.forEach((email) => {
+        const nome = resolveNomeForSendEmail(email);
+        if (nome) voluntariosMap[email] = nome;
       });
       sendResult.textContent = `Enviando ${Math.min(i + BATCH_SIZE, total)}/${total}...`;
       const r = await authFetch(`${API_BASE}/api/send-email`, {
@@ -4370,12 +4439,10 @@ async function sendEmails() {
       sendResult.innerHTML = totalSent > 0
         ? `Enviados: ${totalSent}${totalFailed > 0 ? ` · Falhas: ${totalFailed}` : ''}.`
         : (totalFailed > 0 ? `Nenhum enviado. Falhas: ${totalFailed}.` : 'Nenhum destinatário válido.');
-      const volList = Array.isArray(voluntarios) ? voluntarios : [];
-      const voluntariosByEmail = new Map(volList.map(v => [(v.email || '').toLowerCase(), v]));
       const fullMap = {};
-      to.forEach(email => {
-        const v = voluntariosByEmail.get((email || '').toLowerCase());
-        if (v?.nome) fullMap[email] = v.nome;
+      to.forEach((email) => {
+        const nome = resolveNomeForSendEmail(email);
+        if (nome) fullMap[email] = nome;
       });
       lastSendPayload = { to: [...to], subject, html, voluntarios: fullMap };
       if (btnReenviarUltimo) btnReenviarUltimo.style.display = '';
@@ -4616,7 +4683,23 @@ document.getElementById('userCardGoPerfil')?.addEventListener('keydown', (e) => 
 selectAll?.addEventListener('change', () => toggleSelectAll(selectAll.checked));
 selectAllHeader?.addEventListener('change', () => toggleSelectAll(selectAllHeader.checked));
 
-btnOpenSend?.addEventListener('click', openModal);
+btnOpenSend?.addEventListener('click', () => {
+  emailExtraRecipientNames = {};
+  openModal();
+});
+
+document.getElementById('btnFormularioMembroEmailSelectAll')?.addEventListener('click', () => {
+  toggleSelectAllFormularioEmailCbs('formulariosMembroEmailBody');
+});
+document.getElementById('btnFormularioMembroEmailSend')?.addEventListener('click', () => {
+  openEmailModalFromFormularioTbody('formulariosMembroEmailBody');
+});
+document.getElementById('btnFormularioConsolidacaoEmailSelectAll')?.addEventListener('click', () => {
+  toggleSelectAllFormularioEmailCbs('formulariosConsolidacaoEmailBody');
+});
+document.getElementById('btnFormularioConsolidacaoEmailSend')?.addEventListener('click', () => {
+  openEmailModalFromFormularioTbody('formulariosConsolidacaoEmailBody');
+});
 modalClose?.addEventListener('click', closeModal);
 modalCancel?.addEventListener('click', closeModal);
 modalBackdrop?.addEventListener('click', closeModal);
