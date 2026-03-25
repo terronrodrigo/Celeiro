@@ -15,6 +15,7 @@ COPY server server/
 
 # Frontend (servido por express.static em server.js)
 COPY index.html app.js styles.css ./
+COPY assets assets/
 
 WORKDIR /app/server
 
