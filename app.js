@@ -1556,7 +1556,7 @@ async function fetchFormularios() {
           const d = new Date(e.data);
           const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
           const ativo = e.ativo !== false;
-          const statusText = ativo ? 'Ativo' : 'Inativo';
+          const statusText = ativo ? 'Inscrições abertas' : 'Inscrições fechadas';
           const filled = filledBatismoById.get(eventId) || 0;
           return `<tr data-event-id="${escapeAttr(eventId)}">
             <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
@@ -1565,7 +1565,10 @@ async function fetchFormularios() {
             <td>${filled}</td>
             <td><button type="button" class="btn btn-sm btn-primary" data-form-link="batismo" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
             <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-batismo="${escapeAttr(eventId)}" title="Enviar e-mail às pessoas que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
-            <td><button type="button" class="btn btn-sm btn-ghost" data-form-delete="batismo" data-event-id="${escapeAttr(eventId)}" title="Excluir">Excluir</button></td>
+            <td>
+              <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-form-toggle-formulario-ativo="${escapeAttr(eventId)}" data-ativo="${ativo ? 'true' : 'false'}" title="${ativo ? 'O link público deixa de aceitar novas inscrições' : 'Permitir novas inscrições pelo link'}">${ativo ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
+              <button type="button" class="btn btn-sm btn-ghost" data-form-delete="batismo" data-event-id="${escapeAttr(eventId)}" title="Excluir evento">Excluir</button>
+            </td>
           </tr>`;
         }).join('');
         eventosBatismoBody.querySelectorAll('[data-form-link="batismo"]').forEach(btn => {
@@ -1579,6 +1582,13 @@ async function fetchFormularios() {
         });
         eventosBatismoBody.querySelectorAll('[data-form-email-batismo]').forEach((btn) => {
           btn.addEventListener('click', () => openEmailModalForBatismoEvento(btn.getAttribute('data-form-email-batismo')));
+        });
+        eventosBatismoBody.querySelectorAll('[data-form-toggle-formulario-ativo]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-form-toggle-formulario-ativo');
+            const ativo = btn.getAttribute('data-ativo') === 'true';
+            toggleFormularioEventoAtivo(id, ativo);
+          });
         });
         eventosBatismoBody.querySelectorAll('[data-form-delete="batismo"]').forEach(btn => {
           btn.addEventListener('click', () => excluirEventoFormulario(btn.getAttribute('data-event-id'), 'batismo'));
@@ -1594,7 +1604,7 @@ async function fetchFormularios() {
           const d = new Date(e.data);
           const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
           const ativo = e.ativo !== false;
-          const statusText = ativo ? 'Ativo' : 'Inativo';
+          const statusText = ativo ? 'Inscrições abertas' : 'Inscrições fechadas';
           const filled = filledApresById.get(eventId) || 0;
           return `<tr data-event-id="${escapeAttr(eventId)}">
             <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
@@ -1603,7 +1613,10 @@ async function fetchFormularios() {
             <td>${filled}</td>
             <td><button type="button" class="btn btn-sm btn-primary" data-form-link="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
             <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-apresentacao="${escapeAttr(eventId)}" title="Enviar e-mail aos responsáveis que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
-            <td><button type="button" class="btn btn-sm btn-ghost" data-form-delete="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Excluir">Excluir</button></td>
+            <td>
+              <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-form-toggle-formulario-ativo="${escapeAttr(eventId)}" data-ativo="${ativo ? 'true' : 'false'}" title="${ativo ? 'O link público deixa de aceitar novas inscrições' : 'Permitir novas inscrições pelo link'}">${ativo ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
+              <button type="button" class="btn btn-sm btn-ghost" data-form-delete="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Excluir evento">Excluir</button>
+            </td>
           </tr>`;
         }).join('');
         eventosApresentacaoBody.querySelectorAll('[data-form-link="apresentacao"]').forEach(btn => {
@@ -1618,6 +1631,13 @@ async function fetchFormularios() {
         eventosApresentacaoBody.querySelectorAll('[data-form-email-apresentacao]').forEach((btn) => {
           btn.addEventListener('click', () => openEmailModalForApresentacaoEvento(btn.getAttribute('data-form-email-apresentacao')));
         });
+        eventosApresentacaoBody.querySelectorAll('[data-form-toggle-formulario-ativo]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-form-toggle-formulario-ativo');
+            const ativo = btn.getAttribute('data-ativo') === 'true';
+            toggleFormularioEventoAtivo(id, ativo);
+          });
+        });
         eventosApresentacaoBody.querySelectorAll('[data-form-delete="apresentacao"]').forEach(btn => {
           btn.addEventListener('click', () => excluirEventoFormulario(btn.getAttribute('data-event-id'), 'apresentacao'));
         });
@@ -1625,6 +1645,24 @@ async function fetchFormularios() {
     }
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
   finally { setViewLoading('formularios', false); }
+}
+
+async function toggleFormularioEventoAtivo(eventoId, currentlyActive) {
+  if (!eventoId || !authToken) return;
+  const novoAtivo = !currentlyActive;
+  try {
+    const r = await authFetch(`${API_BASE}/api/eventos-formulario/${encodeURIComponent(eventoId)}/ativo`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ativo: novoAtivo }),
+    });
+    const errData = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(errData.error || 'Falha ao atualizar.');
+    await fetchFormularios();
+  } catch (e) {
+    if (e.message === 'AUTH_REQUIRED') return;
+    alert(e.message || 'Erro ao fechar/reabrir inscrições.');
+  }
 }
 
 async function excluirEventoFormulario(eventoId, tipo) {
