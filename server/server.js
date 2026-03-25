@@ -3804,7 +3804,7 @@ async function start() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 API Celeiro rodando na porta ${PORT}`);
+    console.log(`🚀 Plataforma Voluntários Celeiro SP — API na porta ${PORT}`);
     console.log('POST /api/login - autenticação admin');
     console.log('GET /api/voluntarios - lista voluntários da planilha');
     console.log('GET /api/checkins - lista check-ins e resumo');

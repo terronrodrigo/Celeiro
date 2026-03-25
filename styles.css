@@ -1,17 +1,18 @@
-/* Dashboard - Design system (mobile-first, WCAG touch targets, safe-area) */
+/* Plataforma Voluntários Celeiro SP — design system (mobile-first, WCAG, safe-area) */
 :root {
   /* Core palette */
-  --bg-primary: #0f0f0f;
-  --bg-secondary: #161616;
-  --bg-card: #1a1a1a;
-  --bg-card-hover: #222;
-  --border-color: #2a2a2a;
+  --bg-primary: #0c0c0e;
+  --bg-secondary: #131316;
+  --bg-card: #18181c;
+  --bg-card-hover: #222228;
+  --border-color: #2c2c34;
   --text-primary: #f5f5f5;
   --text-secondary: #a0a0a0;
   --text-muted: #666;
   --accent: #f59e0b;
   --accent-dim: #d97706;
-  --accent-glow: rgba(245, 158, 11, 0.15);
+  --accent-glow: rgba(245, 158, 11, 0.12);
+  --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.45);
   --success: #22c55e;
   --success-dim: #16a34a;
   --warning: #eab308;
@@ -78,9 +79,10 @@ body {
   padding-bottom: var(--safe-bottom);
 }
 
-.dashboard {
+.app-shell {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .view {
@@ -148,20 +150,26 @@ body {
   gap: 12px;
 }
 
-/* Marca Celeiro (arquivo em tons escuros): invertido para contraste no tema escuro */
+/* Marca CELEIRO House of Prayer: assets/logo-hop-texto-claro.png (fundo escuro da UI).
+   Para fundo claro no futuro: logo-hop-texto-escuro.png + classe .logo-img--on-light-bg */
 .logo-img {
   display: block;
   height: auto;
   width: auto;
-  max-height: 44px;
-  max-width: min(220px, 100%);
+  max-height: 56px;
+  max-width: min(260px, 100%);
   object-fit: contain;
   object-position: left center;
-  filter: brightness(0) invert(1);
+  border-radius: var(--radius-sm);
+}
+
+.logo-img.logo-img--on-light-bg {
+  /* Troque o src no HTML para logo-hop-texto-escuro.png quando o container for claro */
+  filter: none;
 }
 
 .sidebar-header .logo-img {
-  max-height: 40px;
+  max-height: 58px;
   max-width: 100%;
 }
 
@@ -170,8 +178,8 @@ body {
 }
 
 .auth-header .logo-img {
-  max-height: 76px;
-  max-width: min(280px, 100%);
+  max-height: 100px;
+  max-width: min(300px, 100%);
   margin-left: auto;
   margin-right: auto;
   object-position: center;
@@ -212,6 +220,7 @@ body {
 .nav-item.active {
   background: var(--accent-glow);
   color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .nav-icon {
@@ -315,6 +324,16 @@ body {
   margin-bottom: var(--space-8);
   flex-wrap: wrap;
   gap: var(--space-5);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-4);
+  margin-top: calc(-1 * var(--space-2));
+  background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 45%, transparent);
 }
 
 .page-title h1 {
@@ -566,6 +585,7 @@ body {
   border-radius: var(--radius);
   padding: 24px;
   overflow: visible;
+  box-shadow: var(--shadow-elevated);
 }
 
 .link-view {

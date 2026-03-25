@@ -1,6 +1,6 @@
-# Dashboard Voluntários – Celeiro São Paulo
+# Plataforma de voluntários – Celeiro São Paulo
 
-Dashboard que resume as inscrições da planilha **Inscrição Voluntários - Celeiro São Paulo** e permite **selecionar emails e enviar via [Resend](https://resend.com)**.
+Aplicação em **https://voluntariosceleirosp.com/** para gestão de voluntários: inscrições (planilha ou MongoDB), check-in, escalas, formulários e envio de e-mail via [Resend](https://resend.com).
 
 ## O que tem
 
@@ -59,13 +59,13 @@ A API sobe em `http://localhost:3001` e expõe:
 
 3. Para produção, use um **domínio verificado** no Resend em `RESEND_FROM_EMAIL`
 
-### 4. Frontend (dashboard)
+### 4. Frontend
 
-Abra o `index.html` do dashboard no navegador (por exemplo abrindo `dashboard/index.html` ou usando um servidor estático). O front chama a API em `http://localhost:3001`; se a API estiver em outra URL, altere `API_BASE` em `app.js`.
+Em desenvolvimento, o servidor em `server/` já serve o `index.html`. O front chama a API em `http://localhost:3001`; em outro host, ajuste `API_BASE` em `app.js`. Em produção, defina `APP_URL=https://voluntariosceleirosp.com` (sem barra final) para metadados e links corretos.
 
 ### 5. Login (admin)
 
-Use o usuário e senha definidos no `.env` do servidor para acessar o dashboard.
+Use o usuário e senha definidos no `.env` do servidor para acessar a plataforma.
 
 ### 6. Check-in
 
@@ -84,7 +84,7 @@ O servidor importa os novos registros e salva no banco SQLite.
 
 ```
 dashboard/
-├── index.html       # Página do dashboard
+├── index.html       # SPA da plataforma
 ├── app.js           # Lógica: buscar dados, gráficos, tabela, seleção, modal, envio
 ├── styles.css       # Estilos (inclui modal e estados de loading/erro)
 ├── README.md        # Este arquivo
@@ -102,7 +102,7 @@ dashboard/
 | `RESEND_API_KEY` | Sim (para enviar) | API Key do Resend |
 | `RESEND_FROM_EMAIL` | Recomendado | Remetente (ex.: `Celeiro São Paulo <noreply@exemplo.com>` — troque pelo domínio **verificado** no Resend) |
 | `GOOGLE_SHEETS_CSV_URL` | Não | URL do CSV da planilha; se não definir, usa a planilha padrão do Celeiro |
-| `ADMIN_USER` | Sim | Usuário admin do dashboard |
+| `ADMIN_USER` | Sim | Usuário admin da plataforma |
 | `ADMIN_PASS` | Sim | Senha do usuário admin |
 | `AUTH_TOKEN_TTL_HOURS` | Não | Tempo de sessão (padrão: 24h) |
 | `PORT` | Não | Porta do servidor (padrão: 3001) |

@@ -1,7 +1,7 @@
 {
   "name": "celeiro-dashboard-api",
   "version": "1.0.2",
-  "description": "API para dashboard Celeiro São Paulo - voluntários e envio via Resend",
+  "description": "API da plataforma de voluntários Celeiro São Paulo (check-in, escalas, Resend)",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -10,7 +10,8 @@
     "migrate": "node scripts/sync-mongo.js",
     "update-db": "node scripts/update-db.js",
     "fix-planilha-celeiro": "node scripts/fix-planilha-voluntarios-celeiro.js",
-    "create-voluntario-test": "node scripts/create-voluntario-test.js"
+    "create-voluntario-test": "node scripts/create-voluntario-test.js",
+    "criar-igreja-inc-adolescentes": "SOURCE_IGREJA_SLUG=inc-sp NOVA_IGREJA_NOME='INC Adolescentes' NOVA_IGREJA_SLUG=inc-adolescentes node scripts/criar-igreja-clone-ministerios.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

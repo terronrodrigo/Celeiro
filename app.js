@@ -1,4 +1,4 @@
-/* Dashboard Celeiro São Paulo - Voluntários + Resend */
+/* Plataforma de gestão de voluntários — Celeiro São Paulo (front-end + Resend) */
 // API na mesma origem (frontend servido pelo Express em / e API em /api/*)
 const API_BASE = '';
 const AUTH_STORAGE_KEY = 'celeiro_admin_auth';
@@ -143,6 +143,7 @@ const checkinFilters = {
 Chart.defaults.color = '#a0a0a0';
 Chart.defaults.borderColor = '#2a2a2a';
 Chart.defaults.font.family = "'DM Sans', sans-serif";
+Chart.defaults.animation = { duration: 380 };
 
 const loadingEl = document.getElementById('loading');
 const errorEl = document.getElementById('error');
@@ -287,9 +288,9 @@ function updateAuthUi() {
       if (mustChangePasswordCard) mustChangePasswordCard.style.display = 'none';
     }
   }
-  const dashboardEl = document.querySelector('.dashboard');
-  const showDashboard = isLogged && authVerified;
-  if (dashboardEl) dashboardEl.style.display = showDashboard ? '' : 'none';
+  const appShellEl = document.querySelector('.app-shell');
+  const showMainShell = isLogged && authVerified;
+  if (appShellEl) appShellEl.style.display = showMainShell ? '' : 'none';
   if (loadingEl) loadingEl.style.display = 'none';
   if (!isLogged || !authVerified) {
     if (contentEl) contentEl.style.display = 'none';
@@ -630,7 +631,7 @@ const LIST_PAGE_SIZE = 50;
 let voluntariosPageOffset = 0;
 
 const VIEW_META = {
-  resumo: { title: 'Resumo', subtitle: 'Visão geral e indicadores.', role: 'admin' },
+  resumo: { title: 'Resumo', subtitle: 'Visão geral da plataforma e indicadores.', role: 'admin' },
   voluntarios: { title: 'Voluntários', subtitle: 'Lista, filtros e envio de email.', role: 'admin' },
   ministros: { title: 'Ministérios', subtitle: 'Crie ministérios e defina líderes.', role: 'admin' },
   usuarios: { title: 'Usuários', subtitle: 'Perfis e permissões.', role: 'admin' },
@@ -686,7 +687,7 @@ function setView(view, options) {
     const match = allowed.includes(view) && (roleMatch || liderViewAllowed || volViewAllowed || perfilForLider || perfilForAdmin);
     item.classList.toggle('active', match);
   });
-  if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Celeiro São Paulo';
+  if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Voluntários · Celeiro São Paulo';
   if (pageSubtitle) pageSubtitle.textContent = (meta && meta.subtitle) || '';
   if (searchBox) searchBox.style.display = (isAdmin || isLider || authRole === 'lider') && view === 'voluntarios' ? 'flex' : 'none';
   if (view === 'voluntarios') voluntariosPageOffset = 0;
@@ -4240,13 +4241,13 @@ function preparePublicFormSession() {
   } catch (_) {}
   if (loadingEl) loadingEl.style.display = 'none';
   if (errorEl) errorEl.style.display = 'none';
-  const dashboard = document.querySelector('.dashboard');
-  if (dashboard) dashboard.style.display = 'none';
+  const appShell = document.querySelector('.app-shell');
+  if (appShell) appShell.style.display = 'none';
 }
 
-function restoreDashboardFromPublicForm() {
-  const dashboard = document.querySelector('.dashboard');
-  if (dashboard) dashboard.style.display = '';
+function restoreAppShellFromPublicForm() {
+  const appShell = document.querySelector('.app-shell');
+  if (appShell) appShell.style.display = '';
 }
 
 function showEscalaPublicOverlay() {
@@ -4347,7 +4348,7 @@ async function loadEscalaPublic(escalaId, ministerioFromUrl) {
   document.getElementById('btnEscalaPublicVerMinhas')?.addEventListener('click', () => {
     const overlay = document.getElementById('escalaPublicOverlay');
     if (overlay) overlay.style.display = 'none';
-    restoreDashboardFromPublicForm();
+    restoreAppShellFromPublicForm();
     const url = new URL(window.location.href);
     url.searchParams.delete('escala');
     window.history.replaceState({}, '', url.pathname + url.search + url.hash);
@@ -4666,13 +4667,6 @@ document.getElementById('topIgrejaSelect')?.addEventListener('change', async () 
   }
 });
 
-function debounce(fn, ms) {
-  let t;
-  return function (...args) {
-    clearTimeout(t);
-    t = setTimeout(() => fn.apply(this, args), ms);
-  };
-}
 const debouncedSearch = debounce(() => {
   refreshVoluntariosView();
 }, 300);
@@ -5532,7 +5526,7 @@ function hideFormularioConsolidacaoPublico() {
   if (authToken && contentEl) contentEl.style.display = 'block';
 }
 
-// Quando o usuário entra no dashboard autenticado, escondemos quaisquer overlays públicos
+// Usuário autenticado: esconde overlays públicos (links ?checkin=, ?batismo=, etc.)
 // que possam ter ficado visíveis por conta de query params/hash (ex.: ?batismo=...).
 function hideAllPublicOverlays() {
   [
@@ -5547,7 +5541,7 @@ function hideAllPublicOverlays() {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
-  // Garante que a área do dashboard volte a aparecer.
+  // Garante que a área principal (app shell) volte a aparecer.
   if (contentEl) contentEl.style.display = 'block';
   if (authOverlay) authOverlay.style.display = 'none';
 }
@@ -5561,7 +5555,7 @@ function clearPublicOverlayQueryParamsAndHash() {
     url.search = qs ? `?${qs}` : '';
     window.history.replaceState({}, '', url.toString());
   } catch (_) {
-    // Se algo der errado, não impede o dashboard.
+    // Se algo der errado, não bloqueia o fluxo.
   }
 }
 
@@ -5919,7 +5913,7 @@ document.getElementById('formularioApresentacaoForm')?.addEventListener('submit'
   finally { if (btn) btn.disabled = false; }
 });
 
-function initPublicFormOrDashboard() {
+function initPublicFormOrShell() {
   // Evita sobreposição de overlays públicos por estado anterior/cached navigation.
   hideAllPublicOverlays();
   const urlSearchParams = new URLSearchParams(window.location.search);
@@ -5960,9 +5954,9 @@ window.addEventListener('pageshow', function(ev) {
     var apresentacaoId = params.get('apresentacao');
     if (escalaId || checkinId || batismoId || apresentacaoId) {
       var loading = document.getElementById('loading');
-      var dashboard = document.querySelector('.dashboard');
+      var appShell = document.querySelector('.app-shell');
       if (loading) loading.style.display = 'none';
-      if (dashboard) dashboard.style.display = 'none';
+      if (appShell) appShell.style.display = 'none';
       if (escalaId) {
         var ov = document.getElementById('escalaPublicOverlay');
         if (ov) ov.style.display = 'flex';
@@ -5986,7 +5980,7 @@ window.addEventListener('pageshow', function(ev) {
 (() => {
   // Sempre inicia com overlays públicos fechados; cada fluxo abre apenas o necessário.
   hideAllPublicOverlays();
-  if (initPublicFormOrDashboard()) return;
+  if (initPublicFormOrShell()) return;
   if (window.location.hash === '#cadastro') {
     showCadastroPublico();
     return;
