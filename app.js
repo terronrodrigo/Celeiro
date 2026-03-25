@@ -1418,60 +1418,57 @@ function getFormularioConsolidacaoLinkUrl() {
   return `${base.replace(/\/$/, '')}?igreja=${ig}#formulario-consolidacao`;
 }
 
-function renderFormularioInscricoesEmailRows(tbodyId, rows, emailKey, nomeKey) {
-  const tbody = document.getElementById(tbodyId);
-  if (!tbody) return;
-  if (!Array.isArray(rows) || !rows.length) {
-    tbody.innerHTML = '<tr><td colspan="4">Nenhuma inscrição ainda.</td></tr>';
-    return;
-  }
-  tbody.innerHTML = rows.map((row) => {
-    const email = String(row[emailKey] || '').trim().toLowerCase();
-    const nome = String(row[nomeKey] || '').trim();
-    const hasEmail = email.includes('@');
-    const dataStr = formatDateTimePtBR(row.createdAt);
-    const cbAttrs = hasEmail
-      ? ` data-email="${escapeAttr(email)}" data-nome="${escapeAttr(nome)}"`
-      : ' disabled title="Inscrição sem e-mail — peça o contato por outro canal"';
-    return `<tr>
-      <td class="col-check"><input type="checkbox" class="formulario-email-cb"${cbAttrs}></td>
-      <td>${escapeHtml(nome || '—')}</td>
-      <td>${hasEmail ? escapeHtml(email) : '<span class="list-count">Sem e-mail</span>'}</td>
-      <td>${escapeHtml(dataStr || '—')}</td>
-    </tr>`;
-  }).join('');
-}
-
-function toggleSelectAllFormularioEmailCbs(tbodyId) {
-  const tbody = document.getElementById(tbodyId);
-  if (!tbody) return;
-  const cbs = [...tbody.querySelectorAll('input.formulario-email-cb:not(:disabled)')];
-  if (!cbs.length) return;
-  const allOn = cbs.every((cb) => cb.checked);
-  cbs.forEach((cb) => { cb.checked = !allOn; });
-}
-
-function openEmailModalFromFormularioTbody(tbodyId) {
-  const tbody = document.getElementById(tbodyId);
-  if (!tbody) return;
-  const cbs = tbody.querySelectorAll('input.formulario-email-cb:checked:not(:disabled)');
-  const recipients = [];
-  cbs.forEach((cb) => {
-    const email = (cb.getAttribute('data-email') || '').trim().toLowerCase();
-    const nome = (cb.getAttribute('data-nome') || '').trim();
-    if (email.includes('@')) recipients.push({ email, nome });
+/** Abre o modal de e-mail (mesmo da aba Voluntários) com destinatários deduplicados por e-mail. */
+function openEmailModalFromRecipients(recipients) {
+  const seen = new Map();
+  (Array.isArray(recipients) ? recipients : []).forEach(({ email, nome }) => {
+    const em = String(email || '').trim().toLowerCase();
+    if (!em.includes('@')) return;
+    const n = String(nome || '').trim();
+    if (!seen.has(em)) seen.set(em, n);
   });
-  if (!recipients.length) {
-    alert('Selecione ao menos uma inscrição com e-mail válido.');
+  const list = [...seen.entries()].map(([email, nome]) => ({ email, nome }));
+  if (!list.length) {
+    alert('Nenhum e-mail válido nas inscrições deste evento.');
     return;
   }
   selectedEmails.clear();
   emailExtraRecipientNames = {};
-  recipients.forEach(({ email, nome }) => {
+  list.forEach(({ email, nome }) => {
     selectedEmails.add(email);
     if (nome) emailExtraRecipientNames[email] = nome;
   });
   openModal();
+}
+
+async function openEmailModalForBatismoEvento(eventoId) {
+  if (!eventoId || !authToken) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/formularios/batismo/${encodeURIComponent(eventoId)}?_t=${Date.now()}`);
+    const list = r.ok ? (await r.json().catch(() => [])) : [];
+    const recipients = (Array.isArray(list) ? list : []).map((row) => ({
+      email: row.email,
+      nome: row.nomeCompleto,
+    }));
+    openEmailModalFromRecipients(recipients);
+  } catch (_) {
+    alert('Não foi possível carregar as inscrições de batismo.');
+  }
+}
+
+async function openEmailModalForApresentacaoEvento(eventoId) {
+  if (!eventoId || !authToken) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/formularios/apresentacao/${encodeURIComponent(eventoId)}?_t=${Date.now()}`);
+    const list = r.ok ? (await r.json().catch(() => [])) : [];
+    const recipients = (Array.isArray(list) ? list : []).map((row) => {
+      const parts = [row.nomeMae, row.nomePai].map((x) => String(x || '').trim()).filter(Boolean);
+      return { email: row.emailContato, nome: parts.length ? parts.join(' e ') : 'Responsável' };
+    });
+    openEmailModalFromRecipients(recipients);
+  } catch (_) {
+    alert('Não foi possível carregar as inscrições de apresentação.');
+  }
 }
 
 function resolveNomeForSendEmail(email) {
@@ -1550,12 +1547,9 @@ async function fetchFormularios() {
     const formularioConsolidacaoLinkInput = document.getElementById('formularioConsolidacaoLinkInput');
     if (formularioConsolidacaoLinkInput) formularioConsolidacaoLinkInput.value = getFormularioConsolidacaoLinkUrl();
 
-    renderFormularioInscricoesEmailRows('formulariosMembroEmailBody', membrosList, 'email', 'nomeCompleto');
-    renderFormularioInscricoesEmailRows('formulariosConsolidacaoEmailBody', consList, 'emailOpcional', 'nomeCompleto');
-
     if (eventosBatismoBody) {
       if (!eventosBatismo.length) {
-        eventosBatismoBody.innerHTML = '<tr><td colspan="6">Nenhum evento. Clique em "Novo evento de batismo" para criar.</td></tr>';
+        eventosBatismoBody.innerHTML = '<tr><td colspan="7">Nenhum evento. Clique em "Novo evento de batismo" para criar.</td></tr>';
       } else {
         eventosBatismoBody.innerHTML = eventosBatismo.map(e => {
           const eventId = (e._id != null ? String(e._id) : '');
@@ -1570,6 +1564,7 @@ async function fetchFormularios() {
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
             <td>${filled}</td>
             <td><button type="button" class="btn btn-sm btn-primary" data-form-link="batismo" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-batismo="${escapeAttr(eventId)}" title="Enviar e-mail às pessoas que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
             <td><button type="button" class="btn btn-sm btn-ghost" data-form-delete="batismo" data-event-id="${escapeAttr(eventId)}" title="Excluir">Excluir</button></td>
           </tr>`;
         }).join('');
@@ -1582,6 +1577,9 @@ async function fetchFormularios() {
             navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie o link:', url));
           });
         });
+        eventosBatismoBody.querySelectorAll('[data-form-email-batismo]').forEach((btn) => {
+          btn.addEventListener('click', () => openEmailModalForBatismoEvento(btn.getAttribute('data-form-email-batismo')));
+        });
         eventosBatismoBody.querySelectorAll('[data-form-delete="batismo"]').forEach(btn => {
           btn.addEventListener('click', () => excluirEventoFormulario(btn.getAttribute('data-event-id'), 'batismo'));
         });
@@ -1589,7 +1587,7 @@ async function fetchFormularios() {
     }
     if (eventosApresentacaoBody) {
       if (!eventosApresentacao.length) {
-        eventosApresentacaoBody.innerHTML = '<tr><td colspan="6">Nenhum evento. Clique em "Novo evento de apresentação" para criar.</td></tr>';
+        eventosApresentacaoBody.innerHTML = '<tr><td colspan="7">Nenhum evento. Clique em "Novo evento de apresentação" para criar.</td></tr>';
       } else {
         eventosApresentacaoBody.innerHTML = eventosApresentacao.map(e => {
           const eventId = (e._id != null ? String(e._id) : '');
@@ -1604,6 +1602,7 @@ async function fetchFormularios() {
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
             <td>${filled}</td>
             <td><button type="button" class="btn btn-sm btn-primary" data-form-link="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-apresentacao="${escapeAttr(eventId)}" title="Enviar e-mail aos responsáveis que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
             <td><button type="button" class="btn btn-sm btn-ghost" data-form-delete="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Excluir">Excluir</button></td>
           </tr>`;
         }).join('');
@@ -1615,6 +1614,9 @@ async function fetchFormularios() {
             const url = `${base}?apresentacao=${encodeURIComponent(id)}&igreja=${ig}`;
             navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie o link:', url));
           });
+        });
+        eventosApresentacaoBody.querySelectorAll('[data-form-email-apresentacao]').forEach((btn) => {
+          btn.addEventListener('click', () => openEmailModalForApresentacaoEvento(btn.getAttribute('data-form-email-apresentacao')));
         });
         eventosApresentacaoBody.querySelectorAll('[data-form-delete="apresentacao"]').forEach(btn => {
           btn.addEventListener('click', () => excluirEventoFormulario(btn.getAttribute('data-event-id'), 'apresentacao'));
@@ -4688,18 +4690,6 @@ btnOpenSend?.addEventListener('click', () => {
   openModal();
 });
 
-document.getElementById('btnFormularioMembroEmailSelectAll')?.addEventListener('click', () => {
-  toggleSelectAllFormularioEmailCbs('formulariosMembroEmailBody');
-});
-document.getElementById('btnFormularioMembroEmailSend')?.addEventListener('click', () => {
-  openEmailModalFromFormularioTbody('formulariosMembroEmailBody');
-});
-document.getElementById('btnFormularioConsolidacaoEmailSelectAll')?.addEventListener('click', () => {
-  toggleSelectAllFormularioEmailCbs('formulariosConsolidacaoEmailBody');
-});
-document.getElementById('btnFormularioConsolidacaoEmailSend')?.addEventListener('click', () => {
-  openEmailModalFromFormularioTbody('formulariosConsolidacaoEmailBody');
-});
 modalClose?.addEventListener('click', closeModal);
 modalCancel?.addEventListener('click', closeModal);
 modalBackdrop?.addEventListener('click', closeModal);
