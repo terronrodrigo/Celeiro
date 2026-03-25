@@ -686,7 +686,7 @@ function setView(view, options) {
     const match = allowed.includes(view) && (roleMatch || liderViewAllowed || volViewAllowed || perfilForLider || perfilForAdmin);
     item.classList.toggle('active', match);
   });
-  if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Celeiro SP';
+  if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Celeiro São Paulo';
   if (pageSubtitle) pageSubtitle.textContent = (meta && meta.subtitle) || '';
   if (searchBox) searchBox.style.display = (isAdmin || isLider || authRole === 'lider') && view === 'voluntarios' ? 'flex' : 'none';
   if (view === 'voluntarios') voluntariosPageOffset = 0;
@@ -3166,7 +3166,7 @@ async function exportFormularioMembroCsv() {
       'Batizado',
       'Voluntário',
       'Grupo de Oração',
-      'Quer membro Celeiro SP',
+      'Quer membro Celeiro São Paulo',
       'Compromisso respeitar/honrar',
       'Testemunho',
       'Criado em',
@@ -3282,7 +3282,7 @@ async function exportFormularioBatismoCsv() {
       'E-mail',
       'Telefone/WhatsApp',
       'Reconhece Jesus',
-      'Quer membro Celeiro SP',
+      'Quer membro Celeiro São Paulo',
       'Vai se batizar próximo',
       'Curso de Batismo',
       'Criado em',

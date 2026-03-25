@@ -52,7 +52,7 @@ A API sobe em `http://localhost:3001` e expõe:
 
    ```env
    RESEND_API_KEY=re_xxxxxxxxxxxx
-   RESEND_FROM_EMAIL=Celeiro São Paulo <noreply@seudominio.com>
+   RESEND_FROM_EMAIL=Celeiro São Paulo <noreply@exemplo.com>
    ```
 
    Se não definir `RESEND_FROM_EMAIL`, o Resend usa o endereço de teste deles (só para sua conta).
@@ -100,7 +100,7 @@ dashboard/
 | Variável | Obrigatório | Descrição |
 |----------|-------------|-----------|
 | `RESEND_API_KEY` | Sim (para enviar) | API Key do Resend |
-| `RESEND_FROM_EMAIL` | Recomendado | Remetente (ex.: `Celeiro São Paulo <noreply@seudominio.com>`) |
+| `RESEND_FROM_EMAIL` | Recomendado | Remetente (ex.: `Celeiro São Paulo <noreply@exemplo.com>` — troque pelo domínio **verificado** no Resend) |
 | `GOOGLE_SHEETS_CSV_URL` | Não | URL do CSV da planilha; se não definir, usa a planilha padrão do Celeiro |
 | `ADMIN_USER` | Sim | Usuário admin do dashboard |
 | `ADMIN_PASS` | Sim | Senha do usuário admin |

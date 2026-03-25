@@ -3715,6 +3715,43 @@ app.get('/api/minhas-candidaturas', requireAuth, resolveTenant, async (req, res)
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
+// HTML inicial: injeta URL absoluta em og:url / og:image (APP_URL ou Host + X-Forwarded-Proto)
+const INDEX_HTML_PATH = join(__dirname, '..', 'index.html');
+let indexHtmlTemplate = null;
+function getIndexHtmlTemplate() {
+  if (indexHtmlTemplate == null) {
+    indexHtmlTemplate = fs.readFileSync(INDEX_HTML_PATH, 'utf8');
+  }
+  return indexHtmlTemplate;
+}
+function absolutePublicOrigin(req) {
+  const fromEnv = (process.env.APP_URL || '').trim().replace(/\/$/, '');
+  if (fromEnv) return fromEnv;
+  const host = (req.get('host') || '').trim();
+  if (!host) return '';
+  const xf = req.get('x-forwarded-proto');
+  const proto = (xf && String(xf).split(',')[0].trim()) || (req.secure ? 'https' : (req.protocol || 'http'));
+  return `${proto}://${host}`;
+}
+app.get('/', (req, res, next) => {
+  const accept = req.headers.accept || '';
+  if (!accept.includes('text/html')) return next();
+  try {
+    const base = absolutePublicOrigin(req);
+    let html = getIndexHtmlTemplate();
+    if (base) {
+      html = html.replace(/__OG_BASE_URL__/g, base);
+    } else {
+      html = html.replace(/\n?  <!--OG_META_START-->[\s\S]*?  <!--OG_META_END-->\n?/, '\n');
+    }
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.type('html').send(html);
+  } catch (err) {
+    console.error('GET / index.html:', err);
+    next();
+  }
+});
+
 // Servir arquivos estáticos (deve estar APÓS as rotas da API)
 app.use(express.static(join(__dirname, '..')));
 
