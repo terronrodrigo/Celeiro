@@ -2112,13 +2112,17 @@ app.get('/api/formularios/consolidacao', requireAuth, resolveTenant, requireAdmi
   }
 });
 
-// Admin: listar inscrições batismo por evento
+// Admin: listar inscrições batismo por evento (somente inscrições daquele evento)
 app.get('/api/formularios/batismo/:eventoId', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
-    const ev = await EventoFormulario.findOne({ _id: req.params.eventoId, ...tQ(req) }).select('_id').lean();
+    const idRaw = (req.params.eventoId || '').trim();
+    if (!mongoose.Types.ObjectId.isValid(idRaw)) return res.json([]);
+    const eventoOid = new mongoose.Types.ObjectId(idRaw);
+    const ev = await EventoFormulario.findOne({ _id: eventoOid, tipo: 'batismo', ...tQ(req) }).select('_id').lean();
     if (!ev) return res.json([]);
-    const list = await FormularioBatismo.find({ eventoId: req.params.eventoId, ...tQ(req) }).sort({ createdAt: -1 }).lean();
+    const baseQ = { ...tQ(req), $or: [{ eventoId: eventoOid }, { eventoId: idRaw }] };
+    const list = await FormularioBatismo.find(baseQ).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     console.error(err);
@@ -2126,13 +2130,17 @@ app.get('/api/formularios/batismo/:eventoId', requireAuth, resolveTenant, requir
   }
 });
 
-// Admin: listar inscrições apresentação por evento
+// Admin: listar inscrições apresentação por evento (somente inscrições daquele evento)
 app.get('/api/formularios/apresentacao/:eventoId', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
-    const ev = await EventoFormulario.findOne({ _id: req.params.eventoId, ...tQ(req) }).select('_id').lean();
+    const idRaw = (req.params.eventoId || '').trim();
+    if (!mongoose.Types.ObjectId.isValid(idRaw)) return res.json([]);
+    const eventoOid = new mongoose.Types.ObjectId(idRaw);
+    const ev = await EventoFormulario.findOne({ _id: eventoOid, tipo: 'apresentacao', ...tQ(req) }).select('_id').lean();
     if (!ev) return res.json([]);
-    const list = await FormularioApresentacao.find({ eventoId: req.params.eventoId, ...tQ(req) }).sort({ createdAt: -1 }).lean();
+    const baseQ = { ...tQ(req), $or: [{ eventoId: eventoOid }, { eventoId: idRaw }] };
+    const list = await FormularioApresentacao.find(baseQ).sort({ createdAt: -1 }).lean();
     res.json(list);
   } catch (err) {
     console.error(err);

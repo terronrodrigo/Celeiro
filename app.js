@@ -1567,11 +1567,18 @@ async function fetchFormularios() {
             <td><button type="button" class="btn btn-sm btn-primary" data-form-link="batismo" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
             <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-batismo="${escapeAttr(eventId)}" title="Enviar e-mail às pessoas que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
             <td>
+              <button type="button" class="btn btn-sm btn-ghost" data-export-batismo-csv="${escapeAttr(eventId)}" data-export-batismo-label="${escapeAttr(label)}" title="Baixar CSV só deste evento">Baixar CSV</button>
               <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-form-toggle-formulario-ativo="${escapeAttr(eventId)}" data-ativo="${ativo ? 'true' : 'false'}" title="${ativo ? 'O link público deixa de aceitar novas inscrições' : 'Permitir novas inscrições pelo link'}">${ativo ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
               <button type="button" class="btn btn-sm btn-ghost" data-form-delete="batismo" data-event-id="${escapeAttr(eventId)}" title="Excluir evento">Excluir</button>
             </td>
           </tr>`;
         }).join('');
+        eventosBatismoBody.querySelectorAll('[data-export-batismo-csv]').forEach((btn) => {
+          btn.addEventListener('click', () => exportFormularioBatismoCsvForEvent(
+            btn.getAttribute('data-export-batismo-csv'),
+            btn.getAttribute('data-export-batismo-label') || '',
+          ));
+        });
         eventosBatismoBody.querySelectorAll('[data-form-link="batismo"]').forEach(btn => {
           btn.addEventListener('click', () => {
             const id = btn.getAttribute('data-event-id');
@@ -1615,11 +1622,18 @@ async function fetchFormularios() {
             <td><button type="button" class="btn btn-sm btn-primary" data-form-link="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
             <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-apresentacao="${escapeAttr(eventId)}" title="Enviar e-mail aos responsáveis que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
             <td>
+              <button type="button" class="btn btn-sm btn-ghost" data-export-apresentacao-csv="${escapeAttr(eventId)}" data-export-apresentacao-label="${escapeAttr(label)}" title="Baixar CSV só deste evento">Baixar CSV</button>
               <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-form-toggle-formulario-ativo="${escapeAttr(eventId)}" data-ativo="${ativo ? 'true' : 'false'}" title="${ativo ? 'O link público deixa de aceitar novas inscrições' : 'Permitir novas inscrições pelo link'}">${ativo ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
               <button type="button" class="btn btn-sm btn-ghost" data-form-delete="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Excluir evento">Excluir</button>
             </td>
           </tr>`;
         }).join('');
+        eventosApresentacaoBody.querySelectorAll('[data-export-apresentacao-csv]').forEach((btn) => {
+          btn.addEventListener('click', () => exportFormularioApresentacaoCsvForEvent(
+            btn.getAttribute('data-export-apresentacao-csv'),
+            btn.getAttribute('data-export-apresentacao-label') || '',
+          ));
+        });
         eventosApresentacaoBody.querySelectorAll('[data-form-link="apresentacao"]').forEach(btn => {
           btn.addEventListener('click', () => {
             const id = btn.getAttribute('data-event-id');
@@ -3266,18 +3280,22 @@ async function exportFormularioConsolidacaoCsv() {
   }
 }
 
-async function exportFormularioBatismoCsv() {
+/** CSV apenas das inscrições do evento de batismo escolhido (um arquivo por clique). */
+async function exportFormularioBatismoCsvForEvent(eventId, eventLabel) {
   if (!authToken) return updateAuthUi();
+  if (!eventId) return;
   try {
     setViewLoading('formularios', true);
-    const rEvents = await authFetch(`${API_BASE}/api/eventos-formulario?tipo=batismo&_t=${Date.now()}`);
-    const eventsBody = await rEvents.json().catch(() => ({}));
-    if (!rEvents.ok) throw new Error(eventsBody.error || eventsBody.message || 'Falha ao carregar eventos.');
-    const eventos = Array.isArray(eventsBody) ? eventsBody : [];
-    if (!eventos.length) return alert('Nenhum evento de Batismo para exportar.');
+    const rList = await authFetch(`${API_BASE}/api/formularios/batismo/${encodeURIComponent(eventId)}?_t=${Date.now()}`);
+    if (!rList.ok) {
+      const body = await rList.json().catch(() => ({}));
+      throw new Error(body.error || body.message || 'Falha ao carregar inscrições deste evento.');
+    }
+    const list = await rList.json().catch(() => []);
+    const items = Array.isArray(list) ? list : [];
+    if (!items.length) return alert('Nenhum formulário preenchido neste evento de batismo.');
 
     const header = [
-      'Evento',
       'Data nascimento',
       'Nome completo',
       'E-mail',
@@ -3289,38 +3307,25 @@ async function exportFormularioBatismoCsv() {
       'Criado em',
     ];
 
-    let exportedAny = false;
-    for (const e of eventos) {
-      const rList = await authFetch(`${API_BASE}/api/formularios/batismo/${encodeURIComponent(e._id)}?_t=${Date.now()}`);
-      if (!rList.ok) continue;
-      const list = await rList.json().catch(() => ([]));
-      const items = Array.isArray(list) ? list : [];
-      if (!items.length) continue;
-      exportedAny = true;
+    const rows = items.map((doc) => ([
+      formatDatePtBR(doc.dataNascimento),
+      doc.nomeCompleto || '',
+      doc.email || '',
+      doc.telefoneWhatsapp || '',
+      (doc.reconheceJesus || '').trim(),
+      (doc.querMembroCeleiro || '').trim(),
+      (doc.batizarProximo || '').trim(),
+      (doc.cursoBatismo || '').trim(),
+      formatDateTimePtBR(doc.createdAt),
+    ]).map(escapeCsv).join(','));
 
-      const rows = items.map((doc) => ([
-        (e?.label || '').trim(),
-        formatDatePtBR(doc.dataNascimento),
-        doc.nomeCompleto || '',
-        doc.email || '',
-        doc.telefoneWhatsapp || '',
-        (doc.reconheceJesus || '').trim(),
-        (doc.querMembroCeleiro || '').trim(),
-        (doc.batizarProximo || '').trim(),
-        (doc.cursoBatismo || '').trim(),
-        formatDateTimePtBR(doc.createdAt),
-      ]).map(escapeCsv).join(','));
-
-      const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `formularios-batismo-${safeFileName(e?.label || e?._id)}.csv`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }
-
-    if (!exportedAny) alert('Nenhum formulário de Batismo preenchido para exportar.');
+    const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `batismo-${safeFileName(eventLabel || eventId)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   } catch (err) {
     alert(err.message || 'Erro ao exportar.');
   } finally {
@@ -3328,18 +3333,22 @@ async function exportFormularioBatismoCsv() {
   }
 }
 
-async function exportFormularioApresentacaoCsv() {
+/** CSV apenas das inscrições do evento de apresentação escolhido (um arquivo por clique). */
+async function exportFormularioApresentacaoCsvForEvent(eventId, eventLabel) {
   if (!authToken) return updateAuthUi();
+  if (!eventId) return;
   try {
     setViewLoading('formularios', true);
-    const rEvents = await authFetch(`${API_BASE}/api/eventos-formulario?tipo=apresentacao&_t=${Date.now()}`);
-    const eventsBody = await rEvents.json().catch(() => ({}));
-    if (!rEvents.ok) throw new Error(eventsBody.error || eventsBody.message || 'Falha ao carregar eventos.');
-    const eventos = Array.isArray(eventsBody) ? eventsBody : [];
-    if (!eventos.length) return alert('Nenhum evento de Apresentação para exportar.');
+    const rList = await authFetch(`${API_BASE}/api/formularios/apresentacao/${encodeURIComponent(eventId)}?_t=${Date.now()}`);
+    if (!rList.ok) {
+      const body = await rList.json().catch(() => ({}));
+      throw new Error(body.error || body.message || 'Falha ao carregar inscrições deste evento.');
+    }
+    const list = await rList.json().catch(() => []);
+    const items = Array.isArray(list) ? list : [];
+    if (!items.length) return alert('Nenhum formulário preenchido neste evento de apresentação.');
 
     const header = [
-      'Evento',
       'Nome mãe',
       'Nome pai',
       'Quantidade crianças',
@@ -3352,47 +3361,34 @@ async function exportFormularioApresentacaoCsv() {
       'Criado em',
     ];
 
-    let exportedAny = false;
-    for (const e of eventos) {
-      const rList = await authFetch(`${API_BASE}/api/formularios/apresentacao/${encodeURIComponent(e._id)}?_t=${Date.now()}`);
-      if (!rList.ok) continue;
-      const list = await rList.json().catch(() => ([]));
-      const items = Array.isArray(list) ? list : [];
-      if (!items.length) continue;
-      exportedAny = true;
+    const rows = items.map((doc) => {
+      const criancas = Array.isArray(doc.criancas) ? doc.criancas : [];
+      const criancasStr = criancas.map(c => {
+        const nome = (c.nomeCompleto || '').trim();
+        const nasc = formatDatePtBR(c.dataNascimento);
+        return nome ? `${nome}${nasc ? ` (${nasc})` : ''}` : '';
+      }).filter(Boolean).join('; ');
+      return ([
+        doc.nomeMae || '',
+        doc.nomePai || '',
+        Number(doc.quantidadeCriancas) || criancas.length || 0,
+        criancasStr,
+        doc.endereco || '',
+        (doc.paisMembrosCeleiro || '').trim(),
+        doc.emailContato || '',
+        doc.whatsappContato || '',
+        (doc.compromissoEducar || '').trim(),
+        formatDateTimePtBR(doc.createdAt),
+      ]).map(escapeCsv).join(',');
+    });
 
-      const rows = items.map((doc) => {
-        const criancas = Array.isArray(doc.criancas) ? doc.criancas : [];
-        const criancasStr = criancas.map(c => {
-          const nome = (c.nomeCompleto || '').trim();
-          const nasc = formatDatePtBR(c.dataNascimento);
-          return nome ? `${nome}${nasc ? ` (${nasc})` : ''}` : '';
-        }).filter(Boolean).join('; ');
-        return ([
-          (e?.label || '').trim(),
-          doc.nomeMae || '',
-          doc.nomePai || '',
-          Number(doc.quantidadeCriancas) || criancas.length || 0,
-          criancasStr,
-          doc.endereco || '',
-          (doc.paisMembrosCeleiro || '').trim(),
-          doc.emailContato || '',
-          doc.whatsappContato || '',
-          (doc.compromissoEducar || '').trim(),
-          formatDateTimePtBR(doc.createdAt),
-        ]).map(escapeCsv).join(',');
-      });
-
-      const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `formularios-apresentacao-${safeFileName(e?.label || e?._id)}.csv`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }
-
-    if (!exportedAny) alert('Nenhum formulário de Apresentação preenchido para exportar.');
+    const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `apresentacao-${safeFileName(eventLabel || eventId)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   } catch (err) {
     alert(err.message || 'Erro ao exportar.');
   } finally {
@@ -5051,9 +5047,6 @@ document.getElementById('btnCopiarLinkFormularioConsolidacao')?.addEventListener
     if (btn) { const t = btn.textContent; btn.textContent = 'Copiado!'; setTimeout(() => { btn.textContent = t; }, 2000); }
   }).catch(() => prompt('Copie o link:', url));
 });
-document.getElementById('btnExportFormularioBatismoCsv')?.addEventListener('click', () => exportFormularioBatismoCsv());
-document.getElementById('btnExportFormularioApresentacaoCsv')?.addEventListener('click', () => exportFormularioApresentacaoCsv());
-
 formPerfil?.addEventListener('submit', savePerfil);
 
 /** Reduz imagem para avatar (máx. 512px no lado maior, JPEG ~82%) para não pesar no servidor e no layout. */
