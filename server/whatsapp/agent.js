@@ -32,6 +32,7 @@ const ACTIONS = {
   MEUS_CHECKINS: 'meus_checkins',
   MINHAS_ESCALAS: 'minhas_escalas',
   CHECKINS_MINISTERIO: 'checkins_ministerio',
+  ESCALA_VISAO: 'escala_visao',
   RESUMO: 'resumo',
   LISTAR_VOLUNTARIOS: 'listar_voluntarios',
   SAIR: 'sair',
@@ -50,10 +51,12 @@ Ações disponíveis:`;
 - minhas_escalas: minhas escalas/candidaturas
 - sair: encerrar sessão`;
   const lider = `${vol}
-- checkins_ministerio: check-ins do meu ministério`;
+- checkins_ministerio: check-ins do meu ministério
+- escala_visao: visão consolidada domingo (params: data DD/MM ou proximoDomingo true)`;
   const admin = `${lider}
 - resumo: resumo de voluntários
-- listar_voluntarios: listar voluntários (params: search, limit)`;
+- listar_voluntarios: listar voluntários (params: search, limit)
+- escala_visao: visão consolidada escala manhã/tarde/almoco (params: data, proximoDomingo)`;
   if (role === 'admin') return admin;
   if (role === 'lider') return lider;
   return vol;
@@ -129,6 +132,16 @@ async function executeAction(action, params, token, role) {
       if (!list.length) return 'Nenhum check-in hoje.';
       return '*Check-ins do ministério*\n' + list.map((c, i) => `${i + 1}. ${c.nome || c.email} - ${(c.timestamp || '').slice(11, 16)}`).join('\n');
     }
+    case ACTIONS.ESCALA_VISAO: {
+      if (role !== 'admin' && role !== 'lider') return 'Acesso negado.';
+      const q = new URLSearchParams({ formato: 'texto' });
+      if (params?.data) q.set('data', String(params.data));
+      if (params?.proximoDomingo) q.set('proximoDomingo', '1');
+      if (!params?.data && !params?.proximoDomingo) q.set('proximoDomingo', '1');
+      const d = await get(`/api/escalas/visao-consolidada?${q}`);
+      if (d.error) return d.error;
+      return d.texto || 'Sem escalas para esta data.';
+    }
     case ACTIONS.RESUMO: {
       if (role !== 'admin') return 'Acesso negado.';
       const d = await get('/api/voluntarios');
@@ -149,9 +162,12 @@ async function executeAction(action, params, token, role) {
     }
     case ACTIONS.MENU: {
       let m = '*Menu*\n1. Meu perfil\n2. Meus check-ins\n3. Minhas escalas';
-      if (role === 'lider' || role === 'admin') m += '\n4. Check-ins do ministério';
-      if (role === 'admin') m += '\n5. Resumo\n6. Listar voluntários';
-      m += '\n7. Sair';
+      if (role === 'lider' || role === 'admin') {
+        m += '\n4. Check-ins do ministério';
+        m += '\n5. Visão escala domingo (escreva: *visão escala* ou *visão 17/05*)';
+      }
+      if (role === 'admin') m += '\n6. Resumo\n7. Listar voluntários';
+      m += '\n8. Sair';
       return m;
     }
     case ACTIONS.SAIR:
@@ -211,6 +227,21 @@ export async function processMessage(whatsappId, text, sendCodeToWhatsApp, creat
   if (msg.toLowerCase() === 'sair') {
     clearSession(phone);
     return 'Sessão encerrada. Até logo!';
+  }
+
+  const lower = msg.toLowerCase();
+  const role = session.role;
+  if (role === 'admin' || role === 'lider') {
+    const visaoMatch = lower.match(/vis[aã]o\s*(?:escala|consolidad|domingo)?|relat[oó]rio\s*escala|escala\s*domingo/);
+    if (visaoMatch || lower.startsWith('visão') || lower.startsWith('visao')) {
+      const dateMatch = msg.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?/);
+      const params = {};
+      if (dateMatch) params.data = dateMatch[0];
+      else if (/pr[oó]ximo\s*domingo|domingo/.test(lower)) params.proximoDomingo = true;
+      else params.proximoDomingo = true;
+      const out = await executeAction(ACTIONS.ESCALA_VISAO, params, session.token, session.role);
+      return out || 'Sem dados.';
+    }
   }
 
   const systemPrompt = getSystemPrompt(session.role);

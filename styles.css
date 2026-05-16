@@ -430,7 +430,60 @@ body {
   transform: translateY(-1px);
 }
 
+/* Toast */
+.toast-root {
+  position: fixed;
+  bottom: calc(1rem + var(--safe-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(92vw, 420px);
+  pointer-events: none;
+}
+.toast {
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text);
+  font-size: 0.9rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast-success { border-color: var(--success, #22c55e); }
+.toast-error { border-color: var(--danger, #ef4444); }
+
+/* Nav sections */
+.nav-section-label {
+  margin: 0.75rem 1rem 0.35rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+.nav-section-label:first-child {
+  margin-top: 0.25rem;
+}
+
 /* KPI Cards */
+.kpi-toolbar {
+  display: none;
+  margin-bottom: 0.75rem;
+}
+.kpi-toggle-more {
+  width: auto;
+}
 
 .kpi-grid {
   display: grid;
@@ -755,7 +808,7 @@ body {
 .modal {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 1100;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1716,6 +1769,13 @@ body {
     flex: 1 1 200px;
   }
 
+  .kpi-toolbar {
+    display: flex;
+    justify-content: flex-end;
+  }
+  #kpiGridResumo:not(.kpis-expanded) .kpi-card:nth-child(n+4) {
+    display: none;
+  }
   .kpi-grid {
     grid-template-columns: 1fr;
     gap: 1rem;
@@ -1851,12 +1911,24 @@ body {
   .top-actions {
     flex-direction: column;
   }
-  .btn {
+  .top-actions .btn {
     width: 100%;
     justify-content: center;
   }
   .search-box {
     flex: 1 1 100%;
+  }
+}
+
+/* Tabela: primeira coluna fixa no scroll horizontal (mobile) */
+@media (max-width: 768px) {
+  .data-table th:first-child,
+  .data-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--bg-card);
+    box-shadow: 4px 0 8px rgba(0, 0, 0, 0.15);
   }
 }
 

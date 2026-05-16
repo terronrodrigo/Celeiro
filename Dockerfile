@@ -3,7 +3,7 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Ferramentas para compilar dependências nativas (ex.: better-sqlite3)
+# Ferramentas de build (algumas deps nativas do npm)
 RUN apk add --no-cache python3 make g++
 
 # Dependências do servidor (npm install tolera lock file desatualizado)

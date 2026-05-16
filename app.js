@@ -579,6 +579,85 @@ function showError(msg) {
   }
 }
 
+/** Toast leve (substitui alert em fluxos comuns). */
+/** Modais dentro de `.view` ficam invisíveis por `display:none` ou `overflow` do main; move para body. */
+function ensureModalPortal(modalEl) {
+  if (!modalEl) return;
+  if (modalEl.parentElement !== document.body) {
+    document.body.appendChild(modalEl);
+  }
+}
+
+const CULTOS_DIAS_SEMANA_DEFAULT = [
+  { value: 0, label: 'Domingo' },
+  { value: 1, label: 'Segunda-feira' },
+  { value: 2, label: 'Terça-feira' },
+  { value: 3, label: 'Quarta-feira' },
+  { value: 4, label: 'Quinta-feira' },
+  { value: 5, label: 'Sexta-feira' },
+  { value: 6, label: 'Sábado' },
+];
+
+function showToast(message, type) {
+  const text = String(message || '').trim();
+  if (!text) return;
+  let root = document.getElementById('toastRoot');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'toastRoot';
+    root.className = 'toast-root';
+    root.setAttribute('aria-live', 'polite');
+    document.body.appendChild(root);
+  }
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + (type === 'error' ? 'error' : type === 'success' ? 'success' : 'info');
+  el.textContent = text;
+  root.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('toast-visible'));
+  setTimeout(() => {
+    el.classList.remove('toast-visible');
+    setTimeout(() => el.remove(), 300);
+  }, 3200);
+}
+
+let chartJsLoadPromise = null;
+function ensureChartJs() {
+  if (typeof Chart !== 'undefined') return Promise.resolve();
+  if (chartJsLoadPromise) return chartJsLoadPromise;
+  chartJsLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('Falha ao carregar gráficos'));
+    document.head.appendChild(s);
+  });
+  return chartJsLoadPromise;
+}
+
+let prefetchAllCheckinsPromise = null;
+function invalidateCheckinKpiCache() {
+  _cachedEmailsComCheckin = null;
+  _cachedEmailsComCheckinRef = null;
+  _cachedSoCheckinList = null;
+  _cachedSoCheckinListRef = [null, null];
+}
+/** Carrega check-ins completos em segundo plano para KPIs (sem bloquear a UI). */
+function prefetchAllCheckinsForKpis() {
+  if (!authToken || authRole !== 'admin') return;
+  if (Array.isArray(allCheckins) && allCheckins.length > 0) return;
+  if (prefetchAllCheckinsPromise) return;
+  prefetchAllCheckinsPromise = authFetch(`${API_BASE}/api/checkins`)
+    .then((r) => (r.ok ? r.json() : { checkins: [] }))
+    .then((data) => {
+      allCheckins = data.checkins || [];
+      invalidateCheckinKpiCache();
+      if (currentView === 'resumo' || currentView === 'voluntarios') refreshVoluntariosView();
+    })
+    .catch(() => {})
+    .finally(() => { prefetchAllCheckinsPromise = null; });
+}
+
 const ADMIN_ONLY_VIEWS = ['ministros', 'usuarios', 'eventos-checkin', 'cultos-recorrentes', 'checkin', 'escalas-criar'];
 const LIDER_VIEWS = ['checkin-ministerio', 'perfil', 'meus-checkins', 'escalas'];
 const VOLUNTARIO_VIEWS = ['perfil', 'checkin-hoje', 'meus-checkins', 'escalas'];
@@ -711,7 +790,10 @@ function setView(view, options) {
     }
   }
   if (view === 'checkin' && isAdmin) {
+    setViewLoading('checkin', true);
     populateCheckinDataSelect([]);
+    const hoje = getHojeDateString();
+    if (checkinData && !checkinData.value) checkinData.value = hoje;
     authFetch(`${API_BASE}/api/eventos-checkin`).then(r => r.ok ? r.json() : []).then(list => {
       eventosCheckin = list || [];
       if (checkinEvento) {
@@ -720,8 +802,9 @@ function setView(view, options) {
           return `<option value="${e._id}">${e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</option>`;
         }).join('');
       }
-      fetchCheckinsWithFilters();
-    }).catch(() => fetchCheckinsWithFilters());
+      fetchCheckinsWithFilters({ data: checkinData?.value || hoje });
+    }).catch(() => fetchCheckinsWithFilters({ data: hoje }))
+      .finally(() => setViewLoading('checkin', false));
   }
   const canSeeResumoVoluntarios = isAdmin || isLider || authRole === 'lider';
   if ((view === 'resumo' || view === 'voluntarios') && canSeeResumoVoluntarios) {
@@ -763,6 +846,7 @@ async function fetchVoluntarios(opts) {
     voluntarios = data.voluntarios || [];
     resumo = data.resumo || {};
     render();
+    if (authRole === 'admin') prefetchAllCheckinsForKpis();
     settled = true;
     clearTimeout(timeoutId);
     if (useGlobalLoading) showLoading(false);
@@ -777,7 +861,7 @@ async function fetchVoluntarios(opts) {
     if (useGlobalLoading) {
       showError(e.message || 'Verifique se o servidor está rodando em ' + API_BASE);
     } else {
-      alert('Erro ao carregar voluntários: ' + (e.message || 'Servidor não respondeu'));
+      showToast('Erro ao carregar voluntários: ' + (e.message || 'Servidor não respondeu'), 'error');
     }
   }
 }
@@ -842,6 +926,7 @@ function fetchCheckinsWithFilters(opts) {
     // Guarda a lista completa (sem filtros de servidor) para contar check-ins históricos por pessoa
     if (!dataFilter && !checkinEvento?.value && !checkinMinisterio?.value) {
       allCheckins = checkins;
+      invalidateCheckinKpiCache();
     }
     if (!dataFilter) populateCheckinDataSelect(checkins);
     if (dataOverride !== null && checkinData) checkinData.value = dataOverride;
@@ -1390,7 +1475,12 @@ async function fetchCultosRecorrentes() {
     }
     if (!rList.ok) {
       const err = (await rList.json().catch(() => ({}))).error || `Erro ${rList.status}`;
-      if (tbody) tbody.innerHTML = `<tr><td colspan="8"><p class="auth-subtitle">${escapeHtml(err)}</p></td></tr>`;
+      if (tbody) {
+        const hint = rList.status === 503
+          ? `${escapeHtml(err)} <br><small>Confirme no Railway: <code>DB_PROVIDER=postgres</code> e <code>DATABASE_URL</code> configurados.</small>`
+          : escapeHtml(err);
+        tbody.innerHTML = `<tr><td colspan="8"><p class="auth-subtitle">${hint}</p></td></tr>`;
+      }
       return;
     }
     cultosRecorrentesList = await rList.json();
@@ -1432,11 +1522,17 @@ async function fetchCultosRecorrentes() {
 function fillCultoRecorrenteDiaSelect() {
   const sel = document.getElementById('cultoRecorrenteDia');
   if (!sel) return;
-  sel.innerHTML = cultosRecorrentesDias.map((d) => `<option value="${d.value}">${escapeHtml(d.label)}</option>`).join('');
+  const dias = cultosRecorrentesDias.length ? cultosRecorrentesDias : CULTOS_DIAS_SEMANA_DEFAULT;
+  sel.innerHTML = dias.map((d) => `<option value="${d.value}">${escapeHtml(d.label)}</option>`).join('');
 }
 
 function openModalCultoRecorrente(id) {
   const modal = document.getElementById('modalCultoRecorrente');
+  if (!modal) {
+    showToast('Formulário de culto recorrente não encontrado. Atualize a página (Ctrl+F5).', 'error');
+    return;
+  }
+  ensureModalPortal(modal);
   const title = document.getElementById('modalCultoRecorrenteTitle');
   fillCultoRecorrenteDiaSelect();
   const culto = id ? cultosRecorrentesList.find((c) => String(c._id) === String(id)) : null;
@@ -1456,7 +1552,10 @@ function openModalCultoRecorrente(id) {
 
 function closeModalCultoRecorrente() {
   const modal = document.getElementById('modalCultoRecorrente');
-  if (modal) { modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); }
+  if (modal) {
+    modal.classList.remove('open');
+    modal.setAttribute('aria-hidden', 'true');
+  }
 }
 
 async function excluirCultoRecorrente(id) {
@@ -1505,7 +1604,11 @@ function openModalEditarEvento(eventoId) {
   if (hinEl) hinEl.value = (evento.horarioInicio || '').trim();
   if (hfiEl) hfiEl.value = (evento.horarioFim || '').trim();
   if (ativoEl) ativoEl.checked = evento.ativo !== false;
-  if (modal) { modal.setAttribute('aria-hidden', 'false'); modal.classList.add('open'); }
+  if (modal) {
+    ensureModalPortal(modal);
+    modal.setAttribute('aria-hidden', 'false');
+    modal.classList.add('open');
+  }
 }
 
 async function toggleEventoAtivo(eventoId) {
@@ -2135,14 +2238,17 @@ async function fetchMeusCheckins() {
 }
 
 async function fetchAllData() {
-  await Promise.all([fetchVoluntarios(), fetchCheckins()]);
+  await fetchVoluntarios({ showGlobalLoading: true });
+  prefetchAllCheckinsForKpis();
 }
 
+let refreshChartsTimer = null;
 /** Uma única chamada a getFilteredVoluntarios e atualiza KPIs, gráficos, tabela e contadores. */
 function refreshVoluntariosView() {
   const filtered = getFilteredVoluntarios();
   updateKpis(filtered);
-  renderCharts(filtered);
+  if (refreshChartsTimer) clearTimeout(refreshChartsTimer);
+  refreshChartsTimer = setTimeout(() => renderCharts(filtered), 180);
   renderTable(filtered);
   updateSelectedCount();
   syncSelectAll();
@@ -2201,7 +2307,12 @@ function updateKpis(filteredInput) {
   updateVoluntariosRangeAndMore(total);
 }
 
-function renderCharts(filteredInput) {
+async function renderCharts(filteredInput) {
+  try {
+    await ensureChartJs();
+  } catch (_) {
+    return;
+  }
   const filtered = filteredInput !== undefined ? filteredInput : getFilteredVoluntarios();
   const areasData = countByMultiValueField(filtered, 'areas');
   const dispData = countByMultiValueField(filtered, 'disponibilidade');
@@ -2367,7 +2478,9 @@ let _cachedEmailsComCheckin = null;
 let _cachedEmailsComCheckinRef = null;
 /** Set de emails (lowercase) que têm pelo menos um check-in (cruzamento voluntários x check-ins). */
 function getEmailsComCheckin() {
-  const list = Array.isArray(checkins) ? checkins : [];
+  const list = (Array.isArray(allCheckins) && allCheckins.length)
+    ? allCheckins
+    : (Array.isArray(checkins) ? checkins : []);
   if (_cachedEmailsComCheckinRef === list && _cachedEmailsComCheckin) return _cachedEmailsComCheckin;
   const set = new Set();
   list.forEach(c => {
@@ -3651,8 +3764,78 @@ function renderEscalasCriar() {
   container.querySelectorAll('[data-escala-delete]').forEach(btn => { btn.addEventListener('click', () => excluirEscala(btn.getAttribute('data-escala-delete'))); });
 }
 
+function buildVisaoConsolidadaSectionHtml() {
+  return `
+  <section class="filters-card" id="visaoConsolidadaWrap" style="margin-bottom:16px">
+    <div class="chart-header" style="margin-bottom:12px">
+      <h2 style="font-size:1rem;margin:0">Visão consolidada (domingo)</h2>
+      <p class="auth-subtitle" style="margin:6px 0 0;font-size:.9em">Contagem por ministério: Manhã, Almoço (2 cultos) e Tarde. No WhatsApp: <em>visão escala</em> ou <em>visão 17/05</em>.</p>
+    </div>
+    <div class="filters-row" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+      <div class="form-group compact">
+        <label for="visaoConsolidadaData"><strong>Data</strong></label>
+        <input type="date" id="visaoConsolidadaData">
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" id="btnVisaoProximoDomingo">Próximo domingo</button>
+      <button type="button" class="btn btn-primary btn-sm" id="btnVisaoConsolidadaGerar">Gerar relatório</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btnVisaoConsolidadaCopiar" disabled>Copiar texto</button>
+    </div>
+    <pre id="visaoConsolidadaTexto" class="visao-consolidada-pre" style="display:none;margin-top:12px;white-space:pre-wrap;font-size:.85em;line-height:1.45;background:var(--bg-muted,#f4f4f5);padding:12px;border-radius:8px;max-height:420px;overflow:auto"></pre>
+  </section>`;
+}
+
+async function loadVisaoConsolidada(opts = {}) {
+  const pre = document.getElementById('visaoConsolidadaTexto');
+  const btnCopy = document.getElementById('btnVisaoConsolidadaCopiar');
+  if (!pre) return;
+  const params = new URLSearchParams({ formato: 'texto' });
+  if (opts.proximoDomingo) params.set('proximoDomingo', '1');
+  else if (opts.data) params.set('data', opts.data);
+  else params.set('proximoDomingo', '1');
+  pre.style.display = 'block';
+  pre.textContent = 'Carregando…';
+  if (btnCopy) btnCopy.disabled = true;
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/visao-consolidada?${params}`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'Falha ao gerar visão');
+    pre.textContent = d.texto || 'Sem escalas para esta data.';
+    pre.dataset.visaoTexto = pre.textContent;
+    if (btnCopy) btnCopy.disabled = !pre.textContent.trim();
+    const dateInput = document.getElementById('visaoConsolidadaData');
+    if (dateInput && d.data) dateInput.value = d.data;
+  } catch (e) {
+    pre.textContent = e.message || 'Erro ao carregar.';
+    pre.dataset.visaoTexto = '';
+    if (btnCopy) btnCopy.disabled = true;
+  }
+}
+
+function bindVisaoConsolidadaEvents() {
+  document.getElementById('btnVisaoConsolidadaGerar')?.addEventListener('click', () => {
+    const data = document.getElementById('visaoConsolidadaData')?.value || '';
+    loadVisaoConsolidada(data ? { data } : { proximoDomingo: true });
+  });
+  document.getElementById('btnVisaoProximoDomingo')?.addEventListener('click', () => {
+    const dateInput = document.getElementById('visaoConsolidadaData');
+    if (dateInput) dateInput.value = '';
+    loadVisaoConsolidada({ proximoDomingo: true });
+  });
+  document.getElementById('btnVisaoConsolidadaCopiar')?.addEventListener('click', async () => {
+    const txt = document.getElementById('visaoConsolidadaTexto')?.dataset?.visaoTexto || document.getElementById('visaoConsolidadaTexto')?.textContent || '';
+    if (!txt.trim()) return;
+    try {
+      await navigator.clipboard.writeText(txt);
+      showToast('Relatório copiado!', 'success');
+    } catch (_) {
+      prompt('Copie o relatório:', txt);
+    }
+  });
+}
+
 function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) {
   return `
+  ${buildVisaoConsolidadaSectionHtml()}
   <p class="auth-subtitle" style="margin-bottom:16px;margin-top:0">Selecione uma escala para ver os candidatos e analisar/aprovar.</p>
   <section class="filters-row escala-analise-filters-wrap">
     <div class="filters-card escala-analise-filters">
@@ -3701,6 +3884,7 @@ function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) 
 }
 
 function bindAnalisePanelEvents(container) {
+  bindVisaoConsolidadaEvents();
   const applyAnaliseFilters = () => {
     candidaturasAnaliseFilters = {
       nome: document.getElementById('analiseFilterNome')?.value || '',
@@ -4825,6 +5009,15 @@ async function handleLogout() {
 document.getElementById('btnRefresh')?.addEventListener('click', fetchAllData);
 document.getElementById('btnRetry')?.addEventListener('click', fetchAllData);
 
+document.getElementById('btnKpiToggleMore')?.addEventListener('click', () => {
+  const grid = document.getElementById('kpiGridResumo');
+  const btn = document.getElementById('btnKpiToggleMore');
+  if (!grid || !btn) return;
+  const expanded = grid.classList.toggle('kpis-expanded');
+  btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  btn.textContent = expanded ? 'Menos indicadores' : 'Mais indicadores';
+});
+
 document.getElementById('topIgrejaSelect')?.addEventListener('change', async () => {
   if (!authIsGlobalAdmin || !authToken) return;
   const sel = document.getElementById('topIgrejaSelect');
@@ -5034,12 +5227,34 @@ document.getElementById('formCultoRecorrente')?.addEventListener('submit', async
     if (!r.ok) throw new Error(data.error || 'Falha ao salvar');
     closeModalCultoRecorrente();
     const criadas = data.sync?.criadas;
-    if (criadas > 0) alert(`Salvo! ${criadas} nova(s) escala(s)/check-in(s) gerados.`);
+    if (criadas > 0) showToast(`Salvo! ${criadas} nova(s) escala(s)/check-in(s) gerados.`, 'success');
+    else showToast('Culto salvo com sucesso.', 'success');
     fetchCultosRecorrentes();
-  } catch (err) { alert(err.message || 'Erro ao salvar culto.'); }
+  } catch (err) { showToast(err.message || 'Erro ao salvar culto.', 'error'); }
 });
 
-btnNovoEvento?.addEventListener('click', () => { if (modalNovoEvento) { eventoData.value = getHojeDateString(); eventoLabel.value = ''; if (eventoHorarioInicio) eventoHorarioInicio.value = ''; if (eventoHorarioFim) eventoHorarioFim.value = ''; if (eventoAtivo) eventoAtivo.checked = true; modalNovoEvento.setAttribute('aria-hidden', 'false'); modalNovoEvento.classList.add('open'); } });
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#btnNovoCultoRecorrente')) {
+    e.preventDefault();
+    openModalCultoRecorrente(null);
+  }
+  if (e.target.closest('#btnSyncCultosRecorrentes')) {
+    e.preventDefault();
+    syncAllCultosRecorrentes();
+  }
+});
+
+btnNovoEvento?.addEventListener('click', () => {
+  if (!modalNovoEvento) return;
+  ensureModalPortal(modalNovoEvento);
+  eventoData.value = getHojeDateString();
+  eventoLabel.value = '';
+  if (eventoHorarioInicio) eventoHorarioInicio.value = '';
+  if (eventoHorarioFim) eventoHorarioFim.value = '';
+  if (eventoAtivo) eventoAtivo.checked = true;
+  modalNovoEvento.setAttribute('aria-hidden', 'false');
+  modalNovoEvento.classList.add('open');
+});
 modalNovoEventoClose?.addEventListener('click', () => { modalNovoEvento?.classList.remove('open'); });
 modalNovoEventoCancel?.addEventListener('click', () => { modalNovoEvento?.classList.remove('open'); });
 modalNovoEvento?.querySelector('.modal-backdrop')?.addEventListener('click', () => { modalNovoEvento?.classList.remove('open'); });
@@ -6241,7 +6456,7 @@ window.addEventListener('pageshow', function(ev) {
       const isLiderRole = authRole === 'lider' || isLider;
       const defaultView = isVol ? 'perfil' : (isLiderRole && authRole !== 'admin' ? 'checkin-ministerio' : 'resumo');
       setView(defaultView);
-      if (authRole === 'admin') fetchAllData();
+      if (authRole === 'admin') prefetchAllCheckinsForKpis();
       else if (isLiderRole && authRole !== 'admin') { fetchCheckinsMinisterio(); fetchMeusCheckins(); fetchPerfil(); }
       else { fetchEventosHoje(); fetchMeusCheckins(); fetchPerfil(); }
     } else {

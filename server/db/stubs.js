@@ -1,4 +1,7 @@
-/** Respostas vazias quando só Postgres está ativo (Mongo suspenso / migração pendente). */
+/**
+ * Payloads vazios para rotas ainda não portadas ao PostgreSQL.
+ * Rotas críticas (escalas, check-in público, cultos recorrentes, voluntários, candidaturas) usam PG diretamente.
+ */
 
 export const EMPTY_VOLUNTARIOS = {
   voluntarios: [],

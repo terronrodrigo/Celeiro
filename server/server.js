@@ -49,7 +49,16 @@ import {
   pgListEventosCheckin, pgListEventosCheckinHoje, pgFindEventoCheckinById,
   pgCreateEventoCheckin, pgUpdateEventoCheckin, pgDeleteEventoCheckin, pgCreateCheckin,
   pgCreateCandidatura, pgFindCandidaturaDuplicada, pgFindEventoCheckinPorData,
+  pgListCandidaturasByEscalaIds,
 } from './db/postgres/escalas-checkin.js';
+import {
+  buildVisaoConsolidada,
+  formatVisaoConsolidadaTexto,
+  pickDayFromVisao,
+  parseDataQuery,
+  detectTurnoEscala,
+} from './lib/escala-consolidada.js';
+import { weekdayBrasilia, addDaysYmd } from './lib/brasilia.js';
 import {
   pgListCultosRecorrentes, pgFindCultoRecorrente, pgCreateCultoRecorrente,
   pgUpdateCultoRecorrente, pgDeleteCultoRecorrente, syncCultosRecorrentes,
@@ -57,6 +66,14 @@ import {
 } from './db/postgres/cultos-recorrentes.js';
 import { DIAS_SEMANA, formatDataPtBr } from './lib/brasilia.js';
 import { buildWaMeUrl, buildMensagemAprovacaoEscala, phoneToWaMeDigits } from './lib/whatsapp-links.js';
+import { isValidEntityId } from './lib/ids.js';
+import { filterCandidaturasForLider } from './lib/ministerio-match.js';
+import { enrichCandidaturasForPanel } from './lib/candidatura-enrich.js';
+import {
+  pgListVoluntarios, pgListVoluntarioEmails, buildVoluntariosResumo,
+  pgListCheckins, pgListCandidaturasByEscala, pgFindCandidaturaById,
+  pgUpdateCandidaturaStatus, pgBulkUpdateCandidaturaStatus, pgCandidaturaStatsByEmails,
+} from './db/postgres/operational-data.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -118,7 +135,23 @@ const ADMIN_PASS = (process.env.ADMIN_PASS || '').trim();
 const SETUP_SECRET = (process.env.SETUP_SECRET || '').trim();
 
 app.use(compression());
-app.use(cors());
+const corsOrigins = (process.env.CORS_ORIGINS || process.env.APP_URL || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+if (corsOrigins.length) {
+  app.use(cors({
+    origin(origin, cb) {
+      if (!origin || corsOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error('CORS bloqueado'));
+    },
+    credentials: true,
+  }));
+} else if (process.env.NODE_ENV === 'production') {
+  app.use(cors({ origin: false }));
+} else {
+  app.use(cors());
+}
 
 // WhatsApp webhook precisa do body raw para verificar assinatura (antes de express.json)
 const createAuthTokenForUser = async (user) => {
@@ -212,6 +245,11 @@ const formularioPublicLimiter = rateLimit({
 app.use('/api/formulario-publico', formularioPublicLimiter);
 app.use('/api/formularios/membro', cadastroLimiter);
 app.use('/api/formularios/consolidacao', cadastroLimiter);
+const candidaturaPublicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  message: { error: 'Muitas candidaturas. Aguarde um pouco.' },
+});
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -612,8 +650,12 @@ function formatDatePtBr(ms) {
 }
 
 function sendError(res, status, message, details) {
-  const payload = { error: message };
-  if (details) payload.details = details;
+  const isProd = process.env.NODE_ENV === 'production';
+  const safeMessage = isProd && status >= 500
+    ? 'Erro interno. Tente novamente ou contate o suporte.'
+    : message;
+  const payload = { error: safeMessage };
+  if (details && !isProd) payload.details = details;
   return res.status(status).json(payload);
 }
 
@@ -1191,6 +1233,19 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
       });
     }
 
+    if (isPostgres()) {
+      let voluntariosPg = await pgListVoluntarios(req.tenantIgrejaId);
+      voluntariosPg = filterByMinisterio(voluntariosPg);
+      const resumoPg = buildVoluntariosResumo(voluntariosPg);
+      const payloadPg = { voluntarios: voluntariosPg, resumo: resumoPg };
+      if (!isLider) {
+        cache.voluntarios = payloadPg;
+        cache.voluntariosTime = Date.now();
+        cache.voluntariosIgrejaId = tenantIdStr;
+      }
+      return res.json(payloadPg);
+    }
+
     if (!guardMongoData(res, EMPTY_VOLUNTARIOS, 'Banco de dados indisponível.')) return;
 
     const vq = { ativo: true, ...tQ(req) };
@@ -1301,7 +1356,9 @@ app.get('/api/voluntarios/emails', requireAuth, resolveTenant, requireAdminOrLid
 
     let list = [];
     const tenantIdStrEmails = String(req.tenantIgrejaId);
-    if (
+    if (isPostgres()) {
+      list = await pgListVoluntarios(req.tenantIgrejaId);
+    } else if (
       !isLider &&
       isCacheValid('voluntarios') &&
       cache.voluntariosIgrejaId != null &&
@@ -1311,6 +1368,7 @@ app.get('/api/voluntarios/emails', requireAuth, resolveTenant, requireAdminOrLid
     ) {
       list = cache.voluntarios.voluntarios;
     } else {
+      if (!guardMongoData(res, { emails: [] })) return;
       let raw = await Voluntario.find({ ativo: true, ...tQ(req) }).lean();
       if (isLider && ministerioNomes.length > 0) {
         raw = raw.filter((v) => {
@@ -1367,10 +1425,53 @@ app.get('/api/voluntarios/emails', requireAuth, resolveTenant, requireAdminOrLid
 
 app.get('/api/checkins', requireAuth, resolveTenant, async (req, res) => {
   try {
-    if (!guardMongoData(res, emptyCheckinsPayload())) return;
-
     const isAdmin = req.userRole === 'admin';
     const { data: dataFiltro, eventoId, ministerio } = req.query;
+
+    if (isPostgres()) {
+      let checkinsData;
+      if (!isAdmin) {
+        const userEmail = (req.userEmail || '').toString().trim().toLowerCase();
+        if (!userEmail) return res.json(emptyCheckinsPayload());
+        checkinsData = await pgListCheckins(req.tenantIgrejaId, { email: userEmail, limit: 500 });
+      } else {
+        checkinsData = await pgListCheckins(req.tenantIgrejaId, {
+          dataYmd: dataFiltro ? String(dataFiltro).trim() : null,
+          eventoId: eventoId || null,
+          ministerio: ministerio || null,
+          limit: 5000,
+        });
+      }
+      const ministeriosCount = {};
+      checkinsData.forEach((c) => {
+        const m = (c.ministerio || '').trim();
+        if (m) ministeriosCount[m] = (ministeriosCount[m] || 0) + 1;
+      });
+      const normalized = checkinsData.map((c) => {
+        const ms = c.timestampMs || (c.dataCheckin ? new Date(c.dataCheckin).getTime() : null);
+        return {
+          ...c,
+          timestamp: formatDatePtBr(ms),
+          timestampMs: ms,
+          fotoUrl: null,
+        };
+      });
+      const data = {
+        checkins: normalized,
+        resumo: {
+          total: normalized.length,
+          ministerios: Object.entries(ministeriosCount).sort((a, b) => b[1] - a[1]),
+        },
+      };
+      if (isAdmin) {
+        cache.checkins = data;
+        cache.checkinsTime = Date.now();
+        cache.checkinsIgrejaId = String(req.tenantIgrejaId);
+      }
+      return res.json(data);
+    }
+
+    if (!guardMongoData(res, emptyCheckinsPayload())) return;
 
     let query = { ...tQ(req) };
     if (!isAdmin) {
@@ -1459,8 +1560,34 @@ app.get('/api/checkins/ministerio', requireAuth, resolveTenant, async (req, res)
     if (nomes.length === 0) {
       return res.status(403).json({ error: 'Acesso apenas para líderes de ministério.' });
     }
-    if (!guardMongoData(res, emptyCheckinsPayload())) return;
     const { data: dataFiltro } = req.query;
+    if (isPostgres()) {
+      let checkinsData = await pgListCheckins(req.tenantIgrejaId, {
+        dataYmd: dataFiltro ? String(dataFiltro).trim() : null,
+        limit: 500,
+      });
+      checkinsData = checkinsData.filter((c) =>
+        nomes.some((n) => {
+          const m = (c.ministerio || '').toLowerCase();
+          const ln = n.toLowerCase();
+          return m === ln || m.includes(ln) || ln.includes(m);
+        }),
+      );
+      const ministeriosCount = {};
+      checkinsData.forEach((c) => {
+        const m = (c.ministerio || '').trim();
+        if (m) ministeriosCount[m] = (ministeriosCount[m] || 0) + 1;
+      });
+      const normalized = checkinsData.map((c) => {
+        const ms = c.timestampMs || (c.dataCheckin ? new Date(c.dataCheckin).getTime() : null);
+        return { ...c, timestamp: formatDatePtBr(ms), timestampMs: ms };
+      });
+      return res.json({
+        checkins: normalized,
+        resumo: { total: normalized.length, ministerios: Object.entries(ministeriosCount).sort((a, b) => b[1] - a[1]) },
+      });
+    }
+    if (!guardMongoData(res, emptyCheckinsPayload())) return;
     const orConditions = [
       { ministerio: { $in: nomes } },
       ...nomes.map((n) => ({ ministerio: new RegExp(escapeRegex(n), 'i') })),
@@ -2612,6 +2739,10 @@ app.post('/api/send-email', requireAuth, resolveTenant, requireAdmin, async (req
   if (!Array.isArray(to) || !to.length) {
     return res.status(400).json({ error: 'Envie um array "to" com pelo menos um email.' });
   }
+  const MAX_EMAIL_RECIPIENTS = Number(process.env.MAX_EMAIL_RECIPIENTS || 80);
+  if (to.length > MAX_EMAIL_RECIPIENTS) {
+    return res.status(400).json({ error: `Máximo de ${MAX_EMAIL_RECIPIENTS} destinatários por envio.` });
+  }
   if (!subject || (!html && !text)) {
     return res.status(400).json({ error: 'Envie "subject" e "html" ou "text".' });
   }
@@ -3310,6 +3441,129 @@ app.post('/api/send-cadastro-incompleto', requireAuth, resolveTenant, requireAdm
 // ESCALAS
 // ──────────────────────────────────────────────────────────────────────────────
 
+function candidaturaVisivelParaLider(c, req) {
+  if (req.userRole !== 'lider') return true;
+  const nomes = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
+  if (!nomes.length && req.userMinisterioNome) nomes.push(String(req.userMinisterioNome).trim());
+  if (!nomes.length) return false;
+  const min = (c.ministerio || '').trim().toLowerCase();
+  return nomes.some((n) => {
+    const nl = n.toLowerCase();
+    return min === nl || min.includes(nl) || nl.includes(min);
+  });
+}
+
+async function loadEscalasECandidaturasVisao(req, dataYmd) {
+  const hoje = getHojeDateString();
+  const ymd = dataYmd || hoje;
+  if (isPostgres()) {
+    const todas = await pgListEscalas(req.tenantIgrejaId, { limit: 300 });
+    const escalas = todas.filter((e) => escalaDataToYMD(e.data) === ymd);
+    const ids = escalas.map((e) => e._id);
+    let candidaturas = await pgListCandidaturasByEscalaIds(req.tenantIgrejaId, ids);
+    candidaturas = candidaturas.filter((c) => candidaturaVisivelParaLider(c, req));
+    return { dataYmd: ymd, escalas, candidaturas };
+  }
+  if (!isMongo()) return { dataYmd: ymd, escalas: [], candidaturas: [] };
+  const { start, end } = getDayRangeBrasilia(ymd);
+  const escalas = await Escala.find({
+    ...tQ(req),
+    data: { $gte: start, $lt: end },
+  }).select('nome data').lean();
+  const ids = escalas.map((e) => e._id);
+  let candidaturas = ids.length
+    ? await Candidatura.find({ escalaId: { $in: ids }, ...tQ(req) }).lean()
+    : [];
+  candidaturas = candidaturas.filter((c) => candidaturaVisivelParaLider(c, req));
+  return { dataYmd: ymd, escalas, candidaturas };
+}
+
+function resolveDataYmdVisaoQuery(req) {
+  const hoje = getHojeDateString();
+  const parsed = parseDataQuery(req.query.data, hoje);
+  if (parsed) return parsed;
+  if (req.query.proximoDomingo === '1' || req.query.proximoDomingo === 'true') {
+    let c = hoje;
+    for (let i = 0; i < 21; i += 1) {
+      if (weekdayBrasilia(c) === 0) return c;
+      const next = addDaysYmd(c, 1);
+      if (!next) break;
+      c = next;
+    }
+  }
+  return hoje;
+}
+
+// GET /api/escalas/visao-consolidada — Manhã / Almoço / Tarde por ministério (domingo 2 cultos)
+app.get('/api/escalas/visao-consolidada', requireAuth, resolveTenant, async (req, res) => {
+  try {
+    const isAdmin = req.userRole === 'admin';
+    const isLider = req.userRole === 'lider';
+    if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
+
+    const dataYmd = resolveDataYmdVisaoQuery(req);
+    const statusParam = (req.query.status || 'aprovado').toString();
+    const statusIn = statusParam === 'todos'
+      ? ['aprovado', 'pendente', 'desistencia', 'falta']
+      : statusParam.split(',').map((s) => s.trim()).filter(Boolean);
+
+    const { escalas, candidaturas } = await loadEscalasECandidaturasVisao(req, dataYmd);
+    const visao = buildVisaoConsolidada({ escalas, candidaturas, statusIn });
+    const day = pickDayFromVisao(visao, dataYmd);
+
+    const detalhes = req.query.detalhes === '1';
+    let detalhesAlmoco = null;
+    if (detalhes && day) {
+      const emailsManha = new Set();
+      const emailsTarde = new Set();
+      const byEmail = new Map();
+      for (const c of candidaturas) {
+        if (!statusIn.includes(c.status)) continue;
+        const escala = escalas.find((e) => String(e._id) === String(c.escalaId));
+        if (!escala) continue;
+        const turno = detectTurnoEscala(escala.nome);
+        const em = (c.email || '').toLowerCase();
+        if (!em) continue;
+        if (turno === 'manha') emailsManha.add(em);
+        if (turno === 'tarde') emailsTarde.add(em);
+        if (!byEmail.has(em)) byEmail.set(em, { email: em, nome: c.nome, ministerios: new Set() });
+        byEmail.get(em).ministerios.add(c.ministerio);
+      }
+      detalhesAlmoco = [...emailsManha].filter((e) => emailsTarde.has(e)).map((e) => ({
+        email: e,
+        nome: byEmail.get(e)?.nome || '',
+        ministerios: [...(byEmail.get(e)?.ministerios || [])],
+      }));
+    }
+
+    const payload = {
+      data: dataYmd,
+      timezone: visao.timezone,
+      escalasManha: day?.escalas?.manha || [],
+      escalasTarde: day?.escalas?.tarde || [],
+      ministerios: day
+        ? [...day.ministerios.entries()].map(([key, v]) => ({
+          key,
+          manha: v.manha,
+          almoco: v.almoco,
+          tarde: v.tarde,
+        }))
+        : [],
+      totalAlmoco: day?.totalAlmoco || 0,
+      intercessao: day?.intercessao || { manha: 0, almoco: 0, tarde: 0 },
+      detalhesAlmoco,
+    };
+
+    if ((req.query.formato || '').toString() === 'texto') {
+      return res.json({ ...payload, texto: formatVisaoConsolidadaTexto(day) });
+    }
+    res.json({ ...payload, texto: formatVisaoConsolidadaTexto(day) });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao gerar visão consolidada.');
+  }
+});
+
 // GET /api/escalas — lista escalas (admin e líder: todas, inclusive antigas/inativas para histórico)
 // ?light=1 — retorna escalas sem aggregation (rápido); frontend pode carregar contagens depois
 const ESCALAS_LIST_LIMIT = 80;
@@ -3455,8 +3709,24 @@ app.post('/api/candidaturas/bulk-status', requireAuth, resolveTenant, async (req
     const { ids, status } = req.body || {};
     const validStatus = ['aprovado', 'desistencia', 'falta'];
     if (!status || !validStatus.includes(status)) return sendError(res, 400, `Status inválido. Use: ${validStatus.join(', ')}`);
-    const idList = Array.isArray(ids) ? ids.filter((id) => id && String(id).trim()).map(String) : [];
+    const idList = Array.isArray(ids) ? ids.filter((id) => id && isValidEntityId(id)).map(String) : [];
     if (!idList.length) return sendError(res, 400, 'Informe ao menos um id.');
+
+    if (isPostgres()) {
+      const nomes = isLider ? (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean) : [];
+      if (isLider && nomes.length) {
+        for (const id of idList) {
+          const c = await pgFindCandidaturaById(id, req.tenantIgrejaId);
+          if (!c) return sendError(res, 404, 'Candidatura não encontrada.');
+          if (!filterCandidaturasForLider([c], nomes).length) {
+            return sendError(res, 403, 'Algumas candidaturas não são do seu ministério.');
+          }
+        }
+      }
+      const modified = await pgBulkUpdateCandidaturaStatus(idList, req.tenantIgrejaId, status, { aprovadoPor: req.userId });
+      invalidateCache();
+      return res.json({ ok: true, modified });
+    }
 
     const candidaturas = await Candidatura.find({ _id: { $in: idList }, ...tQ(req) }).lean();
     const nomes = isLider ? (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean) : [];
@@ -3760,7 +4030,7 @@ app.put('/api/escalas/:id/inscricoes-por-ministerio', requireAuth, resolveTenant
 
 // POST /api/candidaturas — candidatura pública (sem auth). Quem se candidata é considerado voluntário. Ministério deve estar na lista permitida.
 // Query ?igreja=slug ou body.igrejaSlug / tenant (default celeiro-sp).
-app.post('/api/candidaturas', async (req, res) => {
+app.post('/api/candidaturas', candidaturaPublicLimiter, async (req, res) => {
   try {
     const igrejaDoc = await publicIgrejaFromRequest(req);
     if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use o parâmetro igreja (slug) no formulário.');
@@ -3886,8 +4156,28 @@ app.get('/api/escalas/:id/candidaturas', requireAuth, resolveTenant, async (req,
     if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
 
     const escalaId = req.params.id;
-    if (!escalaId || !mongoose.Types.ObjectId.isValid(escalaId)) {
+    if (!escalaId || !isValidEntityId(escalaId)) {
       return sendError(res, 400, 'ID da escala inválido.');
+    }
+
+    if (isPostgres()) {
+      const escala = await pgFindEscalaById(escalaId, req.tenantIgrejaId);
+      if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+      let candidaturas = await pgListCandidaturasByEscala(req.tenantIgrejaId, escalaId);
+      const liderMinisterios = isLider
+        ? (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean)
+        : [];
+      if (isLider) candidaturas = filterCandidaturasForLider(candidaturas, liderMinisterios);
+      if (!candidaturas.length) return res.json([]);
+      const emails = [...new Set(candidaturas.map((c) => (c.email || '').toLowerCase()).filter(Boolean))];
+      const { statsMap, checkinsMap } = await pgCandidaturaStatsByEmails(req.tenantIgrejaId, emails);
+      const result = enrichCandidaturasForPanel(candidaturas, {
+        escala,
+        statsMap,
+        checkinsMap,
+        liderMinisterios,
+      });
+      return res.json(result);
     }
 
     const escala = await Escala.findOne({ _id: escalaId, ...tQ(req) }).lean();
@@ -3980,6 +4270,21 @@ app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, 
     const { status } = req.body || {};
     const validStatus = ['pendente', 'aprovado', 'desistencia', 'falta'];
     if (!validStatus.includes(status)) return sendError(res, 400, `Status inválido. Use: ${validStatus.join(', ')}`);
+
+    if (isPostgres()) {
+      if (!isValidEntityId(req.params.id)) return sendError(res, 400, 'ID inválido.');
+      const candidaturaPg = await pgFindCandidaturaById(req.params.id, req.tenantIgrejaId);
+      if (!candidaturaPg) return sendError(res, 404, 'Candidatura não encontrada.');
+      if (isLider) {
+        const nomesPg = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
+        if (!filterCandidaturasForLider([candidaturaPg], nomesPg).length) {
+          return sendError(res, 403, 'Acesso negado. Esta candidatura não é do seu ministério.');
+        }
+      }
+      const updatedPg = await pgUpdateCandidaturaStatus(req.params.id, req.tenantIgrejaId, status, { aprovadoPor: req.userId });
+      invalidateCache();
+      return res.json(updatedPg);
+    }
 
     const candidatura = await Candidatura.findOne({ _id: req.params.id, ...tQ(req) }).lean();
     if (!candidatura) return sendError(res, 404, 'Candidatura não encontrada.');

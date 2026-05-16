@@ -1,6 +1,8 @@
 # Plataforma de voluntários – Celeiro São Paulo
 
-Aplicação em **https://voluntariosceleirosp.com/** para gestão de voluntários: inscrições (planilha ou MongoDB), check-in, escalas, formulários e envio de e-mail via [Resend](https://resend.com).
+Aplicação em **https://voluntariosceleirosp.com/** para gestão de voluntários: check-in, escalas, cultos recorrentes, formulários e e-mail via [Resend](https://resend.com).
+
+**Produção:** PostgreSQL no Railway (`DATABASE_URL`, `DB_PROVIDER=postgres`). MongoDB é opcional apenas para migração de dados antigos.
 
 ## O que tem
 
@@ -33,11 +35,18 @@ npm install
 npm start
 ```
 
-Para carregar do CSV no MongoDB:
+Testes automatizados:
 
 ```bash
 cd dashboard/server
-npm run migrate
+npm run test:unit
+```
+
+Migração histórica do Mongo (opcional):
+
+```bash
+cd dashboard/server
+npm run import-users-mongo-to-pg
 ```
 
 A API sobe em `http://localhost:3001` e expõe:

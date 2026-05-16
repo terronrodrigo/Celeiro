@@ -262,6 +262,25 @@ export async function pgCreateCandidatura({
   return { _id: id, ...dados, escalaId, igrejaId };
 }
 
+export async function pgListCandidaturasByEscalaIds(igrejaId, escalaIds) {
+  if (!escalaIds?.length) return [];
+  const { rows } = await getPostgresPool().query(
+    'SELECT id, escala_id, dados FROM candidaturas WHERE igreja_id = $1 AND escala_id = ANY($2::text[])',
+    [igrejaId, escalaIds],
+  );
+  return rows.map((r) => {
+    const d = r.dados || {};
+    return {
+      _id: r.id,
+      escalaId: r.escala_id,
+      email: d.email || '',
+      nome: d.nome || '',
+      ministerio: d.ministerio || '',
+      status: d.status || 'pendente',
+    };
+  });
+}
+
 export async function pgFindCandidaturaDuplicada(igrejaId, escalaId, email) {
   const { rows } = await getPostgresPool().query(
     `SELECT id FROM candidaturas

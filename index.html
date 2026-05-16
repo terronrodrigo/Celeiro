@@ -23,7 +23,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=1.2.1">
+  <link rel="stylesheet" href="styles.css?v=1.3.1">
 </head>
 <body>
   <div class="app-shell">
@@ -34,6 +34,7 @@
         </div>
       </div>
       <nav class="sidebar-nav" id="navAdmin">
+        <p class="nav-section-label">Visão geral</p>
         <a href="#" class="nav-item active" data-view="resumo">
           <span class="nav-icon">📊</span>
           <span>Resumo</span>
@@ -42,6 +43,7 @@
           <span class="nav-icon">👥</span>
           <span>Voluntários</span>
         </a>
+        <p class="nav-section-label">Pessoas</p>
         <a href="#" class="nav-item" data-view="ministros">
           <span class="nav-icon">⛪</span>
           <span>Ministérios</span>
@@ -50,9 +52,10 @@
           <span class="nav-icon">🔐</span>
           <span>Usuários</span>
         </a>
+        <p class="nav-section-label">Presença</p>
         <a href="#" class="nav-item" data-view="eventos-checkin">
           <span class="nav-icon">📅</span>
-          <span>Eventos Check-in</span>
+          <span>Eventos check-in</span>
         </a>
         <a href="#" class="nav-item" data-view="cultos-recorrentes">
           <span class="nav-icon">🔁</span>
@@ -64,8 +67,9 @@
         </a>
         <a href="#" class="nav-item" data-view="checkin-ministerio" id="navAdminCheckinMinisterio" style="display: none;">
           <span class="nav-icon">✅</span>
-          <span>Check-ins dos meus ministérios</span>
+          <span>Meus ministérios</span>
         </a>
+        <p class="nav-section-label">Escalas</p>
         <a href="#" class="nav-item" data-view="escalas-criar">
           <span class="nav-icon">➕</span>
           <span>Criar escalas</span>
@@ -74,10 +78,12 @@
           <span class="nav-icon">📋</span>
           <span>Escala</span>
         </a>
+        <p class="nav-section-label">Cadastros</p>
         <a href="#" class="nav-item" data-view="formularios">
           <span class="nav-icon">📝</span>
           <span>Formulários</span>
         </a>
+        <p class="nav-section-label">Conta</p>
         <a href="#" class="nav-item" data-view="perfil">
           <span class="nav-icon">👤</span>
           <span>Perfil</span>
@@ -228,7 +234,10 @@
 
         <section class="view active" data-view="resumo">
           <!-- KPIs -->
-          <section class="kpi-grid">
+          <div class="kpi-toolbar">
+            <button type="button" class="btn btn-ghost btn-sm kpi-toggle-more" id="btnKpiToggleMore" aria-expanded="false">Mais indicadores</button>
+          </div>
+          <section class="kpi-grid" id="kpiGridResumo">
             <div class="kpi-card">
               <div class="kpi-header">
                 <span class="kpi-label">Total de inscrições</span>
@@ -1569,7 +1578,6 @@
       }
     })();
   </script>
-  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script defer src="app.js?v=1.1.1"></script>
+  <script defer src="app.js?v=1.3.1"></script>
 </body>
 </html>

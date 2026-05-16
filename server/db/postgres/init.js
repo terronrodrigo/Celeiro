@@ -197,6 +197,14 @@ export async function initPostgres(connectionString) {
   });
   await pool.query('SELECT 1');
   await pool.query(SCHEMA_SQL);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS checkins_igreja_evento_idx ON checkins (igreja_id, evento_id);
+    CREATE INDEX IF NOT EXISTS checkins_igreja_email_idx ON checkins (igreja_id, LOWER(email));
+    CREATE INDEX IF NOT EXISTS checkins_timestamp_idx ON checkins (igreja_id, timestamp_ms DESC);
+    CREATE INDEX IF NOT EXISTS candidaturas_igreja_escala_idx ON candidaturas (igreja_id, escala_id);
+    CREATE INDEX IF NOT EXISTS escalas_igreja_created_idx ON escalas (igreja_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS eventos_checkin_igreja_data_idx ON eventos_checkin (igreja_id, data DESC);
+  `);
   const { migrateCultosRecorrentesSchema } = await import('./cultos-recorrentes.js');
   await migrateCultosRecorrentesSchema();
   await seedIfEmpty();
