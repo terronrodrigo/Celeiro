@@ -1,5 +1,19 @@
 # Agente de IA via WhatsApp – Celeiro Dashboard
 
+## Estratégia de custo (recomendada)
+
+| Uso | Como | Custo |
+|-----|------|--------|
+| **Líder avisa voluntário** (escala aprovada, link de check-in, avisos) | Botão no painel → link **wa.me** com mensagem pronta. O líder envia do **próprio** WhatsApp. | **R$ 0** |
+| **Voluntário fala com a igreja** (menu, check-in por chat, login) | Webhook **Meta Cloud API** + agente (opcional). Respostas dentro da **janela de 24h** após o voluntário mandar msg. | Grátis na janela; fora dela exige template pago |
+| **Verificar número Business** | **BR DID** (webhook de código por ligação) | Só setup |
+
+**Não use** `sendWhatsAppText` da API para avisos em massa de líder → voluntário: fora da janela de 24h a Meta cobra por conversa.
+
+API: `GET /api/whatsapp/mensagem-escala?escalaId=&nome=&telefone=` (admin/líder autenticado).
+
+---
+
 ## Visão geral
 
 Agente de IA que permite interagir com o Dashboard Celeiro através do WhatsApp, mantendo a mesma hierarquia de perfis e permissões da plataforma web.

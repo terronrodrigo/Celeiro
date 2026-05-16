@@ -3581,13 +3581,12 @@ function renderAnaliseTab() {
       if (!id || !status) return;
       const cand = filtered.find((c) => String(c._id) === id);
       const prevStatus = cand?.status;
-      try {
-        await atualizarStatusCandidatura(id, status);
-        const escalaId = candidaturasAnaliseFilters?.escalaId || document.getElementById('analiseFilterEscala')?.value;
-        if (escalaId) await fetchCandidaturasPorEscala(escalaId);
-      } catch (_) {
-        if (prevStatus) e.target.value = prevStatus;
-      }
+      const escalaId = cand?.escalaId || candidaturasAnaliseFilters?.escalaId || document.getElementById('analiseFilterEscala')?.value;
+      const ok = await atualizarStatusCandidatura(id, status, cand ? {
+        escalaId, nome: cand.nome, telefone: cand.telefone,
+      } : null);
+      if (!ok && prevStatus) e.target.value = prevStatus;
+      else if (escalaId) await fetchCandidaturasPorEscala(escalaId);
     });
   });
 }
@@ -3753,6 +3752,20 @@ function bindAnalisePanelEvents(container) {
       const r2 = await authFetch(`${API_BASE}/api/escalas`);
       if (r2.ok) escalasList = await r2.json();
       renderAnaliseTab();
+      const approved = getFilteredCandidaturasAnalise().filter((c) => ids.includes(String(c._id)));
+      const comTel = approved.filter((c) => c.telefone && validarWhatsApp(c.telefone));
+      if (comTel.length && confirm(`Aprovação concluída.\n\nAbrir WhatsApp para ${comTel.length} voluntário(s)?\n(uma aba por pessoa — envio grátis do seu número)`)) {
+        for (const c of comTel) {
+          try {
+            await abrirWhatsAppMensagemEscala({
+              escalaId: c.escalaId || escalaId,
+              nome: c.nome,
+              telefone: c.telefone,
+            });
+          } catch (_) { /* segue próximo */ }
+          await new Promise((r) => setTimeout(r, 600));
+        }
+      }
     } catch (e) { alert(e.message || 'Erro ao aprovar.'); }
   });
   document.getElementById('btnAnaliseExportCsv')?.addEventListener('click', () => {
@@ -4098,11 +4111,16 @@ function renderCandidaturasTable(list, escalaId, ministerioFilter) {
     : list;
   const escala = escalasList.find(e => String(e._id) === escalaId);
   const isAdmin = authRole === 'admin';
+  const waBtn = (c) => (c.status === 'aprovado' && c.telefone && validarWhatsApp(c.telefone))
+    ? `<button type="button" class="btn btn-sm btn-ghost" data-cand-wa="${escapeAttr(String(c._id))}" title="Abrir WhatsApp (grátis) com aviso e link de check-in">WhatsApp</button>`
+    : '';
   const acoesTpl = (c) => isAdmin
     ? `<div class="escala-cand-actions"><button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
+       ${waBtn(c)}
        <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="desistencia">Desist.</button>
        <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button></div>`
     : `<div class="escala-cand-actions"><button class="btn btn-sm btn-primary" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="aprovado" ${c.status === 'aprovado' ? 'disabled' : ''}>Aprovar</button>
+       ${waBtn(c)}
        <button class="btn btn-sm btn-ghost" data-cand-id="${escapeAttr(String(c._id))}" data-cand-action="falta">Falta</button></div>`;
   const rows = filtered.map(c => `<tr>
     <td data-label="Nome">${escapeHtml(c.nome || '—')}</td>
@@ -4122,8 +4140,21 @@ function renderCandidaturasTable(list, escalaId, ministerioFilter) {
     btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-cand-id');
       const action = btn.getAttribute('data-cand-action');
-      await atualizarStatusCandidatura(id, action);
-      fetchCandidaturasEscala(escalaId);
+      const cand = filtered.find((c) => String(c._id) === String(id)) || list.find((c) => String(c._id) === String(id));
+      const ok = await atualizarStatusCandidatura(id, action, cand ? {
+        escalaId, nome: cand.nome, telefone: cand.telefone,
+      } : null);
+      if (ok) fetchCandidaturasEscala(escalaId);
+    });
+  });
+  panel.querySelectorAll('[data-cand-wa]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-cand-wa');
+      const cand = filtered.find((c) => String(c._id) === String(id)) || list.find((c) => String(c._id) === String(id));
+      if (!cand) return;
+      try {
+        await abrirWhatsAppMensagemEscala({ escalaId, nome: cand.nome, telefone: cand.telefone });
+      } catch (e) { alert(e.message || 'Erro ao abrir WhatsApp.'); }
     });
   });
   panel.querySelectorAll('.link-voluntario').forEach(btn => {
@@ -4187,7 +4218,24 @@ async function fetchCandidaturasEscala(escalaId) {
   }
 }
 
-async function atualizarStatusCandidatura(id, status) {
+async function abrirWhatsAppMensagemEscala({ escalaId, nome, telefone }) {
+  if (!telefone || !validarWhatsApp(telefone)) {
+    alert('Cadastre um telefone válido (DDD + número) para avisar por WhatsApp.');
+    return;
+  }
+  const q = new URLSearchParams({
+    escalaId: String(escalaId || ''),
+    nome: String(nome || ''),
+    telefone: String(telefone).replace(/\D/g, ''),
+  });
+  const r = await authFetch(`${API_BASE}/api/whatsapp/mensagem-escala?${q}`);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'Falha ao montar mensagem.');
+  if (data.waUrl) window.open(data.waUrl, '_blank', 'noopener');
+  else alert('Link do WhatsApp indisponível.');
+}
+
+async function atualizarStatusCandidatura(id, status, meta = null) {
   try {
     const r = await authFetch(`${API_BASE}/api/candidaturas/${encodeURIComponent(id)}/status`, {
       method: 'PUT',
@@ -4195,7 +4243,20 @@ async function atualizarStatusCandidatura(id, status) {
       body: JSON.stringify({ status }),
     });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
-  } catch (e) { alert(e.message || 'Erro ao atualizar status.'); }
+    if (status === 'aprovado' && meta?.telefone && validarWhatsApp(meta.telefone) && meta.escalaId) {
+      if (confirm('Participação confirmada.\n\nAbrir WhatsApp para enviar o aviso com link de check-in? (grátis — você envia do seu número)')) {
+        await abrirWhatsAppMensagemEscala({
+          escalaId: meta.escalaId,
+          nome: meta.nome,
+          telefone: meta.telefone,
+        });
+      }
+    }
+    return true;
+  } catch (e) {
+    alert(e.message || 'Erro ao atualizar status.');
+    return false;
+  }
 }
 
 async function toggleEscalaAtivo(id) {

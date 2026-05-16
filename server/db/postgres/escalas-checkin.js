@@ -142,6 +142,12 @@ export async function pgListEventosCheckinHoje(igrejaId) {
   return pgListEventosCheckin(igrejaId, { ativoOnly: true, dataYmd: getHojeDateString() });
 }
 
+/** Evento de check-in ativo no mesmo dia civil (Brasília) da escala. */
+export async function pgFindEventoCheckinPorData(igrejaId, dataYmd) {
+  const list = await pgListEventosCheckin(igrejaId, { ativoOnly: true, dataYmd });
+  return list[0] || null;
+}
+
 export async function pgFindEventoCheckinById(id, igrejaId = null) {
   const params = [id];
   let sql = `SELECT id, igreja_id, data, label, ativo, horario_inicio, horario_fim,

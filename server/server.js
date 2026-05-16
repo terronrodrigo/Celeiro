@@ -48,7 +48,7 @@ import {
   pgListEscalas, pgFindEscalaById, pgCreateEscala, pgUpdateEscala, pgCountCandidaturasByEscala,
   pgListEventosCheckin, pgListEventosCheckinHoje, pgFindEventoCheckinById,
   pgCreateEventoCheckin, pgUpdateEventoCheckin, pgDeleteEventoCheckin, pgCreateCheckin,
-  pgCreateCandidatura, pgFindCandidaturaDuplicada,
+  pgCreateCandidatura, pgFindCandidaturaDuplicada, pgFindEventoCheckinPorData,
 } from './db/postgres/escalas-checkin.js';
 import {
   pgListCultosRecorrentes, pgFindCultoRecorrente, pgCreateCultoRecorrente,
@@ -56,6 +56,7 @@ import {
   startRecurringCultosScheduler,
 } from './db/postgres/cultos-recorrentes.js';
 import { DIAS_SEMANA, formatDataPtBr } from './lib/brasilia.js';
+import { buildWaMeUrl, buildMensagemAprovacaoEscala, phoneToWaMeDigits } from './lib/whatsapp-links.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -412,6 +413,81 @@ app.get('/api/igrejas', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao listar igrejas.');
+  }
+});
+
+// ─── WhatsApp: mensagens via wa.me (sem custo de API) ─────────────────────────
+/** Monta texto + link wa.me para avisar voluntário (aprovação de escala + check-in do dia). */
+app.get('/api/whatsapp/mensagem-escala', requireAuth, resolveTenant, async (req, res) => {
+  try {
+    const role = String(req.userRole || '').toLowerCase();
+    if (role !== 'admin' && role !== 'lider') return sendError(res, 403, 'Acesso negado.');
+    const escalaId = (req.query.escalaId || '').trim();
+    const telefone = (req.query.telefone || '').trim();
+    const nome = (req.query.nome || '').trim();
+    if (!escalaId) return sendError(res, 400, 'escalaId é obrigatório.');
+    if (!telefone) return sendError(res, 400, 'telefone é obrigatório.');
+    const digits = phoneToWaMeDigits(telefone);
+    if (!digits) return sendError(res, 400, 'Telefone inválido. Use DDD + número (10 ou 11 dígitos).');
+
+    let escala = null;
+    let eventoCheckinId = null;
+    if (isPostgres()) {
+      escala = await pgFindEscalaById(escalaId, req.tenantIgrejaId);
+      if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+      const ymd = escala.data ? escalaDataToYMD(escala.data) : null;
+      if (ymd) {
+        const ev = await pgFindEventoCheckinPorData(req.tenantIgrejaId, ymd);
+        if (ev) eventoCheckinId = ev._id;
+      }
+    } else if (isMongo()) {
+      escala = await Escala.findOne({ _id: escalaId, ...tQ(req) }).lean();
+      if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+      const ymd = escala.data ? escalaDataToYMD(escala.data) : null;
+      if (ymd) {
+        const { start, end } = getDayRangeBrasilia(ymd);
+        const ev = await EventoCheckin.findOne({
+          ...tQ(req),
+          ativo: true,
+          data: { $gte: start, $lt: end },
+        }).select('_id').lean();
+        if (ev) eventoCheckinId = ev._id;
+      }
+    } else {
+      return sendError(res, 503, 'Banco indisponível.');
+    }
+
+    const slug = req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG;
+    const base = (process.env.APP_URL || '').replace(/\/$/, '')
+      || `${req.protocol}://${req.get('host')}`;
+    const appBase = base || 'https://voluntariosceleirosp.com';
+    let checkinUrl = '';
+    if (eventoCheckinId) {
+      checkinUrl = `${appBase}?checkin=${encodeURIComponent(eventoCheckinId)}&igreja=${encodeURIComponent(slug)}`;
+    }
+    const escalaDataLabel = escala.data
+      ? new Date(escala.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })
+      : '';
+    const texto = buildMensagemAprovacaoEscala({
+      nomeVoluntario: nome,
+      escalaNome: escala.nome,
+      escalaDataLabel,
+      checkinUrl,
+      liderNome: req.user,
+    });
+    const waUrl = buildWaMeUrl(telefone, texto);
+    res.json({
+      metodo: 'wa_me',
+      custo: 'gratuito',
+      observacao: 'Abre o WhatsApp do líder com a mensagem pronta. Não usa API paga da Meta (evita custo fora da janela de 24h).',
+      texto,
+      waUrl,
+      checkinUrl: checkinUrl || null,
+      telefoneE164: digits,
+    });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao montar mensagem.');
   }
 });
 
