@@ -54,6 +54,10 @@
           <span class="nav-icon">📅</span>
           <span>Eventos Check-in</span>
         </a>
+        <a href="#" class="nav-item" data-view="cultos-recorrentes">
+          <span class="nav-icon">🔁</span>
+          <span>Cultos recorrentes</span>
+        </a>
         <a href="#" class="nav-item" data-view="checkin">
           <span class="nav-icon">✅</span>
           <span>Check-in</span>
@@ -546,6 +550,101 @@
                   </label>
                 </div>
                 <div class="modal-footer"><button type="button" class="btn btn-ghost" id="modalEditarEventoCancel">Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <!-- Cultos recorrentes (admin) -->
+        <section class="view" data-view="cultos-recorrentes">
+          <section class="filters-row">
+            <div class="filters-card" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+              <button type="button" class="btn btn-primary" id="btnNovoCultoRecorrente">➕ Novo culto recorrente</button>
+              <button type="button" class="btn btn-ghost" id="btnSyncCultosRecorrentes">Sincronizar escalas e check-ins</button>
+            </div>
+          </section>
+          <div class="table-card">
+            <div class="chart-header"><h2>Cultos recorrentes</h2></div>
+            <p class="auth-subtitle">Cadastre cultos fixos (dia e horário em <strong>Brasília</strong>). O sistema cria automaticamente a escala e o evento de check-in para as próximas semanas.</p>
+            <p class="form-hint" id="cultosRecorrentesTzHint" style="margin-top:4px"></p>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Nome</th>
+                    <th>Dia</th>
+                    <th>Horário culto</th>
+                    <th>Check-in (janela)</th>
+                    <th>Semanas</th>
+                    <th>Ocorrências</th>
+                    <th>Status</th>
+                    <th>Ação</th>
+                  </tr>
+                </thead>
+                <tbody id="cultosRecorrentesBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="modalCultoRecorrente" class="modal" aria-hidden="true">
+            <div class="modal-backdrop"></div>
+            <div class="modal-box">
+              <div class="modal-header">
+                <h2 id="modalCultoRecorrenteTitle">Culto recorrente</h2>
+                <button type="button" class="modal-close" id="modalCultoRecorrenteClose">&times;</button>
+              </div>
+              <form id="formCultoRecorrente" class="modal-body">
+                <input type="hidden" id="cultoRecorrenteId" value="">
+                <div class="form-group">
+                  <label for="cultoRecorrenteNome">Nome do culto</label>
+                  <input type="text" id="cultoRecorrenteNome" required placeholder="Ex: Domingo de Manhã">
+                </div>
+                <div class="form-row form-row-2">
+                  <div class="form-group">
+                    <label for="cultoRecorrenteDia">Dia da semana</label>
+                    <select id="cultoRecorrenteDia" required></select>
+                  </div>
+                  <div class="form-group">
+                    <label for="cultoRecorrenteHorario">Horário do culto (Brasília)</label>
+                    <input type="time" id="cultoRecorrenteHorario" required step="300">
+                  </div>
+                </div>
+                <div class="form-row form-row-2">
+                  <div class="form-group">
+                    <label for="cultoRecorrenteCheckinInicio">Início check-in (opcional)</label>
+                    <input type="time" id="cultoRecorrenteCheckinInicio" step="300">
+                  </div>
+                  <div class="form-group">
+                    <label for="cultoRecorrenteCheckinFim">Fim check-in (opcional)</label>
+                    <input type="time" id="cultoRecorrenteCheckinFim" step="300">
+                  </div>
+                </div>
+                <p class="form-hint">Deixe a janela de check-in em branco para liberar o dia inteiro no dia do culto.</p>
+                <div class="form-group">
+                  <label for="cultoRecorrenteSemanas">Gerar quantas semanas à frente</label>
+                  <input type="number" id="cultoRecorrenteSemanas" min="1" max="52" value="8" required>
+                </div>
+                <div class="form-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="cultoRecorrenteGerarEscala" checked>
+                    Criar escala automaticamente
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="cultoRecorrenteGerarCheckin" checked>
+                    Criar evento de check-in automaticamente
+                  </label>
+                </div>
+                <div class="form-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="cultoRecorrenteAtivo" checked>
+                    Ativo (gera novas ocorrências)
+                  </label>
+                </div>
+                <div class="modal-footer">
+                  <button type="button" class="btn btn-ghost" id="modalCultoRecorrenteCancel">Cancelar</button>
+                  <button type="submit" class="btn btn-primary">Salvar</button>
+                </div>
               </form>
             </div>
           </div>

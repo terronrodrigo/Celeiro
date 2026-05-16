@@ -44,6 +44,18 @@ import {
   pgListMinisterios, pgFindMinisterioByNome, pgCreateMinisterio, pgLeadersByMinisterioId,
   pgListUsers, pgFindUserByEmailInIgreja, pgCreateUser, pgUpdateUser,
 } from './db/postgres/repos.js';
+import {
+  pgListEscalas, pgFindEscalaById, pgCreateEscala, pgUpdateEscala, pgCountCandidaturasByEscala,
+  pgListEventosCheckin, pgListEventosCheckinHoje, pgFindEventoCheckinById,
+  pgCreateEventoCheckin, pgUpdateEventoCheckin, pgDeleteEventoCheckin, pgCreateCheckin,
+  pgCreateCandidatura, pgFindCandidaturaDuplicada,
+} from './db/postgres/escalas-checkin.js';
+import {
+  pgListCultosRecorrentes, pgFindCultoRecorrente, pgCreateCultoRecorrente,
+  pgUpdateCultoRecorrente, pgDeleteCultoRecorrente, syncCultosRecorrentes,
+  startRecurringCultosScheduler,
+} from './db/postgres/cultos-recorrentes.js';
+import { DIAS_SEMANA, formatDataPtBr } from './lib/brasilia.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1493,9 +1505,102 @@ function isWithinEventWindow(evento) {
   return true;
 }
 
+// ─── Cultos recorrentes (PostgreSQL) ───────────────────────────────────────────
+app.get('/api/cultos-recorrentes/meta', requireAuth, (_req, res) => {
+  res.json({ diasSemana: DIAS_SEMANA, timezone: TZ_BRASILIA });
+});
+
+app.get('/api/cultos-recorrentes', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Cultos recorrentes disponível em modo PostgreSQL.');
+    const list = await pgListCultosRecorrentes(req.tenantIgrejaId);
+    res.json(list);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao listar cultos recorrentes.');
+  }
+});
+
+app.post('/api/cultos-recorrentes', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Cultos recorrentes disponível em modo PostgreSQL.');
+    const body = req.body || {};
+    const nome = String(body.nome || '').trim();
+    if (!nome) return sendError(res, 400, 'Nome é obrigatório.');
+    const diaSemana = Number(body.diaSemana);
+    if (!Number.isInteger(diaSemana) || diaSemana < 0 || diaSemana > 6) {
+      return sendError(res, 400, 'Dia da semana inválido (0=domingo … 6=sábado).');
+    }
+    const horario = parseHHMM(body.horario);
+    if (!horario) return sendError(res, 400, 'Horário inválido (use HH:mm, horário de Brasília).');
+    const culto = await pgCreateCultoRecorrente({
+      igrejaId: req.tenantIgrejaId,
+      nome,
+      diaSemana,
+      horario,
+      horarioCheckinInicio: body.horarioCheckinInicio,
+      horarioCheckinFim: body.horarioCheckinFim,
+      gerarEscala: body.gerarEscala,
+      gerarCheckin: body.gerarCheckin,
+      semanasAFrente: body.semanasAFrente,
+      ativo: body.ativo,
+      criadoPor: req.userId,
+    });
+    const sync = await syncCultosRecorrentes({ igrejaId: req.tenantIgrejaId, cultoId: culto._id });
+    res.status(201).json({ culto, sync });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao criar culto recorrente.');
+  }
+});
+
+app.put('/api/cultos-recorrentes/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Cultos recorrentes disponível em modo PostgreSQL.');
+    const culto = await pgUpdateCultoRecorrente(req.params.id, req.tenantIgrejaId, req.body || {});
+    if (!culto) return sendError(res, 404, 'Culto não encontrado.');
+    const sync = await syncCultosRecorrentes({ igrejaId: req.tenantIgrejaId, cultoId: culto._id });
+    res.json({ culto, sync });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao atualizar culto.');
+  }
+});
+
+app.delete('/api/cultos-recorrentes/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Cultos recorrentes disponível em modo PostgreSQL.');
+    const ok = await pgDeleteCultoRecorrente(req.params.id, req.tenantIgrejaId);
+    if (!ok) return sendError(res, 404, 'Culto não encontrado.');
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao excluir culto.');
+  }
+});
+
+app.post('/api/cultos-recorrentes/sync', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Cultos recorrentes disponível em modo PostgreSQL.');
+    const sync = await syncCultosRecorrentes({ igrejaId: req.tenantIgrejaId });
+    res.json(sync);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao sincronizar.');
+  }
+});
+
 // Eventos de check-in: admin vê TODOS (ativos e inativos); voluntário vê só ativos. /hoje filtra ativo.
 app.get('/api/eventos-checkin', requireAuth, resolveTenant, async (req, res) => {
   try {
+    if (isPostgres()) {
+      const isAdmin = String(req.userRole || '').toLowerCase() === 'admin';
+      const eventos = await pgListEventosCheckin(req.tenantIgrejaId, {
+        ativoOnly: !isAdmin,
+        dataYmd: req.query.data || null,
+      });
+      return res.json(eventos);
+    }
     if (!guardMongoData(res, EMPTY_ARRAY)) return;
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const { data } = req.query;
@@ -1516,6 +1621,10 @@ app.get('/api/eventos-checkin', requireAuth, resolveTenant, async (req, res) => 
 
 app.get('/api/eventos-checkin/hoje', requireAuth, resolveTenant, async (req, res) => {
   try {
+    if (isPostgres()) {
+      const eventos = await pgListEventosCheckinHoje(req.tenantIgrejaId);
+      return res.json(eventos);
+    }
     if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const hojeStr = getHojeDateString();
     const { start, end } = getDayRangeBrasilia(hojeStr);
@@ -1533,6 +1642,23 @@ app.post('/api/eventos-checkin', requireAuth, resolveTenant, requireAdmin, async
     const { data, label, ativo, horarioInicio, horarioFim } = req.body || {};
     if (!data) return sendError(res, 400, 'Campo "data" é obrigatório (YYYY-MM-DD ou ISO).');
     const dateStr = typeof data === 'string' ? data.trim().slice(0, 10) : '';
+    if (isPostgres()) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return sendError(res, 400, 'Data inválida.');
+      const hin = horarioInicio != null ? parseHHMM(horarioInicio) : null;
+      const hfi = horarioFim != null ? parseHHMM(horarioFim) : null;
+      if (horarioInicio != null && horarioInicio !== '' && !hin) return sendError(res, 400, 'horarioInicio deve ser HH:mm.');
+      if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm.');
+      const evento = await pgCreateEventoCheckin({
+        igrejaId: req.tenantIgrejaId,
+        dataYmd: dateStr,
+        label: (label || '').trim() || `Culto ${formatDataPtBr(dateStr)}`,
+        ativo: typeof ativo === 'boolean' ? ativo : true,
+        horarioInicio: hin || '',
+        horarioFim: hfi || '',
+        criadoPor: req.userId,
+      });
+      return res.status(201).json(evento);
+    }
     const dataOnly = parseDateAsBrasilia(dateStr);
     if (!dataOnly || Number.isNaN(dataOnly.getTime())) return sendError(res, 400, 'Data inválida.');
     const hin = horarioInicio != null ? parseHHMM(horarioInicio) : null;
@@ -1559,6 +1685,11 @@ app.put('/api/eventos-checkin/:id/ativo', requireAuth, resolveTenant, requireAdm
   try {
     const { ativo } = req.body;
     if (typeof ativo !== 'boolean') return sendError(res, 400, 'ativo deve ser boolean.');
+    if (isPostgres()) {
+      const evento = await pgUpdateEventoCheckin(req.params.id, req.tenantIgrejaId, { ativo });
+      if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+      return res.json(evento);
+    }
     const evento = await EventoCheckin.findOneAndUpdate({ _id: req.params.id, ...tQ(req) }, { ativo }, { new: true });
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
     invalidateCache();
@@ -1572,6 +1703,20 @@ app.put('/api/eventos-checkin/:id/ativo', requireAuth, resolveTenant, requireAdm
 app.put('/api/eventos-checkin/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { label, ativo, horarioInicio, horarioFim } = req.body || {};
+    if (isPostgres()) {
+      const hin = horarioInicio != null ? parseHHMM(horarioInicio) : undefined;
+      const hfi = horarioFim != null ? parseHHMM(horarioFim) : undefined;
+      if (horarioInicio != null && horarioInicio !== '' && !hin) return sendError(res, 400, 'horarioInicio deve ser HH:mm.');
+      if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm.');
+      const evento = await pgUpdateEventoCheckin(req.params.id, req.tenantIgrejaId, {
+        label: typeof label === 'string' ? label.trim() : undefined,
+        ativo: typeof ativo === 'boolean' ? ativo : undefined,
+        horarioInicio: horarioInicio !== undefined ? (hin || '') : undefined,
+        horarioFim: horarioFim !== undefined ? (hfi || '') : undefined,
+      });
+      if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+      return res.json(evento);
+    }
     const update = {};
     if (typeof label === 'string') update.label = label.trim();
     if (typeof ativo === 'boolean') update.ativo = ativo;
@@ -1593,6 +1738,11 @@ app.put('/api/eventos-checkin/:id', requireAuth, resolveTenant, requireAdmin, as
 
 app.delete('/api/eventos-checkin/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
+    if (isPostgres()) {
+      const ok = await pgDeleteEventoCheckin(req.params.id, req.tenantIgrejaId);
+      if (!ok) return sendError(res, 404, 'Evento não encontrado.');
+      return res.json({ ok: true, message: 'Evento excluído.' });
+    }
     const evento = await EventoCheckin.findOneAndDelete({ _id: req.params.id, ...tQ(req) });
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
     invalidateCache();
@@ -1606,8 +1756,25 @@ app.delete('/api/eventos-checkin/:id', requireAuth, resolveTenant, requireAdmin,
 // Voluntário confirma presença no dia (check-in)
 app.post('/api/checkins/confirmar', requireAuth, resolveTenant, async (req, res) => {
   try {
-    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const { eventoId, ministerio, batizado: batizadoRaw } = req.body || {};
+    if (isPostgres()) {
+      if (!eventoId) return sendError(res, 400, 'eventoId é obrigatório.');
+      const batizado = batizadoRaw === true || batizadoRaw === 'sim' ? true : (batizadoRaw === false || batizadoRaw === 'nao' ? false : null);
+      let email = req.userEmail;
+      let nome = req.user;
+      if (req.userId && (!email || !nome)) {
+        const u = await pgFindUserById(req.userId);
+        if (u) { email = u.email; nome = u.nome; }
+      }
+      if (!email) return sendError(res, 403, 'Usuário sem email.');
+      const r = await pgCreateCheckin({
+        igrejaId: req.tenantIgrejaId, eventoId, email, nome: nome || '', ministerio: ministerio || '', batizado, userId: req.userId,
+      });
+      if (r.error === 'not_found') return sendError(res, 404, 'Evento não encontrado ou inativo.');
+      if (r.duplicate) return res.json({ message: 'Check-in já realizado.', checkin: { _id: r.id } });
+      return res.status(201).json({ message: 'Check-in realizado!', checkin: { _id: r.id } });
+    }
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     if (!eventoId) return sendError(res, 400, 'eventoId é obrigatório.');
     const batizado = batizadoRaw === true || batizadoRaw === 'sim' ? true : (batizadoRaw === false || batizadoRaw === 'nao' ? false : null);
     let email = req.userEmail;
@@ -1660,8 +1827,27 @@ const MINISTERIOS_PADRAO_PUBLIC = ['Suporte Geral', 'Welcome / Recepção', 'Str
 app.get('/api/checkin-public/:eventoId', async (req, res) => {
   try {
     if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível.');
-    if (!isMongo()) return sendError(res, 503, 'Check-in público indisponível até migração dos dados do MongoDB.');
     const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (isPostgres()) {
+      if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug no link.');
+      const evento = await pgFindEventoCheckinById(req.params.eventoId, igrejaDoc._id);
+      if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
+      const ministerios = await pgListMinisterios(igrejaDoc._id);
+      const ministeriosList = ministerios.length > 0
+        ? ministerios.filter((m) => m.ativo !== false).map((m) => m.nome).filter(Boolean)
+        : MINISTERIOS_PADRAO_PUBLIC;
+      return res.json({
+        evento: {
+          _id: evento._id,
+          label: (evento.label || '').trim() || 'Check-in de presença',
+          data: evento.data,
+          horarioInicio: (evento.horarioInicio || '').trim() || null,
+          horarioFim: (evento.horarioFim || '').trim() || null,
+        },
+        ministerios: ministeriosList,
+      });
+    }
+    if (!isMongo()) return sendError(res, 503, 'Check-in público indisponível até migração dos dados do MongoDB.');
     if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug no link.');
     const evento = await EventoCheckin.findById(req.params.eventoId).lean();
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
@@ -1689,8 +1875,22 @@ app.get('/api/checkin-public/:eventoId', async (req, res) => {
 app.post('/api/checkin-public', async (req, res) => {
   try {
     if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível.');
-    if (!isMongo()) return sendError(res, 503, 'Check-in público indisponível até migração dos dados do MongoDB.');
     const { eventoId, email, ministerio, nome, batizado: batizadoRaw } = req.body || {};
+    if (isPostgres()) {
+      const em = (email || '').toString().trim().toLowerCase();
+      if (!em || !em.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
+      if (!eventoId) return sendError(res, 400, 'Evento é obrigatório.');
+      const batizado = batizadoRaw === true || batizadoRaw === 'sim' ? true : (batizadoRaw === false || batizadoRaw === 'nao' ? false : null);
+      const igrejaDoc = await publicIgrejaFromRequest(req);
+      if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada.');
+      const r = await pgCreateCheckin({
+        igrejaId: igrejaDoc._id, eventoId, email: em, nome: (nome || '').trim(), ministerio: (ministerio || '').trim(), batizado,
+      });
+      if (r.error === 'not_found') return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
+      if (r.duplicate) return res.status(200).json({ message: 'Check-in já realizado.', checkin: { _id: r.id } });
+      return res.status(201).json({ message: 'Check-in realizado!', checkin: { _id: r.id } });
+    }
+    if (!isMongo()) return sendError(res, 503, 'Check-in público indisponível até migração dos dados do MongoDB.');
     const em = (email || '').toString().trim().toLowerCase();
     if (!em || !em.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
     if (!eventoId) return sendError(res, 400, 'Evento é obrigatório.');
@@ -3042,6 +3242,21 @@ app.get('/api/escalas', requireAuth, resolveTenant, async (req, res) => {
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
     const light = req.query.light === '1' || req.query.light === 'true';
+    if (isPostgres()) {
+      const escalas = await pgListEscalas(req.tenantIgrejaId, {
+        ativoOnly: !(isAdmin || isLider),
+        limit: ESCALAS_LIST_LIMIT,
+      });
+      if (!escalas.length) return res.json([]);
+      if (light) {
+        return res.json(escalas.map((e) => ({ ...e, totalCandidaturas: 0, totalAprovados: 0 })));
+      }
+      const countMap = await pgCountCandidaturasByEscala(req.tenantIgrejaId, escalas.map((e) => e._id));
+      return res.json(escalas.map((e) => {
+        const c = countMap.get(String(e._id)) || { total: 0, aprovados: 0 };
+        return { ...e, totalCandidaturas: c.total, totalAprovados: c.aprovados };
+      }));
+    }
     const base = { ...tQ(req) };
     const query = (isAdmin || isLider) ? { ...base } : { ...base, ativo: true };
     const escalas = await Escala.find(query).sort({ createdAt: -1 }).limit(ESCALAS_LIST_LIMIT).select('nome data descricao ativo createdAt').lean();
@@ -3243,6 +3458,17 @@ app.post('/api/escalas', requireAuth, resolveTenant, requireAdmin, async (req, r
   try {
     const { nome, data, descricao, ativo } = req.body || {};
     if (!nome || !String(nome).trim()) return sendError(res, 400, 'Nome é obrigatório.');
+    if (isPostgres()) {
+      const escala = await pgCreateEscala({
+        igrejaId: req.tenantIgrejaId,
+        nome: String(nome).trim(),
+        data: data || null,
+        descricao: descricao || '',
+        ativo: typeof ativo === 'boolean' ? ativo : true,
+        criadoPor: req.userId,
+      });
+      return res.status(201).json(escala);
+    }
     const escala = await Escala.create({
       ...tQ(req),
       nome: String(nome).trim(),
@@ -3259,6 +3485,13 @@ app.post('/api/escalas', requireAuth, resolveTenant, requireAdmin, async (req, r
 app.put('/api/escalas/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { nome, data, descricao, ativo } = req.body || {};
+    if (isPostgres()) {
+      const escala = await pgUpdateEscala(req.params.id, req.tenantIgrejaId, {
+        nome, data, descricao, ativo,
+      });
+      if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+      return res.json(escala);
+    }
     const update = {};
     if (nome !== undefined) update.nome = String(nome).trim();
     if (data !== undefined) update.data = data ? parseDateOnlyToUTC(data) : null;
@@ -3288,7 +3521,34 @@ app.get('/api/escala-publica/:id', async (req, res) => {
     if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug no link.');
     const id = (req.params.id || '').trim();
     const ministerioParam = (req.query.ministerio || '').toString().trim();
-    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+    if (!id) return sendError(res, 400, 'ID da escala inválido.');
+    if (isPostgres()) {
+      const escala = await pgFindEscalaById(id, igrejaDoc._id);
+      if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+      if (!escala.ativo) {
+        return res.status(200).json({
+          concluida: true,
+          mensagem: 'A escala deste culto já foi concluída.',
+          escala: { _id: escala._id, nome: escala.nome, data: escala.data, descricao: escala.descricao },
+        });
+      }
+      const mins = await pgListMinisterios(igrejaDoc._id);
+      const ministeriosList = mins.length > 0
+        ? mins.filter((m) => m.ativo !== false).map((m) => m.nome).filter(Boolean)
+        : MINISTERIOS_PADRAO_PUBLIC;
+      let ministerioFixo = null;
+      if (ministerioParam) {
+        const match = ministeriosList.find((m) => (m || '').trim().toLowerCase() === ministerioParam.toLowerCase());
+        if (match) ministerioFixo = match;
+        else return sendError(res, 400, 'Ministério inválido para este link. Use o link correto enviado pelo seu líder.');
+      }
+      return res.json({
+        escala: { _id: escala._id, nome: escala.nome, data: escala.data, descricao: escala.descricao },
+        ministerios: ministeriosList,
+        ...(ministerioFixo && { ministerioFixo }),
+      });
+    }
+    if (!mongoose.Types.ObjectId.isValid(id)) {
       return sendError(res, 400, 'ID da escala inválido.');
     }
     const escala = await Escala.findById(id).select('nome data descricao ativo igrejaId').lean();
@@ -3433,6 +3693,30 @@ app.post('/api/candidaturas', async (req, res) => {
     if (!em || !em.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
     if (!escalaId) return sendError(res, 400, 'Escala é obrigatória.');
     if (!ministerio) return sendError(res, 400, 'Ministério é obrigatório.');
+    if (isPostgres()) {
+      const escala = await pgFindEscalaById(escalaId, igrejaDoc._id);
+      if (!escala || !escala.ativo) return sendError(res, 404, 'Escala não encontrada ou não está ativa.');
+      const mins = await pgListMinisterios(igrejaDoc._id);
+      const ministeriosList = mins.length > 0
+        ? mins.filter((m) => m.ativo !== false).map((m) => m.nome).filter(Boolean)
+        : MINISTERIOS_PADRAO_PUBLIC;
+      const ministerioTrim = (ministerio || '').toString().trim();
+      const ministerioValido = ministeriosList.find((m) => (m || '').trim().toLowerCase() === ministerioTrim.toLowerCase());
+      if (!ministerioValido) return sendError(res, 400, 'Ministério inválido.');
+      const dup = await pgFindCandidaturaDuplicada(igrejaDoc._id, escalaId, em);
+      if (dup) {
+        return res.status(200).json({ message: 'Você já se candidatou para esta escala.', candidatura: { _id: dup } });
+      }
+      const candidatura = await pgCreateCandidatura({
+        igrejaId: igrejaDoc._id,
+        escalaId,
+        nome: (nome || '').toString().trim(),
+        email: em,
+        telefone: (telefone || '').toString().trim(),
+        ministerio: ministerioValido,
+      });
+      return res.status(201).json({ message: 'Candidatura enviada!', candidatura });
+    }
     const escala = await Escala.findOne({ _id: escalaId, igrejaId: igrejaDoc._id }).lean();
     if (!escala || !escala.ativo) return sendError(res, 404, 'Escala não encontrada ou não está ativa.');
     const ministerios = await Ministerio.find({ ativo: true, igrejaId: igrejaDoc._id }).sort({ nome: 1 }).select('nome').lean();
@@ -3816,7 +4100,8 @@ async function start() {
       console.error('Pós-conexão MongoDB:', err.message || err);
     }
   } else if (isPostgres()) {
-    console.log('ℹ️ Modo PostgreSQL: telas operacionais vazias até migração dos dados do MongoDB.');
+    console.log('ℹ️ Modo PostgreSQL: ministérios, escalas, check-in e cultos recorrentes ativos.');
+    startRecurringCultosScheduler();
   }
 
   app.listen(PORT, '0.0.0.0', () => {

@@ -352,7 +352,7 @@ function clearUserContent() {
   eventoSelecionadoHoje = null;
   selectedEmails.clear();
   currentView = '';
-  ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'].forEach(v => setViewLoading(v, false));
+  ['eventos-checkin', 'cultos-recorrentes', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'].forEach(v => setViewLoading(v, false));
   const perfilFields = [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilEstado, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilMinisterio, perfilHorasSemana, perfilAreas, perfilTestemunho];
   perfilFields.forEach(el => { if (el) el.value = ''; });
   if (perfilDisponibilidadeGroup) {
@@ -579,7 +579,7 @@ function showError(msg) {
   }
 }
 
-const ADMIN_ONLY_VIEWS = ['ministros', 'usuarios', 'eventos-checkin', 'checkin', 'escalas-criar'];
+const ADMIN_ONLY_VIEWS = ['ministros', 'usuarios', 'eventos-checkin', 'cultos-recorrentes', 'checkin', 'escalas-criar'];
 const LIDER_VIEWS = ['checkin-ministerio', 'perfil', 'meus-checkins', 'escalas'];
 const VOLUNTARIO_VIEWS = ['perfil', 'checkin-hoje', 'meus-checkins', 'escalas'];
 
@@ -636,6 +636,7 @@ const VIEW_META = {
   ministros: { title: 'Ministérios', subtitle: 'Crie ministérios e defina líderes.', role: 'admin' },
   usuarios: { title: 'Usuários', subtitle: 'Perfis e permissões.', role: 'admin' },
   'eventos-checkin': { title: 'Eventos check-in', subtitle: 'Datas de culto para confirmação de presença.', role: 'admin' },
+  'cultos-recorrentes': { title: 'Cultos recorrentes', subtitle: 'Escalas e check-ins gerados automaticamente por dia da semana (horário de Brasília).', role: 'admin' },
   checkin: { title: 'Check-in', subtitle: 'Registros por data e ministério.', role: 'admin' },
   'checkin-ministerio': { title: 'Check-ins do ministério', subtitle: 'Acompanhe quem confirmou presença (voluntários) no seu ministério.', role: 'lider' },
   perfil: { title: 'Meu perfil', subtitle: 'Seus dados de cadastro.', role: 'voluntario' },
@@ -692,9 +693,10 @@ function setView(view, options) {
   if (searchBox) searchBox.style.display = (isAdmin || isLider || authRole === 'lider') && view === 'voluntarios' ? 'flex' : 'none';
   if (view === 'voluntarios') voluntariosPageOffset = 0;
   if (!options.skipFetch) {
-    const viewsWithFetch = ['eventos-checkin', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'];
+    const viewsWithFetch = ['eventos-checkin', 'cultos-recorrentes', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'];
     viewsWithFetch.forEach(v => setViewLoading(v, false)); // Limpa loading de todas as views primeiro
     if (view === 'eventos-checkin') runWithTimeout('eventos-checkin', () => fetchEventosCheckin());
+    else if (view === 'cultos-recorrentes') runWithTimeout('cultos-recorrentes', () => fetchCultosRecorrentes());
     else if (view === 'formularios') runWithTimeout('formularios', () => fetchFormularios());
     else if (view === 'checkin-hoje') runWithTimeout('checkin-hoje', () => fetchEventosHoje());
     else if (view === 'meus-checkins') runWithTimeout('meus-checkins', () => fetchMeusCheckins());
@@ -1353,6 +1355,128 @@ async function fetchEventosCheckin() {
     }
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
   finally { setViewLoading('eventos-checkin', false); }
+}
+
+let cultosRecorrentesList = [];
+let cultosRecorrentesDias = [];
+
+function diaSemanaLabel(n) {
+  const d = cultosRecorrentesDias.find((x) => x.value === n);
+  return d ? d.label : String(n);
+}
+
+function formatHorarioCheckinJanela(c) {
+  const a = (c.horarioCheckinInicio || '').trim();
+  const b = (c.horarioCheckinFim || '').trim();
+  if (!a && !b) return 'Dia inteiro';
+  if (a && b) return `${a} – ${b}`;
+  return a || b;
+}
+
+async function fetchCultosRecorrentes() {
+  if (!authToken) { updateAuthUi(); return; }
+  const tbody = document.getElementById('cultosRecorrentesBody');
+  const tzHint = document.getElementById('cultosRecorrentesTzHint');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8"><p class="auth-subtitle">Carregando…</p></td></tr>';
+  try {
+    const [rMeta, rList] = await Promise.all([
+      authFetch(`${API_BASE}/api/cultos-recorrentes/meta`),
+      authFetch(`${API_BASE}/api/cultos-recorrentes?_t=${Date.now()}`),
+    ]);
+    if (rMeta.ok) {
+      const meta = await rMeta.json();
+      cultosRecorrentesDias = meta.diasSemana || [];
+      if (tzHint) tzHint.textContent = `Fuso: ${meta.timezone || TZ_BRASILIA}. Cultos e check-ins usam o calendário de Brasília.`;
+    }
+    if (!rList.ok) {
+      const err = (await rList.json().catch(() => ({}))).error || `Erro ${rList.status}`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="8"><p class="auth-subtitle">${escapeHtml(err)}</p></td></tr>`;
+      return;
+    }
+    cultosRecorrentesList = await rList.json();
+    if (currentView !== 'cultos-recorrentes') return;
+    if (!tbody) return;
+    if (!cultosRecorrentesList.length) {
+      tbody.innerHTML = '<tr><td colspan="8"><p class="auth-subtitle">Nenhum culto recorrente. Clique em “Novo culto recorrente”.</p></td></tr>';
+      return;
+    }
+    tbody.innerHTML = cultosRecorrentesList.map((c) => `
+      <tr>
+        <td>${escapeHtml(c.nome)}</td>
+        <td>${escapeHtml(diaSemanaLabel(c.diaSemana))}</td>
+        <td>${escapeHtml(c.horario || '')}</td>
+        <td>${escapeHtml(formatHorarioCheckinJanela(c))}</td>
+        <td>${escapeHtml(String(c.semanasAFrente || 8))}</td>
+        <td>${escapeHtml(String(c.totalOcorrencias || 0))}</td>
+        <td>${c.ativo ? '<span class="escala-badge escala-badge-aprovado">Ativo</span>' : '<span class="escala-badge escala-badge-falta">Inativo</span>'}</td>
+        <td>
+          <button type="button" class="btn btn-ghost btn-sm" data-culto-edit="${escapeAttr(c._id)}">Editar</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-culto-delete="${escapeAttr(c._id)}">Excluir</button>
+        </td>
+      </tr>
+    `).join('');
+    tbody.querySelectorAll('[data-culto-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => openModalCultoRecorrente(btn.getAttribute('data-culto-edit')));
+    });
+    tbody.querySelectorAll('[data-culto-delete]').forEach((btn) => {
+      btn.addEventListener('click', () => excluirCultoRecorrente(btn.getAttribute('data-culto-delete')));
+    });
+  } catch (e) {
+    if (e.message === 'AUTH_REQUIRED') return;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8"><p class="auth-subtitle">Erro: ${escapeHtml(e.message || 'rede')}</p></td></tr>`;
+  } finally {
+    setViewLoading('cultos-recorrentes', false);
+  }
+}
+
+function fillCultoRecorrenteDiaSelect() {
+  const sel = document.getElementById('cultoRecorrenteDia');
+  if (!sel) return;
+  sel.innerHTML = cultosRecorrentesDias.map((d) => `<option value="${d.value}">${escapeHtml(d.label)}</option>`).join('');
+}
+
+function openModalCultoRecorrente(id) {
+  const modal = document.getElementById('modalCultoRecorrente');
+  const title = document.getElementById('modalCultoRecorrenteTitle');
+  fillCultoRecorrenteDiaSelect();
+  const culto = id ? cultosRecorrentesList.find((c) => String(c._id) === String(id)) : null;
+  document.getElementById('cultoRecorrenteId').value = culto?._id || '';
+  document.getElementById('cultoRecorrenteNome').value = culto?.nome || '';
+  document.getElementById('cultoRecorrenteDia').value = culto != null ? String(culto.diaSemana) : '0';
+  document.getElementById('cultoRecorrenteHorario').value = culto?.horario || '10:00';
+  document.getElementById('cultoRecorrenteCheckinInicio').value = culto?.horarioCheckinInicio || '';
+  document.getElementById('cultoRecorrenteCheckinFim').value = culto?.horarioCheckinFim || '';
+  document.getElementById('cultoRecorrenteSemanas').value = culto?.semanasAFrente || 8;
+  document.getElementById('cultoRecorrenteGerarEscala').checked = culto ? culto.gerarEscala !== false : true;
+  document.getElementById('cultoRecorrenteGerarCheckin').checked = culto ? culto.gerarCheckin !== false : true;
+  document.getElementById('cultoRecorrenteAtivo').checked = culto ? culto.ativo !== false : true;
+  if (title) title.textContent = culto ? 'Editar culto recorrente' : 'Novo culto recorrente';
+  if (modal) { modal.classList.add('open'); modal.setAttribute('aria-hidden', 'false'); }
+}
+
+function closeModalCultoRecorrente() {
+  const modal = document.getElementById('modalCultoRecorrente');
+  if (modal) { modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); }
+}
+
+async function excluirCultoRecorrente(id) {
+  const c = cultosRecorrentesList.find((x) => String(x._id) === String(id));
+  if (!c || !confirm(`Excluir "${c.nome}"? Ocorrências já geradas permanecem em Escalas e Eventos check-in.`)) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/cultos-recorrentes/${id}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    fetchCultosRecorrentes();
+  } catch (e) { alert(e.message || 'Erro ao excluir.'); }
+}
+
+async function syncAllCultosRecorrentes() {
+  try {
+    const r = await authFetch(`${API_BASE}/api/cultos-recorrentes/sync`, { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Falha na sincronização');
+    alert(`Sincronizado: ${data.criadas || 0} nova(s) ocorrência(s).`);
+    fetchCultosRecorrentes();
+  } catch (e) { alert(e.message || 'Erro ao sincronizar.'); }
 }
 
 async function excluirEventoCheckin(eventoId) {
@@ -4820,7 +4944,41 @@ document.getElementById('btnEnviarEmailIncompletos')?.addEventListener('click', 
   }
 });
 
-btnNovoEvento?.addEventListener('click', () => { if (modalNovoEvento) { eventoData.value = new Date().toISOString().slice(0, 10); eventoLabel.value = ''; if (eventoHorarioInicio) eventoHorarioInicio.value = ''; if (eventoHorarioFim) eventoHorarioFim.value = ''; if (eventoAtivo) eventoAtivo.checked = true; modalNovoEvento.setAttribute('aria-hidden', 'false'); modalNovoEvento.classList.add('open'); } });
+document.getElementById('btnNovoCultoRecorrente')?.addEventListener('click', () => openModalCultoRecorrente(null));
+document.getElementById('btnSyncCultosRecorrentes')?.addEventListener('click', () => syncAllCultosRecorrentes());
+document.getElementById('modalCultoRecorrenteClose')?.addEventListener('click', closeModalCultoRecorrente);
+document.getElementById('modalCultoRecorrenteCancel')?.addEventListener('click', closeModalCultoRecorrente);
+document.querySelector('#modalCultoRecorrente .modal-backdrop')?.addEventListener('click', closeModalCultoRecorrente);
+document.getElementById('formCultoRecorrente')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = (document.getElementById('cultoRecorrenteId')?.value || '').trim();
+  const body = {
+    nome: document.getElementById('cultoRecorrenteNome')?.value,
+    diaSemana: Number(document.getElementById('cultoRecorrenteDia')?.value),
+    horario: document.getElementById('cultoRecorrenteHorario')?.value,
+    horarioCheckinInicio: document.getElementById('cultoRecorrenteCheckinInicio')?.value || '',
+    horarioCheckinFim: document.getElementById('cultoRecorrenteCheckinFim')?.value || '',
+    semanasAFrente: Number(document.getElementById('cultoRecorrenteSemanas')?.value || 8),
+    gerarEscala: document.getElementById('cultoRecorrenteGerarEscala')?.checked,
+    gerarCheckin: document.getElementById('cultoRecorrenteGerarCheckin')?.checked,
+    ativo: document.getElementById('cultoRecorrenteAtivo')?.checked,
+  };
+  try {
+    const r = await authFetch(`${API_BASE}/api/cultos-recorrentes${id ? `/${id}` : ''}`, {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Falha ao salvar');
+    closeModalCultoRecorrente();
+    const criadas = data.sync?.criadas;
+    if (criadas > 0) alert(`Salvo! ${criadas} nova(s) escala(s)/check-in(s) gerados.`);
+    fetchCultosRecorrentes();
+  } catch (err) { alert(err.message || 'Erro ao salvar culto.'); }
+});
+
+btnNovoEvento?.addEventListener('click', () => { if (modalNovoEvento) { eventoData.value = getHojeDateString(); eventoLabel.value = ''; if (eventoHorarioInicio) eventoHorarioInicio.value = ''; if (eventoHorarioFim) eventoHorarioFim.value = ''; if (eventoAtivo) eventoAtivo.checked = true; modalNovoEvento.setAttribute('aria-hidden', 'false'); modalNovoEvento.classList.add('open'); } });
 modalNovoEventoClose?.addEventListener('click', () => { modalNovoEvento?.classList.remove('open'); });
 modalNovoEventoCancel?.addEventListener('click', () => { modalNovoEvento?.classList.remove('open'); });
 modalNovoEvento?.querySelector('.modal-backdrop')?.addEventListener('click', () => { modalNovoEvento?.classList.remove('open'); });

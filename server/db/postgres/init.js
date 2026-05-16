@@ -197,6 +197,8 @@ export async function initPostgres(connectionString) {
   });
   await pool.query('SELECT 1');
   await pool.query(SCHEMA_SQL);
+  const { migrateCultosRecorrentesSchema } = await import('./cultos-recorrentes.js');
+  await migrateCultosRecorrentesSchema();
   await seedIfEmpty();
   return pool;
 }
