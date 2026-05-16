@@ -56,7 +56,7 @@ export async function choicesForMultiTenantLoginPg(Igreja, users) {
   return igrejas;
 }
 
-export async function resolveUserForEmailPasswordLoginPg(Igreja, User, emailLower, senhaPlain, igrejaSlugRaw) {
+export async function resolveUserForEmailPasswordLogin(Igreja, User, emailLower, senhaPlain, igrejaSlugRaw) {
   const matches = await collectActiveUsersMatchingPasswordPg(User, emailLower, senhaPlain);
   if (matches.length === 0) {
     return { ok: false, status: 401, body: { error: 'Usuário ou senha inválidos.' } };
