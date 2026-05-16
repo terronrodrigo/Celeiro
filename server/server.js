@@ -30,7 +30,18 @@ import FormularioApresentacao from './models/FormularioApresentacao.js';
 import { normalizarEstado, normalizarCidade } from './utils/normalize-locale.js';
 import { createWhatsAppHandler } from './whatsapp/handler.js';
 import { processBrdidWebhook, getLastVerification } from './brdid/whatsapp-verification.js';
-import { resolveTenant, tQ, publicIgrejaFromRequest, DEFAULT_IGREJA_SLUG } from './tenant-context.js';
+import { resolveTenant, tQ, publicIgrejaFromRequest, DEFAULT_IGREJA_SLUG, listIgrejasAtivas } from './tenant-context.js';
+import { initDatabase, isDbReady, isMongo, isPostgres, getDbMode } from './db/connection.js';
+import { EMPTY_VOLUNTARIOS, EMPTY_ARRAY, emptyCheckinsPayload } from './db/stubs.js';
+import {
+  resolveUserForEmailPasswordLogin,
+  loadMinisterioNomesForUserPg,
+  touchUserOnLoginPg,
+  GLOBAL_LOGIN_SLUG,
+} from './db/login.js';
+import {
+  pgHasAdmin, pgCreateAdmin, pgFindUserById, pgFindUsersByEmail, pgFindMinisteriosByIds, pgFindIgrejaById,
+} from './db/postgres/repos.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -104,8 +115,13 @@ const createAuthTokenForUser = async (user) => {
   const ministerioNomes = [];
   const minFilter = user.igrejaId ? { _id: { $in: ministerioIds }, igrejaId: user.igrejaId } : { _id: { $in: ministerioIds } };
   if (ministerioIds.length > 0) {
-    const mins = await Ministerio.find(minFilter).select('nome').lean();
-    mins.forEach(m => { if (m?.nome) ministerioNomes.push(m.nome); });
+    if (isMongo()) {
+      const mins = await Ministerio.find(minFilter).select('nome').lean();
+      mins.forEach(m => { if (m?.nome) ministerioNomes.push(m.nome); });
+    } else if (isPostgres() && user.igrejaId) {
+      const mins = await pgFindMinisteriosByIds(ministerioIds, user.igrejaId);
+      mins.forEach(m => { if (m?.nome) ministerioNomes.push(m.nome); });
+    }
   }
   const ministerioId = ministerioIds[0] || null;
   const ministerioNome = ministerioNomes[0] || null;
@@ -184,13 +200,28 @@ app.use('/api/formularios/consolidacao', cadastroLimiter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: isDbReady() ? 'ok' : 'degraded',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+    db: getDbMode(),
+    mongodb: isMongo() ? 'connected' : 'disconnected',
+    postgres: isPostgres() ? 'connected' : 'disconnected',
   });
 });
+
+/** Rotas que ainda usam Mongoose: em modo só-Postgres devolvem payload vazio até migração do Mongo. */
+function guardMongoData(res, emptyPayload, message = 'Banco de dados indisponível.') {
+  if (!isDbReady()) {
+    sendError(res, 503, message);
+    return false;
+  }
+  if (!isMongo()) {
+    res.json(emptyPayload);
+    return false;
+  }
+  return true;
+}
 
 // POST /api/cadastro - Cadastro público de voluntários (sem auth). Quem se cadastra é considerado voluntário. Padroniza estado (UF) e cidade.
 function parseNascimento(val) {
@@ -222,8 +253,7 @@ function normalizarWhatsapp(val) {
 
 app.post('/api/cadastro', async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'Serviço temporariamente indisponível. Tente em instantes.');
+    if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível.'); if (!isMongo()) return sendError(res, 503, 'Cadastro indisponível até migração dos dados.');
 
     const igrejaDoc = await publicIgrejaFromRequest(req);
     if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug na URL ou igrejaSlug no corpo.');
@@ -350,14 +380,19 @@ function requireAdminOrLider(req, res, next) {
 // Lista igrejas (admin global: todas; admin vinculado a uma igreja: só a sua). Sem resolveTenant.
 app.get('/api/igrejas', requireAuth, async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!isDbReady()) return sendError(res, 503, 'Banco de dados indisponível.');
     if (req.authIsGlobalAdmin) {
-      const list = await Igreja.find({ ativo: true }).sort({ nome: 1 }).select('nome slug ativo').lean();
+      const list = await listIgrejasAtivas();
       return res.json(list);
     }
-    if (req.userRole === 'admin' && req.authIgrejaIdStr && mongoose.Types.ObjectId.isValid(req.authIgrejaIdStr)) {
-      const g = await Igreja.findById(req.authIgrejaIdStr).select('nome slug ativo').lean();
-      return res.json(g ? [g] : []);
+    if (req.userRole === 'admin' && req.authIgrejaIdStr) {
+      if (isMongo() && !mongoose.Types.ObjectId.isValid(req.authIgrejaIdStr)) {
+        return res.json([]);
+      }
+      const ig = isMongo()
+        ? await Igreja.findById(req.authIgrejaIdStr).select('nome slug ativo').lean()
+        : await pgFindIgrejaById(req.authIgrejaIdStr);
+      return res.json(ig ? [ig] : []);
     }
     return res.status(403).json({ error: 'Acesso negado.' });
   } catch (err) {
@@ -736,122 +771,21 @@ async function createUserWithLegacyIndexSelfHeal(payload) {
   }
 }
 
-/** Slug enviado pelo cliente ao escolher “admin global” quando o email existe em mais de um contexto. */
-const GLOBAL_LOGIN_SLUG = '_global';
-
-async function collectActiveUsersMatchingPassword(emailLower, senhaPlain) {
-  const candidates = await User.find({ email: emailLower });
-  const out = [];
-  for (const u of candidates) {
-    if (!u.ativo) continue;
-    // eslint-disable-next-line no-await-in-loop
-    if (await u.compararSenha(senhaPlain)) out.push(u);
-  }
-  return out;
-}
-
-async function choicesForMultiTenantLogin(users) {
-  const igrejas = [];
-  for (const u of users) {
-    if (!u.igrejaId) {
-      igrejas.push({ igrejaSlug: GLOBAL_LOGIN_SLUG, igrejaNome: 'Admin global (acesso a todas as igrejas)' });
-      continue;
-    }
-    // eslint-disable-next-line no-await-in-loop
-    const ig = await Igreja.findById(u.igrejaId).select('nome slug').lean();
-    igrejas.push({
-      igrejaSlug: ig?.slug || String(u.igrejaId),
-      igrejaNome: ig?.nome || 'Igreja',
-    });
-  }
-  return igrejas;
-}
-
-/**
- * Mesmo email pode ter User distinto por igreja (igrejaId). Se várias contas batem com a senha, exige igrejaSlug.
- */
-async function resolveUserForEmailPasswordLogin(emailLower, senhaPlain, igrejaSlugRaw) {
-  const matches = await collectActiveUsersMatchingPassword(emailLower, senhaPlain);
-  if (matches.length === 0) {
-    return { ok: false, status: 401, body: { error: 'Usuário ou senha inválidos.' } };
-  }
-
-  const slugOpt = (igrejaSlugRaw || '').toString().trim();
-  const slugLower = slugOpt.toLowerCase();
-
-  if (matches.length === 1) {
-    return { ok: true, user: matches[0] };
-  }
-
-  if (!slugOpt) {
-    const igrejas = await choicesForMultiTenantLogin(matches);
-    return {
-      ok: false,
-      status: 409,
-      body: {
-        error: 'Este email está cadastrado em mais de uma igreja. Escolha em qual deseja entrar.',
-        needIgrejaChoice: true,
-        igrejas,
-      },
-    };
-  }
-
-  let pool;
-  if (slugLower === GLOBAL_LOGIN_SLUG || slugLower === 'global') {
-    pool = matches.filter((u) => !u.igrejaId);
-  } else {
-    const ig = await Igreja.findOne({ slug: slugOpt }).lean();
-    if (!ig) {
-      return { ok: false, status: 400, body: { error: 'Igreja não encontrada para este slug.' } };
-    }
-    const igId = String(ig._id);
-    pool = matches.filter((u) => u.igrejaId && String(u.igrejaId) === igId);
-  }
-
-  if (pool.length === 1) return { ok: true, user: pool[0] };
-  if (pool.length === 0) {
-    return {
-      ok: false,
-      status: 400,
-      body: { error: 'Não há conta com este email nesta igreja. Verifique a senha ou a igreja.' },
-    };
-  }
-  const igrejas = await choicesForMultiTenantLogin(matches);
-  return {
-    ok: false,
-    status: 409,
-    body: {
-      error: 'Este email está cadastrado em mais de uma igreja. Escolha em qual deseja entrar.',
-      needIgrejaChoice: true,
-      igrejas,
-    },
-  };
-}
-
 async function finalizeDbUserLogin(res, user, { withCheckinLink = false } = {}) {
-  user.ultimoAcesso = new Date();
-  await user.save();
-  if (withCheckinLink) {
+  let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
+  if (ministerioIds.length === 0 && user.ministerioId) {
+    ministerioIds = [user.ministerioId];
+    user.ministerioIds = ministerioIds;
+  }
+  await touchUserOnLoginPg(user, ministerioIds);
+  if (withCheckinLink && isMongo()) {
     try {
       await vincularCheckinsAoUsuario(user._id, user.email);
     } catch (_) {}
   }
 
-  let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
-  if (ministerioIds.length === 0 && user.ministerioId) {
-    ministerioIds = [user.ministerioId];
-    user.ministerioIds = ministerioIds;
-    await user.save();
-  }
-  const ministerioNomes = [];
-  if (ministerioIds.length > 0) {
-    const minQ = { _id: { $in: ministerioIds } };
-    if (user.igrejaId) minQ.igrejaId = user.igrejaId;
-    const mins = await Ministerio.find(minQ).select('nome').lean();
-    mins.forEach(m => { if (m && m.nome) ministerioNomes.push(m.nome); });
-  }
-  const ministerioId = ministerioIds[0] || null;
-  const ministerioNome = ministerioNomes[0] || null;
+  const { ministerioIds: mIds, ministerioNomes, ministerioId, ministerioNome } = await loadMinisterioNomesForUserPg(Ministerio, user);
+  ministerioIds = mIds;
   const roleNorm = String(user.role || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') || 'voluntario';
   const roleFinal = roleNorm === 'lider' || roleNorm.includes('lider') ? 'lider' : roleNorm;
   const igrejaIdStr = user.igrejaId ? String(user.igrejaId) : null;
@@ -863,7 +797,9 @@ async function finalizeDbUserLogin(res, user, { withCheckinLink = false } = {}) 
   let igrejaNome = null;
   let igrejaSlug = null;
   if (user.igrejaId) {
-    const ig = await Igreja.findById(user.igrejaId).select('nome slug').lean();
+    const ig = isMongo()
+      ? await Igreja.findById(user.igrejaId).select('nome slug').lean()
+      : await pgFindIgrejaById(user.igrejaId);
     if (ig) { igrejaNome = ig.nome; igrejaSlug = ig.slug; }
   }
   return res.json({
@@ -880,10 +816,12 @@ async function finalizeDbUserLogin(res, user, { withCheckinLink = false } = {}) 
 // Setup inicial: criar primeiro admin (após deploy). Protegido por SETUP_SECRET.
 app.get('/api/setup/status', async (_req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ needsSetup: false, error: 'MongoDB não conectado. Configure MONGODB_URI no Railway.' });
+    if (!isDbReady()) {
+      return res.status(503).json({ needsSetup: false, error: 'Banco de dados indisponível. Configure DATABASE_URL ou MONGODB_URI no Railway.' });
     }
-    const hasAdmin = await User.exists({ role: 'admin' });
+    const hasAdmin = isMongo()
+      ? await User.exists({ role: 'admin' })
+      : await pgHasAdmin();
     res.json({ needsSetup: !!SETUP_SECRET && !hasAdmin });
   } catch (err) {
     res.status(500).json({ needsSetup: false, error: err.message });
@@ -892,8 +830,8 @@ app.get('/api/setup/status', async (_req, res) => {
 
 app.post('/api/setup', async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({ error: 'MongoDB não conectado. Configure MONGODB_URI nas variáveis do Railway e faça redeploy.' });
+    if (!isDbReady()) {
+      return res.status(503).json({ error: 'Banco de dados indisponível. Configure DATABASE_URL ou MONGODB_URI no Railway.' });
     }
     const { secret, email, nome, senha } = req.body || {};
     if (!SETUP_SECRET) return res.status(400).json({ error: 'Setup não configurado no servidor.' });
@@ -905,15 +843,22 @@ app.post('/api/setup', async (req, res) => {
     if (!nomeVal) return res.status(400).json({ error: 'Nome é obrigatório.' });
     if (!senhaVal || senhaVal.length < 6) return res.status(400).json({ error: 'Senha deve ter no mínimo 6 caracteres.' });
 
-    const hasAdmin = await User.exists({ role: 'admin' });
+    const hasAdmin = isMongo() ? await User.exists({ role: 'admin' }) : await pgHasAdmin();
     if (hasAdmin) return res.status(400).json({ error: 'Já existe um admin. Use login normal.' });
 
-    const existingGlobal = await User.exists({ email: emailVal, igrejaId: null });
-    if (existingGlobal) {
-      return res.status(400).json({ error: 'Este email já está cadastrado como admin global. Use outra conta ou faça login.' });
+    if (isMongo()) {
+      const existingGlobal = await User.exists({ email: emailVal, igrejaId: null });
+      if (existingGlobal) {
+        return res.status(400).json({ error: 'Este email já está cadastrado como admin global. Use outra conta ou faça login.' });
+      }
+      await createUserWithLegacyIndexSelfHeal({ email: emailVal, nome: nomeVal, senha: senhaVal, role: 'admin' });
+    } else {
+      const existing = await pgFindUsersByEmail(emailVal);
+      if (existing.length) {
+        return res.status(400).json({ error: 'Este email já está cadastrado. Use outra conta ou faça login.' });
+      }
+      await pgCreateAdmin({ email: emailVal, nome: nomeVal, senha: senhaVal });
     }
-
-    await createUserWithLegacyIndexSelfHeal({ email: emailVal, nome: nomeVal, senha: senhaVal, role: 'admin' });
     res.status(201).json({ ok: true, message: 'Admin criado. Faça login com este email e senha.' });
   } catch (err) {
     console.error(err);
@@ -952,7 +897,7 @@ app.post('/api/login', async (req, res) => {
 
     // 2) Login por email (User) — pode haver mais de uma conta com o mesmo email (igrejas diferentes)
     const igrejaSlugLogin = (req.body.igrejaSlug || req.body.igreja || '').toString().trim();
-    const resolved = await resolveUserForEmailPasswordLogin(login.toLowerCase(), senha, igrejaSlugLogin);
+    const resolved = await resolveUserForEmailPasswordLogin(Igreja, User, login.toLowerCase(), senha, igrejaSlugLogin);
     if (!resolved.ok) {
       return res.status(resolved.status).json(resolved.body);
     }
@@ -978,7 +923,22 @@ app.get('/api/me', requireAuth, async (req, res) => {
     let userEmail = req.userEmail;
     let dbUser = null;
     if (req.userId) {
-      dbUser = await User.findById(req.userId).select('nome fotoUrl mustChangePassword email role ministerioIds igrejaId').lean();
+      if (isMongo()) {
+        dbUser = await User.findById(req.userId).select('nome fotoUrl mustChangePassword email role ministerioIds igrejaId').lean();
+      } else if (isPostgres()) {
+        const u = await pgFindUserById(req.userId);
+        if (u) {
+          dbUser = {
+            nome: u.nome,
+            fotoUrl: u.fotoUrl,
+            mustChangePassword: u.mustChangePassword,
+            email: u.email,
+            role: u.role,
+            ministerioIds: u.ministerioIds,
+            igrejaId: u.igrejaId,
+          };
+        }
+      }
       if (dbUser) {
         if (dbUser.nome) displayName = dbUser.nome;
         if (dbUser.fotoUrl) fotoUrl = dbUser.fotoUrl;
@@ -988,27 +948,31 @@ app.get('/api/me', requireAuth, async (req, res) => {
           const r = String(dbUser.role).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
           role = r === 'lider' || r.includes('lider') ? 'lider' : r;
         }
-        if (dbUser.ministerioIds && dbUser.ministerioIds.length > 0) {
-          ministerioIds = dbUser.ministerioIds.map(id => id);
-          const minQ = { _id: { $in: ministerioIds } };
-          if (dbUser.igrejaId) minQ.igrejaId = dbUser.igrejaId;
-          const mins = await Ministerio.find(minQ).select('nome').lean();
-          ministerioNomes = mins.map(m => m?.nome).filter(Boolean);
-          ministerioId = ministerioIds[0] || null;
-          ministerioNome = ministerioNomes[0] || null;
-        }
+        const loaded = await loadMinisterioNomesForUserPg(Ministerio, dbUser);
+        ministerioIds = loaded.ministerioIds;
+        ministerioNomes = loaded.ministerioNomes;
+        ministerioId = loaded.ministerioId;
+        ministerioNome = loaded.ministerioNome;
         if (dbUser.igrejaId) {
-          const ig = await Igreja.findById(dbUser.igrejaId).select('slug').lean();
+          const ig = isMongo()
+            ? await Igreja.findById(dbUser.igrejaId).select('slug').lean()
+            : await pgFindIgrejaById(dbUser.igrejaId);
           if (ig?.slug) igrejaSlug = ig.slug;
         }
       }
     } else if (req.userRole === 'admin' && ADMIN_USER) {
-      const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase(), igrejaId: null }).select('fotoUrl').lean()
-        || await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
-      if (adminUser && adminUser.fotoUrl) fotoUrl = adminUser.fotoUrl;
+      if (isMongo()) {
+        const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase(), igrejaId: null }).select('fotoUrl').lean()
+          || await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
+        if (adminUser && adminUser.fotoUrl) fotoUrl = adminUser.fotoUrl;
+      } else {
+        const users = await pgFindUsersByEmail(String(ADMIN_USER).toLowerCase());
+        const adminUser = users.find((u) => !u.igrejaId) || users[0];
+        if (adminUser?.fotoUrl) fotoUrl = adminUser.fotoUrl;
+      }
     }
     const email = userEmail;
-    if (email) {
+    if (email && isMongo()) {
       const volQ = { email: email.toLowerCase() };
       if (dbUser?.igrejaId) volQ.igrejaId = dbUser.igrejaId;
       const vol = await Voluntario.findOne(volQ).select('nome').lean();
@@ -1137,10 +1101,7 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
       });
     }
 
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) {
-      return sendError(res, 500, 'MongoDB não conectado. Configure MONGODB_URI no .env.');
-    }
+    if (!guardMongoData(res, EMPTY_VOLUNTARIOS, 'Banco de dados indisponível.')) return;
 
     const vq = { ativo: true, ...tQ(req) };
     let voluntarios = await Voluntario.find(vq).lean();
@@ -1316,8 +1277,7 @@ app.get('/api/voluntarios/emails', requireAuth, resolveTenant, requireAdminOrLid
 
 app.get('/api/checkins', requireAuth, resolveTenant, async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado. Configure MONGODB_URI no .env.');
+    if (!guardMongoData(res, emptyCheckinsPayload())) return;
 
     const isAdmin = req.userRole === 'admin';
     const { data: dataFiltro, eventoId, ministerio } = req.query;
@@ -1409,8 +1369,7 @@ app.get('/api/checkins/ministerio', requireAuth, resolveTenant, async (req, res)
     if (nomes.length === 0) {
       return res.status(403).json({ error: 'Acesso apenas para líderes de ministério.' });
     }
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, emptyCheckinsPayload())) return;
     const { data: dataFiltro } = req.query;
     const orConditions = [
       { ministerio: { $in: nomes } },
@@ -1535,8 +1494,7 @@ function isWithinEventWindow(evento) {
 // Eventos de check-in: admin vê TODOS (ativos e inativos); voluntário vê só ativos. /hoje filtra ativo.
 app.get('/api/eventos-checkin', requireAuth, resolveTenant, async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const { data } = req.query;
     const isAdmin = String(req.userRole || '').toLowerCase() === 'admin';
@@ -1556,8 +1514,7 @@ app.get('/api/eventos-checkin', requireAuth, resolveTenant, async (req, res) => 
 
 app.get('/api/eventos-checkin/hoje', requireAuth, resolveTenant, async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const hojeStr = getHojeDateString();
     const { start, end } = getDayRangeBrasilia(hojeStr);
     if (!start || !end) return res.json([]);
@@ -1647,8 +1604,7 @@ app.delete('/api/eventos-checkin/:id', requireAuth, resolveTenant, requireAdmin,
 // Voluntário confirma presença no dia (check-in)
 app.post('/api/checkins/confirmar', requireAuth, resolveTenant, async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const { eventoId, ministerio, batizado: batizadoRaw } = req.body || {};
     if (!eventoId) return sendError(res, 400, 'eventoId é obrigatório.');
     const batizado = batizadoRaw === true || batizadoRaw === 'sim' ? true : (batizadoRaw === false || batizadoRaw === 'nao' ? false : null);
@@ -1701,8 +1657,8 @@ app.post('/api/checkins/confirmar', requireAuth, resolveTenant, async (req, res)
 const MINISTERIOS_PADRAO_PUBLIC = ['Suporte Geral', 'Welcome / Recepção', 'Streaming / Ao Vivo', 'Produção', 'Kids / Min. Infantil', 'Intercessão', 'Parking / Estacionamento', 'Segurança', 'Outro'];
 app.get('/api/checkin-public/:eventoId', async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível.');
+    if (!isMongo()) return sendError(res, 503, 'Check-in público indisponível até migração dos dados do MongoDB.');
     const igrejaDoc = await publicIgrejaFromRequest(req);
     if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug no link.');
     const evento = await EventoCheckin.findById(req.params.eventoId).lean();
@@ -1730,8 +1686,8 @@ app.get('/api/checkin-public/:eventoId', async (req, res) => {
 // Check-in público por link (sem login): envia email + ministério. Quem faz check-in é considerado voluntário.
 app.post('/api/checkin-public', async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível.');
+    if (!isMongo()) return sendError(res, 503, 'Check-in público indisponível até migração dos dados do MongoDB.');
     const { eventoId, email, ministerio, nome, batizado: batizadoRaw } = req.body || {};
     const em = (email || '').toString().trim().toLowerCase();
     if (!em || !em.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
@@ -1783,7 +1739,7 @@ app.post('/api/checkin-public', async (req, res) => {
 // Eventos de formulário (batismo / apresentação) — por data, como check-in
 app.get('/api/eventos-formulario', requireAuth, resolveTenant, async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const { tipo, data } = req.query;
     const isAdmin = String(req.userRole || '').toLowerCase() === 'admin';
@@ -1880,7 +1836,7 @@ app.delete('/api/eventos-formulario/:id', requireAuth, resolveTenant, requireAdm
 // Público: dados do evento de formulário (batismo ou apresentação)
 app.get('/api/formulario-publico/:tipo/:eventoId', async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível. Migração de dados em andamento.'); if (!isMongo()) return sendError(res, 503, 'Recurso indisponível no modo PostgreSQL até migração do MongoDB.');
     const igrejaDoc = await publicIgrejaFromRequest(req);
     if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug no link.');
     const { tipo, eventoId } = req.params;
@@ -1911,7 +1867,7 @@ app.get('/api/formulario-publico/:tipo/:eventoId', async (req, res) => {
 // Público: enviar formulário batismo
 app.post('/api/formulario-publico', async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível. Migração de dados em andamento.'); if (!isMongo()) return sendError(res, 503, 'Recurso indisponível no modo PostgreSQL até migração do MongoDB.');
     const body = req.body || {};
     const tipo = (body.tipo || '').trim().toLowerCase();
     const eventoId = body.eventoId;
@@ -1989,7 +1945,7 @@ app.post('/api/formulario-publico', async (req, res) => {
 // Cadastro público: novo membro (um único link, como cadastro de voluntários)
 app.post('/api/formularios/membro', async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível. Migração de dados em andamento.'); if (!isMongo()) return sendError(res, 503, 'Recurso indisponível no modo PostgreSQL até migração do MongoDB.');
     const igrejaDoc = await publicIgrejaFromRequest(req);
     if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Envie "igreja" (slug) no corpo.');
     const body = req.body || {};
@@ -2022,7 +1978,7 @@ app.post('/api/formularios/membro', async (req, res) => {
 // Admin: listar inscrições formulário membros
 app.get('/api/formularios/membro', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const list = await FormularioMembro.find({ ...tQ(req) }).sort({ createdAt: -1 }).lean();
     res.json(list);
@@ -2035,7 +1991,7 @@ app.get('/api/formularios/membro', requireAuth, resolveTenant, requireAdmin, asy
 // Cadastro público: Consolidação / Acolhimento (baseado no fluxo de decisão e acompanhamento)
 app.post('/api/formularios/consolidacao', async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'Serviço temporariamente indisponível.');
+    if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível. Migração de dados em andamento.'); if (!isMongo()) return sendError(res, 503, 'Recurso indisponível no modo PostgreSQL até migração do MongoDB.');
     const igrejaDoc = await publicIgrejaFromRequest(req);
     if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Envie "igreja" na URL (?igreja=slug) ou "igrejaSlug" no corpo.');
     const body = req.body || {};
@@ -2102,7 +2058,7 @@ app.post('/api/formularios/consolidacao', async (req, res) => {
 // Admin: listar inscrições Consolidação
 app.get('/api/formularios/consolidacao', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const list = await FormularioConsolidacao.find({ ...tQ(req) }).sort({ createdAt: -1 }).lean();
     res.json(list);
@@ -2115,7 +2071,7 @@ app.get('/api/formularios/consolidacao', requireAuth, resolveTenant, requireAdmi
 // Admin: listar inscrições batismo por evento (somente inscrições daquele evento)
 app.get('/api/formularios/batismo/:eventoId', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const idRaw = (req.params.eventoId || '').trim();
     if (!mongoose.Types.ObjectId.isValid(idRaw)) return res.json([]);
     const eventoOid = new mongoose.Types.ObjectId(idRaw);
@@ -2133,7 +2089,7 @@ app.get('/api/formularios/batismo/:eventoId', requireAuth, resolveTenant, requir
 // Admin: listar inscrições apresentação por evento (somente inscrições daquele evento)
 app.get('/api/formularios/apresentacao/:eventoId', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    if (mongoose.connection.readyState !== 1) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const idRaw = (req.params.eventoId || '').trim();
     if (!mongoose.Types.ObjectId.isValid(idRaw)) return res.json([]);
     const eventoOid = new mongoose.Types.ObjectId(idRaw);
@@ -2591,7 +2547,7 @@ app.post('/api/auth/login-email', async (req, res) => {
       return res.status(400).json({ error: 'Email e senha são obrigatórios.' });
     }
     const igrejaSlugLogin = (igrejaSlugBody || req.body?.igreja || '').toString().trim();
-    const resolved = await resolveUserForEmailPasswordLogin(email.toLowerCase(), senha, igrejaSlugLogin);
+    const resolved = await resolveUserForEmailPasswordLogin(Igreja, User, email.toLowerCase(), senha, igrejaSlugLogin);
     if (!resolved.ok) {
       return res.status(resolved.status).json(resolved.body);
     }
@@ -2674,8 +2630,7 @@ app.post('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res
 // GET /api/ministros - Listar ministérios (admin)
 app.get('/api/ministros', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const list = await Ministerio.find({ ...tQ(req) }).sort({ nome: 1 }).lean();
     
     // Otimização: busca todos os líderes de uma vez (evita N+1)
@@ -2700,8 +2655,7 @@ app.get('/api/ministros', requireAuth, resolveTenant, requireAdmin, async (req, 
 // POST /api/ministros - Criar ministério (admin)
 app.post('/api/ministros', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const nome = String(req.body?.nome || '').trim();
     if (!nome) return sendError(res, 400, 'Nome do ministério é obrigatório.');
     const slug = nome.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
@@ -2787,8 +2741,7 @@ app.get('/api/users/foto', requireAuth, resolveTenant, async (req, res) => {
 // GET /api/users - Listar usuários (admin only). Query: search (nome/email), ativo (true|false).
 app.get('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const { search, ativo } = req.query || {};
     const filter = { ...tQ(req) };
     if (ativo === 'true') filter.ativo = true;
@@ -2907,8 +2860,7 @@ app.delete('/api/users/:id', requireAuth, requireMasterAdmin, async (req, res) =
 // Necessário uma vez: bug antigo em getEventDateStringSaoPaulo causava data -1 dia.
 app.post('/api/fix-datacheckin', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const dryRun = req.query.dry !== 'false';
     const checkins = await Checkin.find({ eventoId: { $exists: true, $ne: null } })
       .select('_id eventoId dataCheckin').lean();
@@ -2941,8 +2893,7 @@ app.post('/api/fix-datacheckin', requireAuth, resolveTenant, requireAdmin, async
 // POST /api/migrate - Migrar dados das CSVs para o MongoDB (admin only)
 app.post('/api/migrate', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado. Configure MONGODB_URI no .env.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     if (!VOLUNTARIOS_CSV_PATH && !CSV_URL) return sendError(res, 400, 'VOLUNTARIOS_CSV_PATH ou CSV_URL não configurado.');
     const celeiroId = await getCeleiroIgrejaIdForLegacyImport();
     const volResult = await syncVoluntarios(celeiroId);
@@ -2965,8 +2916,7 @@ app.post('/api/migrate', requireAuth, resolveTenant, requireAdmin, async (req, r
 // ?dry=true → apenas lista os elegíveis sem enviar.
 app.post('/api/send-cadastro-incompleto', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) return sendError(res, 500, 'RESEND_API_KEY não configurada.');
     const dryRun = String(req.query.dry || 'false') !== 'false';
@@ -3212,8 +3162,7 @@ function escapeCsv(val) {
 }
 app.get('/api/escalas/export-csv', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const mongoReady = mongoose.connection.readyState === 1;
-    if (!mongoReady) return sendError(res, 500, 'MongoDB não conectado.');
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const escalas = await Escala.find({ ...tQ(req) }).sort({ createdAt: -1 }).lean();
     const ids = escalas.map((e) => e._id);
     const candidaturas = await Candidatura.find({ escalaId: { $in: ids }, ...tQ(req) }).sort({ ministerio: 1, nome: 1 }).lean();
@@ -3793,22 +3742,26 @@ async function fixDataCheckinOnce() {
 
 // Conectar MongoDB e só então iniciar o servidor (evita "buffering timed out" no login)
 async function start() {
-  if (process.env.MONGODB_URI) {
+  try {
+    await initDatabase();
+  } catch (err) {
+    console.error('❌ Falha ao conectar banco:', err.message || err);
+    process.exit(1);
+  }
+
+  if (isMongo()) {
     try {
-      await mongoose.connect(process.env.MONGODB_URI);
-      console.log('✅ MongoDB conectado');
       const indexFix = await ensureUsersTenantEmailIndex();
       if (indexFix.changed) {
         console.log('✅ Índices users ajustados para multi-igreja (email + igrejaId).');
       }
       await fixDataCheckinOnce();
-      setImmediate(() => syncLegadoVoluntarios()); // Legado: vincular check-ins e garantir voluntários
+      setImmediate(() => syncLegadoVoluntarios());
     } catch (err) {
-      console.error('❌ MongoDB erro:', err);
-      process.exit(1);
+      console.error('Pós-conexão MongoDB:', err.message || err);
     }
-  } else {
-    console.warn('MONGODB_URI não configurado - usando apenas cache em memória');
+  } else if (isPostgres()) {
+    console.log('ℹ️ Modo PostgreSQL: telas operacionais vazias até migração dos dados do MongoDB.');
   }
 
   app.listen(PORT, '0.0.0.0', () => {

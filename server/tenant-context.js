@@ -1,16 +1,28 @@
 import mongoose from 'mongoose';
 import Igreja from './models/Igreja.js';
+import { isMongo, isPostgres } from './db/connection.js';
+import { pgFindIgrejaBySlug, pgFindIgrejaById, pgListIgrejas } from './db/postgres/repos.js';
 
 export const DEFAULT_IGREJA_SLUG = (process.env.DEFAULT_IGREJA_SLUG || 'celeiro-sp').trim().toLowerCase();
 
 export async function findIgrejaBySlugOrId(slugRaw, idRaw) {
   const id = (idRaw || '').toString().trim();
-  if (id && mongoose.Types.ObjectId.isValid(id)) {
-    const g = await Igreja.findById(id).lean();
-    if (g) return g;
-  }
   const slug = (slugRaw || '').toString().trim().toLowerCase() || DEFAULT_IGREJA_SLUG;
-  return Igreja.findOne({ slug }).lean();
+  if (isMongo()) {
+    if (id && mongoose.Types.ObjectId.isValid(id)) {
+      const g = await Igreja.findById(id).lean();
+      if (g) return g;
+    }
+    return Igreja.findOne({ slug }).lean();
+  }
+  if (isPostgres()) {
+    if (id) {
+      const g = await pgFindIgrejaById(id);
+      if (g) return g;
+    }
+    return pgFindIgrejaBySlug(slug);
+  }
+  return null;
 }
 
 /** Middleware após requireAuth: define req.tenantIgrejaId (ObjectId) para filtrar dados da igreja. */
@@ -28,7 +40,9 @@ export async function resolveTenant(req, res, next) {
       }
       if (!igreja) {
         return res.status(503).json({
-          error: 'Nenhuma igreja cadastrada. Execute no servidor: node scripts/migrate-multi-igreja.js',
+          error: isPostgres()
+            ? 'Nenhuma igreja cadastrada no PostgreSQL. Verifique o seed ou rode o deploy novamente.'
+            : 'Nenhuma igreja cadastrada. Execute no servidor: node scripts/migrate-multi-igreja.js',
         });
       }
       req.tenantIgrejaId = igreja._id;
@@ -39,10 +53,15 @@ export async function resolveTenant(req, res, next) {
 
     if (role === 'admin' && !isGlobalAdmin) {
       const idStr = req.authIgrejaIdStr;
-      if (!idStr || !mongoose.Types.ObjectId.isValid(idStr)) {
+      if (!idStr) {
         return res.status(403).json({ error: 'Admin sem igreja vinculada.' });
       }
-      const igreja = await Igreja.findById(idStr).lean();
+      if (isMongo() && !mongoose.Types.ObjectId.isValid(idStr)) {
+        return res.status(403).json({ error: 'Admin sem igreja vinculada.' });
+      }
+      const igreja = isMongo()
+        ? await Igreja.findById(idStr).lean()
+        : await pgFindIgrejaById(idStr);
       if (!igreja) return res.status(403).json({ error: 'Igreja não encontrada.' });
       req.tenantIgrejaId = igreja._id;
       req.tenantIgrejaSlug = igreja.slug;
@@ -51,10 +70,15 @@ export async function resolveTenant(req, res, next) {
     }
 
     const idStr = req.authIgrejaIdStr;
-    if (!idStr || !mongoose.Types.ObjectId.isValid(idStr)) {
+    if (!idStr) {
       return res.status(403).json({ error: 'Conta sem igreja vinculada. Contate o administrador.' });
     }
-    const igreja = await Igreja.findById(idStr).lean();
+    if (isMongo() && !mongoose.Types.ObjectId.isValid(idStr)) {
+      return res.status(403).json({ error: 'Conta sem igreja vinculada. Contate o administrador.' });
+    }
+    const igreja = isMongo()
+      ? await Igreja.findById(idStr).lean()
+      : await pgFindIgrejaById(idStr);
     if (!igreja) return res.status(403).json({ error: 'Igreja não encontrada.' });
     req.tenantIgrejaId = igreja._id;
     req.tenantIgrejaSlug = igreja.slug;
@@ -80,6 +104,21 @@ export async function publicIgrejaFromRequest(req) {
     req.body?.tenant ||
     ''
   ).toString().trim().toLowerCase() || DEFAULT_IGREJA_SLUG;
-  const igreja = await Igreja.findOne({ slug }).lean();
-  return igreja;
+  if (isMongo()) {
+    return Igreja.findOne({ slug }).lean();
+  }
+  if (isPostgres()) {
+    return pgFindIgrejaBySlug(slug);
+  }
+  return null;
+}
+
+export async function listIgrejasAtivas() {
+  if (isMongo()) {
+    return Igreja.find({ ativo: true }).sort({ nome: 1 }).select('nome slug ativo').lean();
+  }
+  if (isPostgres()) {
+    return pgListIgrejas();
+  }
+  return [];
 }
