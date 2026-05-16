@@ -41,6 +41,8 @@ import {
 } from './db/login.js';
 import {
   pgHasAdmin, pgCreateAdmin, pgFindUserById, pgFindUsersByEmail, pgFindMinisteriosByIds, pgFindIgrejaById,
+  pgListMinisterios, pgFindMinisterioByNome, pgCreateMinisterio, pgLeadersByMinisterioId,
+  pgListUsers, pgFindUserByEmailInIgreja, pgCreateUser, pgUpdateUser,
 } from './db/postgres/repos.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -2602,9 +2604,23 @@ app.post('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res
     if (!senhaVal || senhaVal.length < 6) return sendError(res, 400, 'Senha temporária é obrigatória (mínimo 6 caracteres).');
     const roleVal = (role || 'voluntario').toString().toLowerCase();
     if (!['admin', 'voluntario', 'lider'].includes(roleVal)) return sendError(res, 400, 'Perfil inválido.');
+    const rawIds = Array.isArray(ministerioIds) ? ministerioIds.filter(Boolean) : [];
+    if (isPostgres()) {
+      const existing = await pgFindUserByEmailInIgreja(req.tenantIgrejaId, em);
+      if (existing) return sendError(res, 409, 'Já existe um usuário com este email nesta igreja.');
+      const created = await pgCreateUser({
+        email: em,
+        nome: (nome || '').toString().trim(),
+        senha: senhaVal,
+        role: roleVal,
+        igrejaId: req.tenantIgrejaId,
+        ministerioIds: (roleVal === 'lider' || roleVal === 'admin') ? rawIds : [],
+        mustChangePassword: true,
+      });
+      return res.status(201).json(created);
+    }
     const existing = await User.findOne({ email: em, igrejaId: req.tenantIgrejaId });
     if (existing) return sendError(res, 409, 'Já existe um usuário com este email nesta igreja.');
-    const rawIds = Array.isArray(ministerioIds) ? ministerioIds.filter(Boolean) : [];
     const user = await createUserWithLegacyIndexSelfHeal({
       email: em,
       nome: (nome || '').toString().trim(),
@@ -2630,6 +2646,14 @@ app.post('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res
 // GET /api/ministros - Listar ministérios (admin)
 app.get('/api/ministros', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
+    if (isPostgres()) {
+      const list = await pgListMinisterios(req.tenantIgrejaId);
+      const leadersByMinist = await pgLeadersByMinisterioId(req.tenantIgrejaId);
+      return res.json(list.map((m) => ({
+        ...m,
+        lideres: leadersByMinist[String(m._id)] || [],
+      })));
+    }
     if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const list = await Ministerio.find({ ...tQ(req) }).sort({ nome: 1 }).lean();
     
@@ -2655,10 +2679,16 @@ app.get('/api/ministros', requireAuth, resolveTenant, requireAdmin, async (req, 
 // POST /api/ministros - Criar ministério (admin)
 app.post('/api/ministros', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const nome = String(req.body?.nome || '').trim();
     if (!nome) return sendError(res, 400, 'Nome do ministério é obrigatório.');
-    const slug = nome.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    const slug = nome.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || nome;
+    if (isPostgres()) {
+      const existing = await pgFindMinisterioByNome(req.tenantIgrejaId, nome);
+      if (existing) return sendError(res, 400, 'Ministério com esse nome já existe.');
+      const doc = await pgCreateMinisterio({ igrejaId: req.tenantIgrejaId, nome, slug });
+      return res.status(201).json({ ...doc, lideres: [] });
+    }
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const existing = await Ministerio.findOne({ $or: [{ nome }, { slug }], ...tQ(req) });
     if (existing) return sendError(res, 400, 'Ministério com esse nome já existe.');
     const doc = await Ministerio.create({ nome, slug: slug || nome, ...tQ(req) });
@@ -2741,6 +2771,11 @@ app.get('/api/users/foto', requireAuth, resolveTenant, async (req, res) => {
 // GET /api/users - Listar usuários (admin only). Query: search (nome/email), ativo (true|false).
 app.get('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
+    if (isPostgres()) {
+      const { search, ativo } = req.query || {};
+      const users = await pgListUsers(req.tenantIgrejaId, { search, ativo });
+      return res.json(users);
+    }
     if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const { search, ativo } = req.query || {};
     const filter = { ...tQ(req) };
@@ -2763,6 +2798,11 @@ app.get('/api/users/by-email', requireAuth, resolveTenant, requireAdmin, async (
   try {
     const email = (req.query.email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) return sendError(res, 400, 'Email inválido.');
+    if (isPostgres()) {
+      const user = await pgFindUserByEmailInIgreja(req.tenantIgrejaId, email);
+      if (!user) return sendError(res, 404, 'Nenhum usuário encontrado com este email.');
+      return res.json(user);
+    }
     const user = await User.findOne({ email, ...tQ(req) }, '-senha -resetToken -resetTokenExpires').populate('ministerioIds', 'nome').lean();
     if (!user) return sendError(res, 404, 'Nenhum usuário encontrado com este email.');
     res.json(user);
@@ -2787,6 +2827,21 @@ app.get('/api/users/:id/history', requireAuth, resolveTenant, requireAdmin, asyn
 app.put('/api/users/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     const { nome, role, ativo, ministerioId, ministerioIds } = req.body;
+    if (isPostgres()) {
+      const rawIds = Array.isArray(ministerioIds) ? ministerioIds : (ministerioId != null ? [ministerioId] : undefined);
+      const roleVal = role !== undefined ? String(role).toLowerCase() : undefined;
+      if (roleVal && !['admin', 'voluntario', 'lider'].includes(roleVal)) {
+        return sendError(res, 400, 'Role inválido.');
+      }
+      const updated = await pgUpdateUser(req.params.id, req.tenantIgrejaId, {
+        nome: nome !== undefined ? String(nome).trim() : undefined,
+        role: roleVal,
+        ativo,
+        ministerioIds: rawIds,
+      });
+      if (!updated) return sendError(res, 404, 'Usuário não encontrado.');
+      return res.json(updated);
+    }
     const user = await User.findOne({ _id: req.params.id, ...tQ(req) });
     if (!user) return sendError(res, 404, 'Usuário não encontrado.');
     const fromRole = user.role;

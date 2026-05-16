@@ -36,7 +36,7 @@ export async function resolveTenant(req, res, next) {
       const idHeader = (req.headers['x-igreja-id'] || '').toString().trim();
       let igreja = await findIgrejaBySlugOrId(slug || null, idHeader || null);
       if (!igreja) {
-        igreja = await Igreja.findOne({ slug: DEFAULT_IGREJA_SLUG }).lean();
+        igreja = await findIgrejaBySlugOrId(DEFAULT_IGREJA_SLUG, null);
       }
       if (!igreja) {
         return res.status(503).json({

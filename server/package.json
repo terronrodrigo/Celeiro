@@ -11,7 +11,10 @@
     "update-db": "node scripts/update-db.js",
     "fix-planilha-celeiro": "node scripts/fix-planilha-voluntarios-celeiro.js",
     "create-voluntario-test": "node scripts/create-voluntario-test.js",
-    "criar-igreja-inc-adolescentes": "SOURCE_IGREJA_SLUG=inc-sp NOVA_IGREJA_NOME='INC Adolescentes' NOVA_IGREJA_SLUG=inc-adolescentes node scripts/criar-igreja-clone-ministerios.js"
+    "criar-igreja-inc-adolescentes": "SOURCE_IGREJA_SLUG=inc-sp NOVA_IGREJA_NOME='INC Adolescentes' NOVA_IGREJA_SLUG=inc-adolescentes node scripts/criar-igreja-clone-ministerios.js",
+    "seed-ministerios-celeiro": "node scripts/seed-ministerios-celeiro.js",
+    "import-users-mongo-to-pg": "node scripts/import-users-mongo-to-pg.js",
+    "import-lideres-csv": "node scripts/import-lideres-csv.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
