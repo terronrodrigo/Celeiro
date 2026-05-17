@@ -38,14 +38,18 @@ import {
   loadMinisterioNomesForUserPg,
   touchUserOnLoginPg,
   GLOBAL_LOGIN_SLUG,
+  choicesForMultiTenantLoginPg,
 } from './db/login.js';
 import {
   pgHasAdmin, pgCreateAdmin, pgFindUserById, pgFindUsersByEmail, pgFindMinisteriosByIds, pgFindIgrejaById,
+  pgFindIgrejaBySlug,
   pgListMinisterios, pgFindMinisterioByNome, pgCreateMinisterio, pgLeadersByMinisterioId,
   pgListUsers, pgFindUserByEmailInIgreja, pgCreateUser, pgUpdateUser, pgUpsertUserWithPasswordHash,
+  pgSetUserResetToken, pgFindUserByResetToken, pgUpdateUserPassword,
+  pgFindVoluntarioByEmail, pgUpsertVoluntarioPerfil,
 } from './db/postgres/repos.js';
 import {
-  pgListEscalas, pgFindEscalaById, pgCreateEscala, pgUpdateEscala, pgCountCandidaturasByEscala,
+  pgListEscalas, pgFindEscalaById, pgFindEscalasByIds, pgCreateEscala, pgUpdateEscala, pgCountCandidaturasByEscala,
   pgListEventosCheckin, pgListEventosCheckinHoje, pgFindEventoCheckinById,
   pgCreateEventoCheckin, pgUpdateEventoCheckin, pgDeleteEventoCheckin, pgCreateCheckin,
   pgCreateCandidatura, pgFindCandidaturaDuplicada, pgFindEventoCheckinPorData,
@@ -80,6 +84,7 @@ import {
   pgListVoluntarios, pgListVoluntarioEmails, buildVoluntariosResumo, pgEnsureVoluntarioInList,
   pgListCheckins, pgListCandidaturasByEscala, pgFindCandidaturaById,
   pgUpdateCandidaturaStatus, pgBulkUpdateCandidaturaStatus, pgCandidaturaStatsByEmails,
+  pgListCandidaturasByEmail, pgListCandidaturasForEscalas,
 } from './db/postgres/operational-data.js';
 import {
   pgFindConviteByToken, pgUpsertConviteLider, pgListConvitesLider,
@@ -356,7 +361,7 @@ function normalizarWhatsapp(val) {
 
 app.post('/api/cadastro', async (req, res) => {
   try {
-    if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível.'); if (!isMongo()) return sendError(res, 503, 'Cadastro indisponível até migração dos dados.');
+    if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível.');
 
     const igrejaDoc = await publicIgrejaFromRequest(req);
     if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug na URL ou igrejaSlug no corpo.');
@@ -409,6 +414,18 @@ app.post('/api/cadastro', async (req, res) => {
       ativo: true,
     };
     const clean = Object.fromEntries(Object.entries(doc).filter(([, v]) => v !== undefined));
+
+    if (isPostgres()) {
+      const igrejaId = String(igrejaDoc._id);
+      const existing = await pgFindVoluntarioByEmail(igrejaId, email);
+      await pgUpsertVoluntarioPerfil(igrejaId, email, clean);
+      invalidateCache();
+      return res.status(existing ? 200 : 201).json({
+        ok: true,
+        message: existing ? 'Cadastro atualizado com sucesso.' : 'Cadastro realizado com sucesso.',
+      });
+    }
+    if (!isMongo()) return sendError(res, 503, 'Cadastro indisponível até migração dos dados.');
 
     const existing = await Voluntario.findOne({ email, igrejaId: igrejaDoc._id });
     if (existing) {
@@ -2625,6 +2642,21 @@ app.get('/api/me/perfil', requireAuth, async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   try {
     const emailLookup = (req.userEmail || '').toLowerCase().trim();
+    if (isPostgres()) {
+      const userRow = req.userId
+        ? await pgFindUserById(req.userId)
+        : (await pgFindUsersByEmail(emailLookup)).find(
+          (u) => !req.authIgrejaIdStr || String(u.igrejaId || '') === String(req.authIgrejaIdStr || ''),
+        ) || (await pgFindUsersByEmail(emailLookup))[0];
+      const email = (req.userEmail || userRow?.email || emailLookup || '').toLowerCase().trim();
+      if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
+      const igrejaId = userRow?.igrejaId || req.authIgrejaIdStr || req.tenantIgrejaId;
+      const perfil = igrejaId ? await pgFindVoluntarioByEmail(igrejaId, email) : null;
+      if (!perfil) return res.json({ fotoUrl: userRow?.fotoUrl ?? null });
+      const areasStr = Array.isArray(perfil.areas) ? perfil.areas.join(', ') : (perfil.areas || '');
+      return res.json({ ...perfil, areas: areasStr, fotoUrl: userRow?.fotoUrl ?? null });
+    }
+    if (!isMongo()) return sendError(res, 503, 'Perfil indisponível.');
     const userRow = req.userId
       ? await User.findById(req.userId).select('email fotoUrl igrejaId').lean()
       : await User.findOne({
@@ -2652,6 +2684,43 @@ app.get('/api/me/perfil', requireAuth, async (req, res) => {
 
 app.put('/api/me/perfil', requireAuth, async (req, res) => {
   try {
+    if (isPostgres()) {
+      const userRow = req.userId
+        ? await pgFindUserById(req.userId)
+        : null;
+      const email = (req.userEmail || userRow?.email || '').toLowerCase().trim();
+      if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
+      const igrejaId = userRow?.igrejaId || req.authIgrejaIdStr;
+      if (!igrejaId) return sendError(res, 400, 'Conta sem igreja vinculada. Contate o administrador.');
+      const body = { ...req.body };
+      delete body.email;
+      delete body._id;
+      if (body.areas && typeof body.areas === 'string') {
+        body.areas = body.areas.split(',').map((a) => a.trim()).filter(Boolean);
+      }
+      if (body.whatsapp != null) {
+        const w = normalizarWhatsapp(body.whatsapp);
+        if (body.whatsapp !== '' && w === null) {
+          return sendError(res, 400, 'WhatsApp inválido. Informe 10 ou 11 dígitos (DDD + número).');
+        }
+        body.whatsapp = (w != null ? w : (body.whatsapp === '' ? undefined : body.whatsapp));
+      }
+      if (body.nascimento != null && body.nascimento !== '') {
+        const n = parseNascimento(body.nascimento);
+        body.nascimento = n || body.nascimento;
+        if (n && !validarNascimento(n)) {
+          return sendError(res, 400, 'Data de nascimento deve estar entre 1920 e 2015.');
+        }
+      } else if (body.nascimento != null && typeof body.nascimento === 'string') {
+        body.nascimento = parseNascimento(body.nascimento) || body.nascimento;
+      }
+      if (body.estado != null) body.estado = normalizarEstado(body.estado);
+      if (body.cidade != null) body.cidade = normalizarCidade(body.cidade);
+      const perfil = await pgUpsertVoluntarioPerfil(igrejaId, email, body);
+      invalidateCache();
+      return res.json(perfil);
+    }
+    if (!isMongo()) return sendError(res, 503, 'Perfil indisponível.');
     const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email igrejaId').lean())?.email);
     if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
     const uRow = req.userId
@@ -3020,6 +3089,59 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       return res.status(400).json({ error: 'Informe um email válido.' });
     }
     const igrejaSlugFp = (req.body?.igrejaSlug || req.body?.igreja || '').toString().trim();
+
+    if (isPostgres()) {
+      const candidates = await pgFindUsersByEmail(email);
+      const withPwd = candidates.filter((u) => u.senha);
+      if (withPwd.length === 0) return res.json({ message: genericMessage });
+
+      let user;
+      if (withPwd.length === 1) {
+        [user] = withPwd;
+      } else if (!igrejaSlugFp) {
+        const igrejas = await choicesForMultiTenantLoginPg(Igreja, withPwd);
+        return res.status(409).json({
+          error: 'Este email está cadastrado em mais de uma igreja. Escolha em qual deseja redefinir a senha.',
+          needIgrejaChoice: true,
+          igrejas,
+        });
+      } else {
+        const slugLower = igrejaSlugFp.toLowerCase();
+        let pool;
+        if (slugLower === GLOBAL_LOGIN_SLUG || slugLower === 'global') {
+          pool = withPwd.filter((u) => !u.igrejaId);
+        } else {
+          const ig = await pgFindIgrejaBySlug(igrejaSlugFp);
+          if (!ig) return res.json({ message: genericMessage });
+          const igId = String(ig._id);
+          pool = withPwd.filter((u) => u.igrejaId && String(u.igrejaId) === igId);
+        }
+        if (pool.length !== 1) return res.json({ message: genericMessage });
+        [user] = pool;
+      }
+
+      const resetToken = crypto.randomBytes(32).toString('hex');
+      await pgSetUserResetToken(user._id, resetToken, new Date(Date.now() + RESET_TOKEN_EXPIRES_MS));
+      const baseUrl = (process.env.APP_URL || '').trim() || `${req.protocol || 'https'}://${req.get('host') || req.headers.host || ''}`;
+      const resetLink = `${baseUrl.replace(/\/$/, '')}?reset=${resetToken}`;
+      const apiKey = process.env.RESEND_API_KEY;
+      const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+      const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
+      if (apiKey) {
+        const resend = new Resend(apiKey);
+        const nome = (user.nome || '').trim() || 'usuário';
+        await resend.emails.send({
+          from,
+          to: email,
+          reply_to: replyTo,
+          subject: 'Redefinição de senha - Celeiro SP',
+          html: `<p>Olá, ${nome}!</p><p>Você solicitou a redefinição de senha. Clique no link abaixo para definir uma nova senha (válido por 1 hora):</p><p><a href="${resetLink}">Redefinir senha</a></p><p>Se você não solicitou isso, ignore este email.</p><p>— Celeiro SP</p>`,
+        });
+      }
+      return res.json({ message: genericMessage });
+    }
+    if (!isMongo()) return res.json({ message: genericMessage });
+
     const candidates = await User.find({ email }).select('_id nome senha googleId igrejaId').lean();
     const withPwd = candidates.filter((u) => u.senha);
     if (withPwd.length === 0) {
@@ -3030,7 +3152,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     if (withPwd.length === 1) {
       [user] = withPwd;
     } else if (!igrejaSlugFp) {
-      const igrejas = await choicesForMultiTenantLogin(withPwd);
+      const igrejas = await choicesForMultiTenantLoginPg(Igreja, withPwd);
       return res.status(409).json({
         error: 'Este email está cadastrado em mais de uma igreja. Escolha em qual deseja redefinir a senha.',
         needIgrejaChoice: true,
@@ -3090,6 +3212,13 @@ app.post('/api/auth/reset-password', async (req, res) => {
     if (!senha || senha.length < 6) {
       return res.status(400).json({ error: 'A nova senha deve ter no mínimo 6 caracteres.' });
     }
+    if (isPostgres()) {
+      const user = await pgFindUserByResetToken(token.trim());
+      if (!user) return res.status(400).json({ error: 'Link inválido ou expirado.' });
+      await pgUpdateUserPassword(user._id, senha);
+      return res.json({ message: 'Senha alterada. Faça login com a nova senha.' });
+    }
+    if (!isMongo()) return res.status(503).json({ error: 'Serviço temporariamente indisponível.' });
     const user = await User.findOne({
       resetToken: token.trim(),
       resetTokenExpires: { $gt: new Date() },
@@ -3134,25 +3263,38 @@ app.post('/api/auth/change-password', requireAuth, async (req, res) => {
     if (!senhaAtual || !senhaNova) {
       return res.status(400).json({ error: 'Senha atual e nova são obrigatórias.' });
     }
-    
+
+    if (isPostgres()) {
+      const user = await pgFindUserById(req.userId);
+      if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
+      if (!user.senha) {
+        return res.status(403).json({ error: 'Usuário com autenticação Google não pode trocar senha aqui.' });
+      }
+      const valida = await user.compararSenha(senhaAtual);
+      if (!valida) return res.status(401).json({ error: 'Senha atual inválida.' });
+      await pgUpdateUserPassword(user._id, senhaNova);
+      return res.json({ ok: true, mensagem: 'Senha alterada com sucesso.' });
+    }
+    if (!isMongo()) return res.status(503).json({ error: 'Serviço temporariamente indisponível.' });
+
     const user = await User.findById(req.userId);
     if (!user) {
       return res.status(404).json({ error: 'Usuário não encontrado.' });
     }
-    
+
     if (!user.senha) {
       return res.status(403).json({ error: 'Usuário com autenticação Google não pode trocar senha aqui.' });
     }
-    
+
     const valida = await user.compararSenha(senhaAtual);
     if (!valida) {
       return res.status(401).json({ error: 'Senha atual inválida.' });
     }
-    
+
     user.senha = senhaNova;
     user.mustChangePassword = false;
     await user.save();
-    
+
     res.json({ ok: true, mensagem: 'Senha alterada com sucesso.' });
   } catch (err) {
     console.error(err);
@@ -3964,6 +4106,54 @@ app.get('/api/escalas/candidaturas-all', requireAuth, resolveTenant, async (req,
     const isLider = req.userRole === 'lider';
     if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
 
+    if (isPostgres()) {
+      const escalas = await pgListEscalas(req.tenantIgrejaId, { limit: 500 });
+      const ids = escalas.map((e) => e._id);
+      let candidaturas = await pgListCandidaturasForEscalas(req.tenantIgrejaId, ids);
+      if (isLider) {
+        const nomes = req.userMinisterioNomes?.length
+          ? req.userMinisterioNomes.map((n) => String(n).trim()).filter(Boolean)
+          : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
+        if (!nomes.length) return res.json([]);
+        candidaturas = filterCandidaturasForLider(candidaturas, nomes);
+      }
+      if (!candidaturas.length) return res.json([]);
+
+      const escalaMap = new Map(escalas.map((e) => [String(e._id), e]));
+      const emails = [...new Set(candidaturas.map((c) => (c.email || '').toLowerCase()).filter(Boolean))];
+      const { statsMap, checkinsMap } = await pgCandidaturaStatsByEmails(req.tenantIgrejaId, emails);
+      const liderMinisterios = isLider
+        ? (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean)
+        : [];
+      const result = candidaturas.map((c) => {
+        const stats = statsMap.get((c.email || '').toLowerCase()) || {};
+        const ci = checkinsMap.get((c.email || '').toLowerCase()) || { total: 0, ministerios: [] };
+        const jaServiuMinLider = liderMinisterios.length > 0
+          && ci.ministerios.some((m) => liderMinisterios.some((lm) => (m || '').toLowerCase().includes((lm || '').toLowerCase())));
+        const escala = escalaMap.get(String(c.escalaId));
+        return {
+          ...c,
+          escalaNome: escala?.nome,
+          escalaData: escala?.data != null ? escalaDataToYMD(escala.data) : null,
+          totalCheckins: ci.total,
+          totalParticipacoes: stats.totalParticipacoes || 0,
+          totalDesistencias: stats.totalDesistencias || 0,
+          totalFaltas: stats.totalFaltas || 0,
+          jaServiuAlgum: (ci.total || 0) + (stats.totalParticipacoes || 0) > 0,
+          jaServiuMinLider,
+        };
+      });
+      result.sort((a, b) => {
+        const aAp = a.status === 'aprovado' ? 1 : 0;
+        const bAp = b.status === 'aprovado' ? 1 : 0;
+        if (bAp !== aAp) return bAp - aAp;
+        if ((b.totalCheckins || 0) !== (a.totalCheckins || 0)) return (b.totalCheckins || 0) - (a.totalCheckins || 0);
+        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      });
+      return res.json(result);
+    }
+    if (!isMongo()) return sendError(res, 503, 'Candidaturas indisponíveis.');
+
     const escBase = { ...tQ(req) };
     const escalas = await Escala.find((isAdmin || isLider) ? { ...escBase } : { ...escBase, ativo: true }).sort({ createdAt: -1 }).lean();
     const ids = escalas.map((e) => e._id);
@@ -4733,6 +4923,19 @@ app.get('/api/minhas-candidaturas', requireAuth, resolveTenant, async (req, res)
   try {
     const email = (req.userEmail || '').toLowerCase().trim();
     if (!email) return res.json([]);
+    if (isPostgres()) {
+      const candidaturas = await pgListCandidaturasByEmail(req.tenantIgrejaId, email);
+      const escalaIds = [...new Set(candidaturas.map((c) => String(c.escalaId)))];
+      const escalas = await pgFindEscalasByIds(req.tenantIgrejaId, escalaIds);
+      const escalaMap = new Map(escalas.map((e) => [String(e._id), e]));
+      const result = candidaturas.map((c) => ({
+        ...c,
+        escalaNome: escalaMap.get(String(c.escalaId))?.nome || '',
+        escalaData: escalaMap.get(String(c.escalaId))?.data || null,
+      }));
+      return res.json(result);
+    }
+    if (!isMongo()) return res.json([]);
     const candidaturas = await Candidatura.find({ email, ...tQ(req) }).sort({ createdAt: -1 }).lean();
     // Enriquece com nome da escala
     const escalaIds = [...new Set(candidaturas.map(c => String(c.escalaId)))];

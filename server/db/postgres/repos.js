@@ -149,6 +149,105 @@ export async function pgUpdateUserUltimoAcesso(userId, ministerioIds) {
   );
 }
 
+export async function pgSetUserResetToken(userId, token, expiresAt) {
+  await getPostgresPool().query(
+    'UPDATE users SET reset_token = $2, reset_token_expires = $3 WHERE id = $1',
+    [userId, token, expiresAt instanceof Date ? expiresAt : new Date(expiresAt)],
+  );
+}
+
+export async function pgFindUserByResetToken(token) {
+  const { rows } = await getPostgresPool().query(
+    `SELECT * FROM users WHERE reset_token = $1 AND reset_token_expires > NOW() LIMIT 1`,
+    [token],
+  );
+  return mapUserRow(rows[0]);
+}
+
+export async function pgUpdateUserPassword(userId, senhaPlain) {
+  const hash = await bcrypt.hash(senhaPlain, 10);
+  await getPostgresPool().query(
+    `UPDATE users SET senha = $2, reset_token = NULL, reset_token_expires = NULL,
+      must_change_password = FALSE WHERE id = $1`,
+    [userId, hash],
+  );
+  return pgFindUserById(userId);
+}
+
+export async function pgFindVoluntarioByEmail(igrejaId, emailLower) {
+  const { rows } = await getPostgresPool().query(
+    'SELECT id, email, nome, dados, ativo, fonte FROM voluntarios WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
+    [igrejaId, emailLower],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  const d = r.dados || {};
+  const areas = Array.isArray(d.areas) ? d.areas : (d.areas ? String(d.areas).split(',').map((x) => x.trim()).filter(Boolean) : []);
+  return {
+    _id: r.id,
+    email: r.email,
+    nome: d.nome || r.nome || '',
+    nascimento: d.nascimento,
+    whatsapp: d.whatsapp || d.telefone,
+    pais: d.pais,
+    estado: d.estado,
+    cidade: d.cidade,
+    evangelico: d.evangelico,
+    igreja: d.igreja,
+    tempoIgreja: d.tempoIgreja,
+    voluntarioIgreja: d.voluntarioIgreja,
+    ministerio: d.ministerio,
+    disponibilidade: d.disponibilidade,
+    horasSemana: d.horasSemana,
+    areas,
+    testemunho: d.testemunho,
+    ativo: r.ativo !== false,
+    fonte: r.fonte,
+  };
+}
+
+export async function pgUpsertVoluntarioPerfil(igrejaId, emailLower, patch) {
+  const current = await pgFindVoluntarioByEmail(igrejaId, emailLower);
+  const merged = { ...(current || {}), ...patch, email: emailLower };
+  if (Array.isArray(merged.areas)) {
+    merged.areas = merged.areas;
+  } else if (typeof merged.areas === 'string') {
+    merged.areas = merged.areas.split(',').map((a) => a.trim()).filter(Boolean);
+  }
+  const dados = {
+    nome: merged.nome || '',
+    nascimento: merged.nascimento,
+    whatsapp: merged.whatsapp,
+    pais: merged.pais,
+    estado: merged.estado,
+    cidade: merged.cidade,
+    evangelico: merged.evangelico,
+    igreja: merged.igreja,
+    tempoIgreja: merged.tempoIgreja,
+    voluntarioIgreja: merged.voluntarioIgreja,
+    ministerio: merged.ministerio,
+    disponibilidade: merged.disponibilidade,
+    horasSemana: merged.horasSemana,
+    areas: merged.areas || [],
+    testemunho: merged.testemunho,
+  };
+  if (current?._id) {
+    await getPostgresPool().query(
+      `UPDATE voluntarios SET nome = $3, dados = $4::jsonb, updated_at = NOW()
+       WHERE id = $1 AND igreja_id = $2`,
+      [current._id, igrejaId, dados.nome || emailLower, JSON.stringify(dados)],
+    );
+    return pgFindVoluntarioByEmail(igrejaId, emailLower);
+  }
+  const id = randomUUID();
+  await getPostgresPool().query(
+    `INSERT INTO voluntarios (id, igreja_id, email, nome, dados, ativo, fonte)
+     VALUES ($1, $2, $3, $4, $5::jsonb, TRUE, 'manual')`,
+    [id, igrejaId, emailLower, dados.nome || emailLower, JSON.stringify(dados)],
+  );
+  return pgFindVoluntarioByEmail(igrejaId, emailLower);
+}
+
 function mapUserForApi(user, ministeriosPopulated = []) {
   if (!user) return null;
   const { senha, compararSenha, save, ...rest } = user;

@@ -59,6 +59,15 @@ export async function pgListEscalas(igrejaId, { ativoOnly = false, limit = 80 } 
   return rows.map(mapEscalaRow);
 }
 
+export async function pgFindEscalasByIds(igrejaId, ids) {
+  if (!ids?.length) return [];
+  const { rows } = await getPostgresPool().query(
+    'SELECT id, igreja_id, data_ymd, dados, created_at FROM escalas WHERE igreja_id = $1 AND id = ANY($2::text[])',
+    [igrejaId, ids],
+  );
+  return rows.map(mapEscalaRow);
+}
+
 export async function pgFindEscalaById(id, igrejaId) {
   const { rows } = await getPostgresPool().query(
     'SELECT id, igreja_id, dados, created_at FROM escalas WHERE id = $1 AND igreja_id = $2',

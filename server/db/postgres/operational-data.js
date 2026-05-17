@@ -159,6 +159,25 @@ function mapCandidaturaFull(row) {
   };
 }
 
+export async function pgListCandidaturasByEmail(igrejaId, emailLower) {
+  const { rows } = await getPostgresPool().query(
+    `SELECT id, igreja_id, escala_id, dados, created_at FROM candidaturas
+     WHERE igreja_id = $1 AND LOWER(dados->>'email') = $2 ORDER BY created_at DESC`,
+    [igrejaId, emailLower],
+  );
+  return rows.map(mapCandidaturaFull);
+}
+
+export async function pgListCandidaturasForEscalas(igrejaId, escalaIds) {
+  if (!escalaIds?.length) return [];
+  const { rows } = await getPostgresPool().query(
+    `SELECT id, igreja_id, escala_id, dados, created_at FROM candidaturas
+     WHERE igreja_id = $1 AND escala_id = ANY($2::text[]) ORDER BY created_at DESC`,
+    [igrejaId, escalaIds],
+  );
+  return rows.map(mapCandidaturaFull);
+}
+
 export async function pgListCandidaturasByEscala(igrejaId, escalaId) {
   const { rows } = await getPostgresPool().query(
     `SELECT id, igreja_id, escala_id, dados, created_at FROM candidaturas

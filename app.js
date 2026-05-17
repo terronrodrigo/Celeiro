@@ -307,7 +307,10 @@ function updateAuthUi() {
       if (mustChangePasswordCard) mustChangePasswordCard.style.display = 'block';
       [forgotPasswordCard, resetPasswordCard, setupCard, registerCard].forEach(c => { if (c) c.style.display = 'none'; });
     } else if (isVerifying) {
-      authOverlay.style.display = 'none';
+      authOverlay.style.display = 'flex';
+      if (loginCard) loginCard.style.display = 'block';
+      if (mustChangePasswordCard) mustChangePasswordCard.style.display = 'none';
+      [forgotPasswordCard, resetPasswordCard, setupCard, registerCard].forEach((c) => { if (c) c.style.display = 'none'; });
     } else if (isLogged && authVerified) {
       authOverlay.style.display = 'none';
       if (loginCard) loginCard.style.display = 'block';
@@ -325,7 +328,11 @@ function updateAuthUi() {
   if (errorEl) errorEl.style.display = 'none';
   if (isVerifying) {
     if (contentEl) contentEl.style.display = 'none';
-    if (loadingEl) loadingEl.style.display = 'flex';
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (loginError && !loginError.textContent && !loginInProgress) {
+      loginError.style.color = 'var(--text-secondary, #a1a1aa)';
+      loginError.textContent = 'Validando sessão salva… Você pode entrar de novo abaixo.';
+    }
   } else if (!isLogged) {
     if (contentEl) contentEl.style.display = 'none';
   } else if (isLogged && authVerified) {
@@ -5180,16 +5187,13 @@ async function handleLogin(e) {
     e.preventDefault();
     e.stopPropagation();
   }
+  if (loginInProgress) return;
+  loginInProgress = true;
+  authVerifyGeneration += 1;
   if (loginError) { loginError.textContent = ''; loginError.style.color = ''; loginError.removeAttribute('role'); }
   const savedLogin = (loginEmail?.value || '').trim();
   const login = savedLogin;
   const password = (loginPass?.value || '').trim();
-  loginInProgress = true;
-  authVerifyGeneration += 1;
-  if (!login || !password) {
-    showLoginError('Informe email/usuário e senha.');
-    return;
-  }
   const loginIgrejaWrap = document.getElementById('loginIgrejaWrap');
   const loginIgrejaSelect = document.getElementById('loginIgrejaSelect');
   const igrejaSlugChosen = (loginIgrejaWrap && loginIgrejaWrap.style.display !== 'none' && loginIgrejaSelect?.value)
@@ -5201,6 +5205,13 @@ async function handleLogin(e) {
   }
   let loginFullySucceeded = false;
   try {
+    if (!login || !password) {
+      showLoginError('Informe email/usuário e senha.');
+      return;
+    }
+    if (authToken) {
+      clearAuthSession();
+    }
     const payload = { username: login, email: login, password };
     if (igrejaSlugChosen) payload.igrejaSlug = igrejaSlugChosen;
     let r;
@@ -5444,11 +5455,14 @@ if (loginForm) {
   loginForm.addEventListener('submit', handleLogin);
   if (btnLogin) {
     btnLogin.setAttribute('type', 'button');
-    btnLogin.addEventListener('click', () => {
-      if (loginForm.requestSubmit) loginForm.requestSubmit();
-      else handleLogin(new Event('submit', { cancelable: true }));
-    });
+    btnLogin.addEventListener('click', () => { handleLogin(); });
   }
+  loginPass?.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      handleLogin();
+    }
+  });
 }
 window.__celeiroHandleLogin = handleLogin;
 btnLogout?.addEventListener('click', handleLogout);
@@ -6908,6 +6922,7 @@ window.addEventListener('pageshow', function(ev) {
     try {
       const parsed = JSON.parse(stored);
       authToken = parsed.token || '';
+      authVerified = false;
       authUser = parsed.user || '';
       authRole = normalizeAuthRole(parsed.role);
       authEmail = parsed.email || null;
