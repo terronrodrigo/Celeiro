@@ -772,6 +772,15 @@
                     <option value="">Qualquer qtd.</option>
                   </select>
                 </div>
+                <div class="form-group compact">
+                  <label for="checkinSort">Ordenar</label>
+                  <select id="checkinSort">
+                    <option value="date-desc">Data (mais recente)</option>
+                    <option value="date-asc">Data (mais antiga)</option>
+                    <option value="nome-asc">Nome (A–Z)</option>
+                    <option value="ministerio-asc">Ministério (A–Z)</option>
+                  </select>
+                </div>
               </div>
               <div class="filters-actions">
                 <button type="button" class="btn btn-ghost btn-sm" id="btnClearCheckinFilters">Limpar filtros</button>
@@ -832,7 +841,9 @@
                 </table>
               </div>
               <div class="table-footer">
-                <span id="checkinCount">0</span> check-ins <span id="checkinRange" class="list-range"></span>
+                <span id="checkinCount">0</span> check-ins
+                <span id="checkinRange" class="list-range"></span>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnVerMaisCheckins" style="display: none;">Ver mais</button>
               </div>
             </div>
           </section>
@@ -961,6 +972,14 @@
                   <label for="checkinMinisterioData">Data</label>
                   <select id="checkinMinisterioData"></select>
                 </div>
+                <div class="form-group compact">
+                  <label for="checkinMinisterioSort">Ordenar</label>
+                  <select id="checkinMinisterioSort">
+                    <option value="date-desc">Data (mais recente)</option>
+                    <option value="date-asc">Data (mais antiga)</option>
+                    <option value="nome-asc">Nome (A–Z)</option>
+                  </select>
+                </div>
               </div>
               <div class="filters-actions">
                 <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshCheckinMinisterio">Atualizar</button>
@@ -983,6 +1002,11 @@
                   <thead><tr><th>Nome</th><th>Email</th><th>Ministério</th><th>Batizado</th><th>Data/Hora</th></tr></thead>
                   <tbody id="checkinMinisterioBody"></tbody>
                 </table>
+              </div>
+              <div class="table-footer">
+                <span id="checkinMinisterioListCount">0</span> check-ins
+                <span id="checkinMinisterioRange" class="list-range"></span>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnVerMaisCheckinMinisterio" style="display: none;">Ver mais</button>
               </div>
             </div>
           </section>
@@ -1614,6 +1638,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.3.8"></script>
+  <script defer src="app.js?v=1.4.0"></script>
 </body>
 </html>

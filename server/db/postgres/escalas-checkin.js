@@ -8,6 +8,7 @@ import {
   getHojeDateString,
   getDayRangeBrasilia,
 } from '../../lib/brasilia.js';
+import { isCheckinEventAberto } from '../../lib/escala-checkin-rules.js';
 
 function mapEscalaRow(row) {
   const d = row.dados || {};
@@ -52,7 +53,7 @@ export async function pgListEscalas(igrejaId, { ativoOnly = false, limit = 80 } 
   if (ativoOnly) {
     sql += " AND (dados->>'ativo')::boolean IS DISTINCT FROM FALSE";
   }
-  sql += ' ORDER BY created_at DESC LIMIT $2';
+  sql += ` ORDER BY (dados->>'data')::timestamptz DESC NULLS LAST, created_at DESC LIMIT $2`;
   params.push(limit);
   const { rows } = await getPostgresPool().query(sql, params);
   return rows.map(mapEscalaRow);
@@ -209,11 +210,29 @@ export async function pgDeleteEventoCheckin(id, igrejaId) {
   return rowCount > 0;
 }
 
+export async function pgAutoCloseEscalasVencidas(igrejaId) {
+  const hoje = getHojeDateString();
+  const { rows } = await getPostgresPool().query(
+    "SELECT id, dados FROM escalas WHERE igreja_id = $1 AND (dados->>'ativo')::boolean IS DISTINCT FROM FALSE",
+    [igrejaId],
+  );
+  let fechadas = 0;
+  for (const row of rows) {
+    const ymd = escalaDataToYMD(row.dados?.data);
+    if (ymd && ymd <= hoje) {
+      await pgUpdateEscala(row.id, igrejaId, { ativo: false });
+      fechadas += 1;
+    }
+  }
+  return fechadas;
+}
+
 export async function pgCreateCheckin({
   igrejaId, eventoId, email, nome, ministerio, batizado, userId = null,
 }) {
   const evento = await pgFindEventoCheckinById(eventoId, igrejaId);
   if (!evento) return { error: 'not_found' };
+  if (!isCheckinEventAberto(evento)) return { error: 'not_found' };
   const eventDateStr = escalaDataToYMD(evento.data);
   const { start: dataCheckin } = getDayRangeBrasilia(eventDateStr);
   const em = email.toLowerCase();

@@ -70,6 +70,13 @@ import { isValidEntityId } from './lib/ids.js';
 import { filterCandidaturasForLider } from './lib/ministerio-match.js';
 import { enrichCandidaturasForPanel } from './lib/candidatura-enrich.js';
 import {
+  isWithinCheckinWindow,
+  isCheckinEventAberto,
+  isEscalaAbertaParaCandidatura,
+  sortEscalasByDataDesc,
+  checkinFechadoMensagem,
+} from './lib/escala-checkin-rules.js';
+import {
   pgListVoluntarios, pgListVoluntarioEmails, buildVoluntariosResumo,
   pgListCheckins, pgListCandidaturasByEscala, pgFindCandidaturaById,
   pgUpdateCandidaturaStatus, pgBulkUpdateCandidaturaStatus, pgCandidaturaStatsByEmails,
@@ -1771,18 +1778,37 @@ function getEventDateStringSaoPaulo(evento) {
   return d.toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
 }
 
-/** Verifica se o momento atual (em São Paulo) está dentro da janela de check-in do evento (também em São Paulo). */
+/** @deprecated use isWithinCheckinWindow from escala-checkin-rules */
 function isWithinEventWindow(evento) {
-  const hojeStr = getHojeDateString();
-  const eventDateStr = getEventDateStringSaoPaulo(evento);
-  if (eventDateStr !== hojeStr) return false;
-  const hin = parseHHMM(evento.horarioInicio);
-  const hfi = parseHHMM(evento.horarioFim);
-  if (!hin && !hfi) return true;
-  const now = getNowHHMMSaoPaulo();
-  if (hin && now < hin) return false;
-  if (hfi && now > hfi) return false;
-  return true;
+  return isWithinCheckinWindow(evento);
+}
+
+async function buildCultoMapForEscalas(igrejaId, escalas) {
+  const map = new Map();
+  if (!isPostgres()) return map;
+  const ids = [...new Set(escalas.map((e) => e.cultoRecorrenteId).filter(Boolean))];
+  await Promise.all(ids.map(async (id) => {
+    const culto = await pgFindCultoRecorrente(id, igrejaId);
+    if (culto) map.set(id, culto);
+  }));
+  return map;
+}
+
+async function enrichEscalasCandidatura(igrejaId, escalas) {
+  const cultoMap = await buildCultoMapForEscalas(igrejaId, escalas);
+  const hoje = getHojeDateString();
+  return sortEscalasByDataDesc(escalas).map((e) => {
+    const culto = e.cultoRecorrenteId ? cultoMap.get(e.cultoRecorrenteId) : null;
+    const candidaturaAberta = isEscalaAbertaParaCandidatura(e, culto, hoje);
+    return { ...e, candidaturaAberta };
+  });
+}
+
+function enrichEventosCheckinAberto(eventos) {
+  return eventos.map((ev) => ({
+    ...ev,
+    checkinAberto: isCheckinEventAberto(ev),
+  }));
 }
 
 // ─── Cultos recorrentes (PostgreSQL) ───────────────────────────────────────────
@@ -1903,14 +1929,14 @@ app.get('/api/eventos-checkin/hoje', requireAuth, resolveTenant, async (req, res
   try {
     if (isPostgres()) {
       const eventos = await pgListEventosCheckinHoje(req.tenantIgrejaId);
-      return res.json(eventos);
+      return res.json(enrichEventosCheckinAberto(eventos));
     }
     if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const hojeStr = getHojeDateString();
     const { start, end } = getDayRangeBrasilia(hojeStr);
     if (!start || !end) return res.json([]);
     const eventos = await EventoCheckin.find({ ...tQ(req), ativo: true, data: { $gte: start, $lt: end } }).sort({ data: 1 }).lean();
-    res.json(eventos);
+    res.json(enrichEventosCheckinAberto(eventos));
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao listar eventos de hoje.');
@@ -1961,7 +1987,7 @@ app.post('/api/eventos-checkin', requireAuth, resolveTenant, requireAdmin, async
   }
 });
 
-app.put('/api/eventos-checkin/:id/ativo', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+app.put('/api/eventos-checkin/:id/ativo', requireAuth, resolveTenant, requireAdminOrLider, async (req, res) => {
   try {
     const { ativo } = req.body;
     if (typeof ativo !== 'boolean') return sendError(res, 400, 'ativo deve ser boolean.');
@@ -2069,8 +2095,9 @@ app.post('/api/checkins/confirmar', requireAuth, resolveTenant, async (req, res)
     if (!email) return sendError(res, 403, 'Usuário sem email. Faça login como voluntário.');
 
     const evento = await EventoCheckin.findOne({ _id: eventoId, ...tQ(req) }).lean();
-    if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou inativo.');
-    // Se o evento está ativo, aceita check-in a qualquer momento (sem trava de data nem janela de horário).
+    if (!evento || !isCheckinEventAberto(evento)) {
+      return sendError(res, 404, checkinFechadoMensagem(evento));
+    }
     const eventDateStr = getEventDateStringSaoPaulo(evento) || new Date(evento.data).toISOString().slice(0, 10);
     const dataCheckin = getDayRangeBrasilia(eventDateStr).start;
     const existing = await Checkin.findOne({ eventoId, email: email.toLowerCase(), dataCheckin, ...tQ(req) });
@@ -2111,7 +2138,9 @@ app.get('/api/checkin-public/:eventoId', async (req, res) => {
     if (isPostgres()) {
       if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug no link.');
       const evento = await pgFindEventoCheckinById(req.params.eventoId, igrejaDoc._id);
-      if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
+      if (!evento || !isCheckinEventAberto(evento)) {
+        return sendError(res, 404, checkinFechadoMensagem(evento));
+      }
       const ministerios = await pgListMinisterios(igrejaDoc._id);
       const ministeriosList = ministerios.length > 0
         ? ministerios.filter((m) => m.ativo !== false).map((m) => m.nome).filter(Boolean)
@@ -2123,6 +2152,7 @@ app.get('/api/checkin-public/:eventoId', async (req, res) => {
           data: evento.data,
           horarioInicio: (evento.horarioInicio || '').trim() || null,
           horarioFim: (evento.horarioFim || '').trim() || null,
+          checkinAberto: true,
         },
         ministerios: ministeriosList,
       });
@@ -2132,7 +2162,7 @@ app.get('/api/checkin-public/:eventoId', async (req, res) => {
     const evento = await EventoCheckin.findById(req.params.eventoId).lean();
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
     if (String(evento.igrejaId) !== String(igrejaDoc._id)) return sendError(res, 404, 'Evento não encontrado.');
-    if (evento.ativo !== true) return sendError(res, 404, 'Check-in não está aberto para este evento.');
+    if (!isCheckinEventAberto(evento)) return sendError(res, 404, checkinFechadoMensagem(evento));
     const ministerios = await Ministerio.find({ igrejaId: igrejaDoc._id }).sort({ nome: 1 }).select('nome').lean();
     const ministeriosList = ministerios.length > 0 ? ministerios.map(m => m.nome).filter(Boolean) : MINISTERIOS_PADRAO_PUBLIC;
     res.json({
@@ -2178,9 +2208,10 @@ app.post('/api/checkin-public', async (req, res) => {
     const igrejaDoc = await publicIgrejaFromRequest(req);
     if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug ou igrejaSlug no corpo.');
     const evento = await EventoCheckin.findById(eventoId).lean();
-    if (!evento || !evento.ativo) return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
+    if (!evento || !isCheckinEventAberto(evento)) {
+      return sendError(res, 404, checkinFechadoMensagem(evento));
+    }
     if (String(evento.igrejaId) !== String(igrejaDoc._id)) return sendError(res, 404, 'Evento não encontrado.');
-    // Se o evento está ativo, aceita check-in a qualquer momento (sem trava de data nem janela de horário).
     const eventDateStr = getEventDateStringSaoPaulo(evento) || new Date(evento.data).toISOString().slice(0, 10);
     const dataCheckin = getDayRangeBrasilia(eventDateStr).start;
     const existing = await Checkin.findOne({ eventoId, email: em, dataCheckin, igrejaId: igrejaDoc._id });
@@ -3808,22 +3839,33 @@ app.get('/api/escalas', requireAuth, resolveTenant, async (req, res) => {
     const light = req.query.light === '1' || req.query.light === 'true';
     if (isPostgres()) {
       const escalas = await pgListEscalas(req.tenantIgrejaId, {
-        ativoOnly: !(isAdmin || isLider),
+        ativoOnly: false,
         limit: ESCALAS_LIST_LIMIT,
       });
       if (!escalas.length) return res.json([]);
-      if (light) {
-        return res.json(escalas.map((e) => ({ ...e, totalCandidaturas: 0, totalAprovados: 0 })));
+      let enriched = await enrichEscalasCandidatura(req.tenantIgrejaId, escalas);
+      if (!(isAdmin || isLider)) {
+        enriched = enriched.filter((e) => e.candidaturaAberta);
       }
-      const countMap = await pgCountCandidaturasByEscala(req.tenantIgrejaId, escalas.map((e) => e._id));
-      return res.json(escalas.map((e) => {
+      if (light) {
+        return res.json(enriched.map((e) => ({ ...e, totalCandidaturas: 0, totalAprovados: 0 })));
+      }
+      const countMap = await pgCountCandidaturasByEscala(req.tenantIgrejaId, enriched.map((e) => e._id));
+      return res.json(enriched.map((e) => {
         const c = countMap.get(String(e._id)) || { total: 0, aprovados: 0 };
         return { ...e, totalCandidaturas: c.total, totalAprovados: c.aprovados };
       }));
     }
     const base = { ...tQ(req) };
     const query = (isAdmin || isLider) ? { ...base } : { ...base, ativo: true };
-    const escalas = await Escala.find(query).sort({ createdAt: -1 }).limit(ESCALAS_LIST_LIMIT).select('nome data descricao ativo createdAt').lean();
+    const hoje = getHojeDateString();
+    let escalas = await Escala.find(query).sort({ data: -1, createdAt: -1 }).limit(ESCALAS_LIST_LIMIT).select('nome data descricao ativo createdAt cultoRecorrenteId').lean();
+    if (!(isAdmin || isLider)) {
+      escalas = escalas.filter((e) => {
+        const ymd = escalaDataToYMD(e.data);
+        return ymd && ymd > hoje && e.ativo !== false;
+      });
+    }
     const ids = escalas.map(e => e._id);
     if (ids.length === 0) return res.json([]);
     if (light) {
@@ -4105,10 +4147,18 @@ app.get('/api/escala-publica/:id', async (req, res) => {
     if (isPostgres()) {
       const escala = await pgFindEscalaById(id, igrejaDoc._id);
       if (!escala) return sendError(res, 404, 'Escala não encontrada.');
-      if (!escala.ativo) {
+      const culto = escala.cultoRecorrenteId
+        ? await pgFindCultoRecorrente(escala.cultoRecorrenteId, igrejaDoc._id)
+        : null;
+      if (!isEscalaAbertaParaCandidatura(escala, culto)) {
+        const ymd = escalaDataToYMD(escala.data);
+        const hoje = getHojeDateString();
+        let mensagem = 'Inscrições encerradas para esta escala.';
+        if (ymd && ymd <= hoje) mensagem = 'Inscrições encerradas: a data do culto já chegou.';
+        else if (culto) mensagem = 'Inscrições abertas apenas para o próximo culto desta recorrência.';
         return res.status(200).json({
           concluida: true,
-          mensagem: 'A escala deste culto já foi concluída.',
+          mensagem,
           escala: { _id: escala._id, nome: escala.nome, data: escala.data, descricao: escala.descricao },
         });
       }
@@ -4134,10 +4184,14 @@ app.get('/api/escala-publica/:id', async (req, res) => {
     const escala = await Escala.findById(id).select('nome data descricao ativo igrejaId').lean();
     if (!escala) return sendError(res, 404, 'Escala não encontrada.');
     if (String(escala.igrejaId) !== String(igrejaDoc._id)) return sendError(res, 404, 'Escala não encontrada.');
-    if (!escala.ativo) {
+    const ymdPub = escalaDataToYMD(escala.data);
+    const hojePub = getHojeDateString();
+    if (!escala.ativo || !ymdPub || ymdPub <= hojePub) {
       return res.status(200).json({
         concluida: true,
-        mensagem: 'A escala deste culto já foi concluída.',
+        mensagem: ymdPub && ymdPub <= hojePub
+          ? 'Inscrições encerradas: a data do culto já chegou.'
+          : 'A escala deste culto já foi concluída.',
         escala: { _id: escala._id, nome: escala.nome, data: escala.data, descricao: escala.descricao },
       });
     }
@@ -4275,7 +4329,13 @@ app.post('/api/candidaturas', candidaturaPublicLimiter, async (req, res) => {
     if (!ministerio) return sendError(res, 400, 'Ministério é obrigatório.');
     if (isPostgres()) {
       const escala = await pgFindEscalaById(escalaId, igrejaDoc._id);
-      if (!escala || !escala.ativo) return sendError(res, 404, 'Escala não encontrada ou não está ativa.');
+      if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+      const culto = escala.cultoRecorrenteId
+        ? await pgFindCultoRecorrente(escala.cultoRecorrenteId, igrejaDoc._id)
+        : null;
+      if (!isEscalaAbertaParaCandidatura(escala, culto)) {
+        return sendError(res, 403, 'Inscrições encerradas para esta escala ou não é o próximo culto da recorrência.');
+      }
       const mins = await pgListMinisterios(igrejaDoc._id);
       const ministeriosList = mins.length > 0
         ? mins.filter((m) => m.ativo !== false).map((m) => m.nome).filter(Boolean)
@@ -4298,7 +4358,12 @@ app.post('/api/candidaturas', candidaturaPublicLimiter, async (req, res) => {
       return res.status(201).json({ message: 'Candidatura enviada!', candidatura });
     }
     const escala = await Escala.findOne({ _id: escalaId, igrejaId: igrejaDoc._id }).lean();
-    if (!escala || !escala.ativo) return sendError(res, 404, 'Escala não encontrada ou não está ativa.');
+    if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+    const hojeCand = getHojeDateString();
+    const ymdCand = escalaDataToYMD(escala.data);
+    if (!escala.ativo || !ymdCand || ymdCand <= hojeCand) {
+      return sendError(res, 403, 'Inscrições encerradas para esta escala.');
+    }
     const ministerios = await Ministerio.find({ ativo: true, igrejaId: igrejaDoc._id }).sort({ nome: 1 }).select('nome').lean();
     const ministeriosList = ministerios.length > 0 ? ministerios.map(m => m.nome).filter(Boolean) : MINISTERIOS_PADRAO_PUBLIC;
     const ministerioTrim = (ministerio || '').toString().trim();

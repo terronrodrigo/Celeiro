@@ -8,6 +8,7 @@ import {
 import {
   pgCreateEscala,
   pgCreateEventoCheckin,
+  pgAutoCloseEscalasVencidas,
 } from './escalas-checkin.js';
 
 const EXTENSION_SQL = `
@@ -238,7 +239,16 @@ export async function syncCultosRecorrentes({ igrejaId = null, cultoId = null } 
     sql += ` AND id = $${params.length}`;
   }
   const { rows } = await getPostgresPool().query(sql, params);
-  const summary = { cultos: rows.length, criadas: 0, ignoradas: 0 };
+  const summary = { cultos: rows.length, criadas: 0, ignoradas: 0, escalasFechadas: 0 };
+
+  if (igrejaId) {
+    summary.escalasFechadas = await pgAutoCloseEscalasVencidas(igrejaId);
+  } else {
+    const { rows: igrejas } = await getPostgresPool().query('SELECT DISTINCT igreja_id FROM escalas');
+    for (const { igreja_id: iid } of igrejas) {
+      summary.escalasFechadas += await pgAutoCloseEscalasVencidas(iid);
+    }
+  }
 
   for (const row of rows) {
     const culto = mapCultoRow(row);

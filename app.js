@@ -54,6 +54,24 @@ function escalaDataToYMD(dateVal) {
   return `${y}-${m}-${day}`;
 }
 
+function sortEscalasByDataDesc(list) {
+  return [...(Array.isArray(list) ? list : [])].sort((a, b) => {
+    const da = escalaDataToYMD(a.data) || '';
+    const db = escalaDataToYMD(b.data) || '';
+    if (da !== db) return db.localeCompare(da);
+    return String(b._id || '').localeCompare(String(a._id || ''));
+  });
+}
+
+function sortEscalasByDataAsc(list) {
+  return [...(Array.isArray(list) ? list : [])].sort((a, b) => {
+    const da = escalaDataToYMD(a.data) || '';
+    const db = escalaDataToYMD(b.data) || '';
+    if (da !== db) return da.localeCompare(db);
+    return String(a._id || '').localeCompare(String(b._id || ''));
+  });
+}
+
 const UFS_BR = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
 
 /** Debounce: executa fn após delay ms sem novas chamadas */
@@ -205,6 +223,8 @@ const checkinMinisterios = document.getElementById('checkinMinisterios');
 const checkinHoje = document.getElementById('checkinHoje');
 const checkinBody = document.getElementById('checkinBody');
 const checkinCount = document.getElementById('checkinCount');
+const checkinSort = document.getElementById('checkinSort');
+const checkinMinisterioSort = document.getElementById('checkinMinisterioSort');
 const navAdmin = document.getElementById('navAdmin');
 const navLider = document.getElementById('navLider');
 const navVoluntario = document.getElementById('navVoluntario');
@@ -769,6 +789,10 @@ function runWithTimeout(viewName, fetchFn, timeoutMs) {
 
 const LIST_PAGE_SIZE = 50;
 let voluntariosPageOffset = 0;
+let checkinsDisplayLimit = LIST_PAGE_SIZE;
+let checkinsMinisterioDisplayLimit = LIST_PAGE_SIZE;
+let checkinSortOrder = 'date-desc';
+let checkinMinisterioSortOrder = 'date-desc';
 
 const VIEW_META = {
   resumo: { title: 'Resumo', subtitle: 'Visão geral da plataforma e indicadores.', role: 'admin' },
@@ -832,6 +856,8 @@ function setView(view, options) {
   if (pageSubtitle) pageSubtitle.textContent = (meta && meta.subtitle) || '';
   if (searchBox) searchBox.style.display = (isAdmin || isLider || authRole === 'lider') && view === 'voluntarios' ? 'flex' : 'none';
   if (view === 'voluntarios') voluntariosPageOffset = 0;
+  if (view === 'checkin') resetCheckinsListPage();
+  if (view === 'checkin-ministerio') resetCheckinsMinisterioListPage();
   if (!options.skipFetch) {
     const viewsWithFetch = ['eventos-checkin', 'cultos-recorrentes', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'];
     viewsWithFetch.forEach(v => setViewLoading(v, false)); // Limpa loading de todas as views primeiro
@@ -938,6 +964,7 @@ async function fetchCheckins() {
     const data = await r.json();
     checkins = data.checkins || [];
     checkinResumo = data.resumo || {};
+    resetCheckinsListPage();
     renderCheckins();
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
@@ -991,6 +1018,7 @@ function fetchCheckinsWithFilters(opts) {
     }
     if (!dataFilter) populateCheckinDataSelect(checkins);
     if (dataOverride !== null && checkinData) checkinData.value = dataOverride;
+    resetCheckinsListPage();
     renderCheckins();
   }).catch(() => {});
 }
@@ -1448,6 +1476,7 @@ async function fetchCheckinsMinisterio() {
     checkinsMinisterio = data.checkins || [];
     checkinMinisterioResumo = data.resumo || {};
     if (currentView !== 'checkin-ministerio') return;
+    resetCheckinsMinisterioListPage();
     renderCheckinsMinisterio();
     const dateSelect = document.getElementById('checkinMinisterioData');
     if (dateSelect) {
@@ -1467,18 +1496,23 @@ async function fetchCheckinsMinisterio() {
 }
 
 function renderCheckinsMinisterio() {
-  const total = (checkinsMinisterio || []).length;
+  const sorted = sortCheckinsList(checkinsMinisterio, checkinMinisterioSortOrder);
+  const total = sorted.length;
   const totalEl = document.getElementById('checkinMinisterioTotal');
   const countEl = document.getElementById('checkinMinisterioCount');
   const bodyEl = document.getElementById('checkinMinisterioBody');
   if (totalEl) totalEl.textContent = total;
   if (countEl) countEl.textContent = `(${total})`;
+  const listCountEl = document.getElementById('checkinMinisterioListCount');
+  if (listCountEl) listCountEl.textContent = total;
   if (!bodyEl) return;
-  if (!checkinsMinisterio.length) {
+  if (!total) {
     bodyEl.innerHTML = '<tr><td colspan="5">Nenhum voluntário confirmou presença no seu ministério para o filtro selecionado. Quando fizerem check-in, aparecerão aqui.</td></tr>';
+    updateCheckinMinisterioRangeAndMore(0, 0);
     return;
   }
-  const list = checkinsMinisterio.slice(0, LIST_PAGE_SIZE);
+  const shown = Math.min(checkinsMinisterioDisplayLimit, total);
+  const list = sorted.slice(0, shown);
   bodyEl.innerHTML = list.map(c => {
     const email = (c.email || '').toLowerCase().trim();
     const batizadoLabel = c.batizado === true ? 'Sim' : (c.batizado === false ? 'Não' : '—');
@@ -1490,12 +1524,10 @@ function renderCheckinsMinisterio() {
       <td>${escapeHtml(c.timestamp || '—')}</td>
     </tr>`;
   }).join('');
-  if (checkinsMinisterio.length > LIST_PAGE_SIZE) {
-    bodyEl.innerHTML += `<tr><td colspan="5" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${checkinsMinisterio.length}.</td></tr>`;
-  }
   bodyEl.querySelectorAll('.link-voluntario').forEach(btn => {
     btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email'), { checkinsList: checkinsMinisterio }));
   });
+  updateCheckinMinisterioRangeAndMore(total, shown);
 }
 
 function exportCheckinsMinisterioCsv() {
@@ -2074,16 +2106,26 @@ async function fetchEventosHoje() {
       return;
     }
     if (currentView !== 'checkin-hoje') return;
+    const abertos = list.filter((e) => e.checkinAberto !== false);
     if (eventosHojeList) {
-      if (!list.length) {
-        eventosHojeList.innerHTML = '<p class="auth-subtitle">Nenhum evento de check-in aberto para hoje. O admin precisa criar um evento para o dia do culto e deixá-lo <strong>ativo</strong>.</p>';
+      if (!abertos.length) {
+        const hint = list.length
+          ? 'Há evento(s) hoje, mas o check-in ainda não está na janela de horário ou foi encerrado.'
+          : 'Nenhum evento de check-in para hoje. O administrador precisa criar/ativar o evento do culto.';
+        eventosHojeList.innerHTML = '<p class="auth-subtitle">' + hint + '</p>';
         if (formConfirmarCheckin) formConfirmarCheckin.style.display = 'none';
+        eventoSelecionadoHoje = null;
       } else {
-        eventoSelecionadoHoje = list[0]._id;
-        eventosHojeList.innerHTML = list.map(e => {
+        eventoSelecionadoHoje = abertos[0]._id;
+        eventosHojeList.innerHTML = abertos.map(e => {
           const d = new Date(e.data);
           const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
-          return `<div class="kpi-card evento-hoje-card" style="margin-bottom:12px"><strong>${escapeHtml(label)}</strong><br><small>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })} (Brasília)</small></div>`;
+          const hin = (e.horarioInicio || '').trim();
+          const hfi = (e.horarioFim || '').trim();
+          const horarioTxt = (hin || hfi)
+            ? '<br><small>Check-in: ' + escapeHtml(hin || '00:00') + ' – ' + escapeHtml(hfi || '23:59') + ' (Brasília)</small>'
+            : '<br><small>Check-in disponível o dia todo (Brasília)</small>';
+          return '<div class="kpi-card evento-hoje-card" style="margin-bottom:12px"><strong>' + escapeHtml(label) + '</strong>' + horarioTxt + '</div>';
         }).join('');
         if (formConfirmarCheckin) formConfirmarCheckin.style.display = 'block';
         if (confirmarMinisterio && confirmarMinisterio.options.length <= 1) {
@@ -3114,12 +3156,49 @@ function getCheckinCountByEmail() {
   return map;
 }
 
+function getCheckinTimestampMs(c) {
+  if (c == null) return 0;
+  if (c.timestampMs != null && Number.isFinite(Number(c.timestampMs))) return Number(c.timestampMs);
+  if (c.dataCheckin) {
+    const d = new Date(c.dataCheckin);
+    if (!Number.isNaN(d.getTime())) return d.getTime();
+  }
+  if (c.timestamp) {
+    const d = new Date(c.timestamp);
+    if (!Number.isNaN(d.getTime())) return d.getTime();
+  }
+  return 0;
+}
+
+function sortCheckinsList(list, order) {
+  const arr = Array.isArray(list) ? [...list] : [];
+  const sortKey = order || checkinSortOrder || 'date-desc';
+  return arr.sort((a, b) => {
+    if (sortKey === 'date-asc') return getCheckinTimestampMs(a) - getCheckinTimestampMs(b);
+    if (sortKey === 'nome-asc') {
+      return String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR', { sensitivity: 'base' });
+    }
+    if (sortKey === 'ministerio-asc') {
+      return String(a.ministerio || '').localeCompare(String(b.ministerio || ''), 'pt-BR', { sensitivity: 'base' });
+    }
+    return getCheckinTimestampMs(b) - getCheckinTimestampMs(a);
+  });
+}
+
+function resetCheckinsListPage() {
+  checkinsDisplayLimit = LIST_PAGE_SIZE;
+}
+
+function resetCheckinsMinisterioListPage() {
+  checkinsMinisterioDisplayLimit = LIST_PAGE_SIZE;
+}
+
 function getFilteredCheckins() {
   const q = (checkinSearch?.value || '').trim().toLowerCase();
   const list = Array.isArray(checkins) ? checkins : [];
   const countMap = checkinFilters.qtdCheckins ? getCheckinCountByEmail() : null;
   const qtdTarget = checkinFilters.qtdCheckins ? parseInt(checkinFilters.qtdCheckins, 10) : 0;
-  return list.filter(c => {
+  const filtered = list.filter(c => {
     if (checkinFilters.ministerio) {
       const m = String(c.ministerio || '').trim();
       if (m !== checkinFilters.ministerio) return false;
@@ -3137,6 +3216,33 @@ function getFilteredCheckins() {
     }
     return true;
   });
+  return sortCheckinsList(filtered, checkinSortOrder);
+}
+
+function updateCheckinRangeAndMore(total, shown) {
+  const rangeEl = document.getElementById('checkinRange');
+  const btnMore = document.getElementById('btnVerMaisCheckins');
+  if (!rangeEl) return;
+  if (total <= LIST_PAGE_SIZE) {
+    rangeEl.textContent = '';
+    if (btnMore) btnMore.style.display = 'none';
+    return;
+  }
+  rangeEl.textContent = shown < total ? ` — exibindo 1–${shown} de ${total}` : ` — exibindo todos os ${total}`;
+  if (btnMore) btnMore.style.display = shown < total ? 'inline-block' : 'none';
+}
+
+function updateCheckinMinisterioRangeAndMore(total, shown) {
+  const rangeEl = document.getElementById('checkinMinisterioRange');
+  const btnMore = document.getElementById('btnVerMaisCheckinMinisterio');
+  if (!rangeEl) return;
+  if (total <= LIST_PAGE_SIZE) {
+    rangeEl.textContent = '';
+    if (btnMore) btnMore.style.display = 'none';
+    return;
+  }
+  rangeEl.textContent = shown < total ? ` — exibindo 1–${shown} de ${total}` : ` — exibindo todos os ${total}`;
+  if (btnMore) btnMore.style.display = shown < total ? 'inline-block' : 'none';
 }
 
 function updateCheckinFilters() {
@@ -3161,6 +3267,7 @@ function updateCheckinFilters() {
 
 function setCheckinFilter(key, value) {
   checkinFilters[key] = value || '';
+  resetCheckinsListPage();
   renderCheckins();
 }
 
@@ -3169,6 +3276,7 @@ function clearCheckinFilters() {
   checkinFilters.qtdCheckins = '';
   if (checkinSearch) checkinSearch.value = '';
   if (checkinQtdCheckins) checkinQtdCheckins.value = '';
+  resetCheckinsListPage();
   renderCheckins();
 }
 
@@ -3216,7 +3324,8 @@ function renderCheckinTable(list) {
   if (!checkinBody) return;
   checkinBody.innerHTML = '';
   const total = list.length;
-  const slice = list.slice(0, LIST_PAGE_SIZE);
+  const shown = Math.min(checkinsDisplayLimit, total);
+  const slice = list.slice(0, shown);
   slice.forEach(c => {
     const tr = document.createElement('tr');
     const email = (c.email || '').toLowerCase();
@@ -3230,17 +3339,11 @@ function renderCheckinTable(list) {
     `;
     checkinBody.appendChild(tr);
   });
-  if (total > LIST_PAGE_SIZE) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="5" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${total} check-ins.</td>`;
-    checkinBody.appendChild(tr);
-  }
   checkinBody.querySelectorAll('.link-voluntario').forEach(btn => {
     btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email')));
   });
   if (checkinCount) checkinCount.textContent = total;
-  const rangeEl = document.getElementById('checkinRange');
-  if (rangeEl) rangeEl.textContent = total > LIST_PAGE_SIZE ? ` — exibindo 1–${LIST_PAGE_SIZE} de ${total}` : '';
+  updateCheckinRangeAndMore(total, shown);
 }
 
 function exportCheckinsCsv() {
@@ -3321,10 +3424,10 @@ async function fetchEscalasCriar() {
       return;
     }
     const data = await r.json().catch(() => null);
-    escalasList = Array.isArray(data) ? data : [];
+    escalasList = sortEscalasByDataDesc(Array.isArray(data) ? data : []);
     renderEscalasCriar();
     authFetch(`${API_BASE}/api/escalas`).then(r2 => r2.ok ? r2.json() : null).then(full => {
-      if (Array.isArray(full)) { escalasList = full; renderEscalasCriar(); }
+      if (Array.isArray(full)) { escalasList = sortEscalasByDataDesc(full); renderEscalasCriar(); }
     }).catch(() => {});
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
@@ -3371,7 +3474,7 @@ async function fetchEscalas() {
       return;
     }
     const data = await r.json().catch(() => null);
-    escalasList = Array.isArray(data) ? data : [];
+    escalasList = sortEscalasByDataDesc(Array.isArray(data) ? data : []);
     candidaturasAll = [];
     renderEscalasCandidatos();
     if (escalasPreSelectId) {
@@ -3384,7 +3487,7 @@ async function fetchEscalas() {
     authFetch(`${API_BASE}/api/escalas`).then(r2 => r2.ok ? r2.json() : null).then(full => {
       if (Array.isArray(full)) {
         const prevEscalaId = candidaturasAnaliseFilters?.escalaId || document.getElementById('analiseFilterEscala')?.value;
-        escalasList = full;
+        escalasList = sortEscalasByDataDesc(full);
         renderEscalasCandidatos();
         if (prevEscalaId) {
           const sel = document.getElementById('analiseFilterEscala');
@@ -3852,11 +3955,14 @@ function renderEscalasCriar() {
   if (!container) return;
   const rows = escalasList.map(e => {
     const data = formatEscalaDateOnly(e.data);
-    const ativo = e.ativo !== false;
+    const aberta = e.candidaturaAberta === true;
+    const ativoFlag = e.ativo !== false;
+    const statusLabel = aberta ? 'Aberta' : (ativoFlag ? 'Fora do prazo' : 'Inscrições fechadas');
+    const statusClass = aberta ? 'evento-status-ativo' : 'evento-status-inativo';
     return `<tr>
       <td data-label="Nome">${escapeHtml(e.nome)}</td>
       <td data-label="Data">${data}</td>
-      <td data-label="Status"><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${ativo ? 'Aberta' : 'Inscrições fechadas'}</span></td>
+      <td data-label="Status"><span class="evento-status ${statusClass}">${statusLabel}</span></td>
       <td data-label="Candidatos">${e.totalCandidaturas || 0} <span style="color:var(--text-muted);font-size:.8em">(${e.totalAprovados || 0} aprovados)</span></td>
       <td class="escala-actions-cell" data-label="Link"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-link="${escapeAttr(String(e._id))}" title="Copiar link (qualquer ministério)">Copiar link</button> <button class="btn btn-sm btn-ghost" data-escala-link-ministerio="${escapeAttr(String(e._id))}" title="Link só para um ministério">Por ministério</button></td>
       <td class="escala-actions-cell" data-label="">
@@ -4272,7 +4378,9 @@ function renderEscalasCandidatosLider() {
     : (authMinisterioNome ? [authMinisterioNome] : []);
   const leaderMinisteriosClean = [...new Set(leaderMinisterios.map(m => String(m || '').trim()).filter(Boolean))];
 
-  const openEscalas = (Array.isArray(escalasList) ? escalasList : []).filter(e => e && e.ativo !== false);
+  const openEscalas = sortEscalasByDataAsc(
+    (Array.isArray(escalasList) ? escalasList : []).filter((e) => e && e.candidaturaAberta === true),
+  );
   const ig = getTenantSlugForLinks();
 
   const openLinksHtml = (openEscalas.length && leaderMinisteriosClean.length)
@@ -4347,13 +4455,13 @@ function renderEscalasVoluntario(list, openEscalas) {
   const container = document.getElementById('escalasContent');
   if (!container) return;
   const myCands = Array.isArray(list) ? list : [];
-  const openList = Array.isArray(openEscalas) ? openEscalas : [];
-  const openEscala = openList.length ? openList[0] : null; // /api/escalas?light=1 vem ordenado por createdAt desc
-  const openEscalaId = openEscala?._id ? String(openEscala._id) : '';
-  const candOpen = openEscalaId ? myCands.find((c) => String(c.escalaId) === openEscalaId) : null;
+  const openList = sortEscalasByDataAsc(Array.isArray(openEscalas) ? openEscalas : []);
 
   const renderCtaEscalaAberta = () => {
-    if (!openEscala) return '';
+    if (!openList.length) return '';
+    return openList.map((openEscala) => {
+    const openEscalaId = openEscala?._id ? String(openEscala._id) : '';
+    const candOpen = openEscalaId ? myCands.find((c) => String(c.escalaId) === openEscalaId) : null;
     const hasCand = !!candOpen;
     const status = candOpen ? statusEscalaBadge(candOpen.status) : '';
     const btnDisabled = hasCand ? 'disabled' : '';
@@ -4368,35 +4476,42 @@ function renderEscalasVoluntario(list, openEscalas) {
             </div>
             ${status ? `<div style="margin-top:4px">${status}</div>` : ''}
           </div>
-          <button type="button" class="btn btn-primary btn-sm" id="btnMeCandidatarEscalaAberta" ${btnDisabled}>
+          <button type="button" class="btn btn-primary btn-sm btn-me-candidatar-escala" data-escala-id="${escapeAttr(openEscalaId)}" ${btnDisabled}>
             ${escapeHtml(btnLabel)}
           </button>
         </div>
         ${hasCand ? `<div style="margin-top:8px;color:var(--text-muted);font-size:.88em">Seu status atual pode ser conferido na lista abaixo.</div>` : ''}
-      </div>
-    `;
+      </div>`;
+    }).join('');
+  };
+
+  const bindCtaButtons = () => {
+    container.querySelectorAll('.btn-me-candidatar-escala, #btnMeCandidatarEscalaAberta').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const escalaId = btn.getAttribute('data-escala-id') || (openList[0] && String(openList[0]._id));
+        if (!escalaId || btn.disabled) return;
+        showEscalaPublicOverlay();
+        loadEscalaPublic(escalaId, '');
+      });
+    });
   };
 
   if (myCands.length === 0) {
-    if (openEscala) {
+    if (openList.length) {
       container.innerHTML = `
         ${renderCtaEscalaAberta()}
         <div class="filters-card">
           <p class="auth-subtitle">Você ainda não se candidatou para nenhuma escala. Use o botão acima para se inscrever.</p>
         </div>
       `;
-      container.querySelector('#btnMeCandidatarEscalaAberta')?.addEventListener('click', () => {
-        if (!openEscala) return;
-        showEscalaPublicOverlay();
-        loadEscalaPublic(String(openEscala._id), '');
-      });
+      bindCtaButtons();
       return;
     }
-    container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Você ainda não se candidatou para nenhuma escala. Quando existir uma escala aberta, você verá o botão para se candidatar aqui.</p></div>';
+    container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Você ainda não se candidatou para nenhuma escala. Quando existir uma escala aberta para o próximo culto, você verá o botão para se candidatar aqui.</p></div>';
     return;
   }
 
-  const rows = list.map(c => {
+  const rows = myCands.map(c => {
     const data = formatEscalaDateOnly(c.escalaData);
     return `<tr>
       <td data-label="Escala">${escapeHtml(c.escalaNome || '—')}</td>
@@ -4419,11 +4534,7 @@ function renderEscalasVoluntario(list, openEscalas) {
     </div>
   `;
 
-  container.querySelector('#btnMeCandidatarEscalaAberta')?.addEventListener('click', () => {
-    if (!openEscala) return;
-    showEscalaPublicOverlay();
-    loadEscalaPublic(String(openEscala._id), '');
-  });
+  bindCtaButtons();
 }
 
 let candidaturasEscalaList = [];
@@ -5358,8 +5469,26 @@ document.getElementById('btnVerMaisVoluntarios')?.addEventListener('click', () =
   renderTable(getFilteredVoluntarios());
 });
 checkinMinisterio?.addEventListener('change', () => { checkinFilters.ministerio = checkinMinisterio?.value || ''; fetchCheckinsWithFilters(); });
-checkinSearch?.addEventListener('input', debounce(() => renderCheckins(), 300));
-checkinQtdCheckins?.addEventListener('change', () => { checkinFilters.qtdCheckins = checkinQtdCheckins?.value || ''; renderCheckins(); });
+checkinSearch?.addEventListener('input', debounce(() => { resetCheckinsListPage(); renderCheckins(); }, 300));
+checkinQtdCheckins?.addEventListener('change', () => { checkinFilters.qtdCheckins = checkinQtdCheckins?.value || ''; resetCheckinsListPage(); renderCheckins(); });
+checkinSort?.addEventListener('change', () => {
+  checkinSortOrder = checkinSort.value || 'date-desc';
+  resetCheckinsListPage();
+  renderCheckins();
+});
+document.getElementById('btnVerMaisCheckins')?.addEventListener('click', () => {
+  checkinsDisplayLimit += LIST_PAGE_SIZE;
+  renderCheckinTable(getFilteredCheckins());
+});
+checkinMinisterioSort?.addEventListener('change', () => {
+  checkinMinisterioSortOrder = checkinMinisterioSort.value || 'date-desc';
+  resetCheckinsMinisterioListPage();
+  renderCheckinsMinisterio();
+});
+document.getElementById('btnVerMaisCheckinMinisterio')?.addEventListener('click', () => {
+  checkinsMinisterioDisplayLimit += LIST_PAGE_SIZE;
+  renderCheckinsMinisterio();
+});
 btnClearCheckinFilters?.addEventListener('click', () => {
   if (checkinData) checkinData.value = '';
   if (checkinEvento) checkinEvento.value = '';
@@ -5697,7 +5826,10 @@ document.getElementById('btnUserRoleBack')?.addEventListener('click', () => {
 
 document.getElementById('btnRefreshCheckinMinisterio')?.addEventListener('click', () => fetchCheckinsMinisterio());
 document.getElementById('btnExportCheckinMinisterio')?.addEventListener('click', () => exportCheckinsMinisterioCsv());
-document.getElementById('checkinMinisterioData')?.addEventListener('change', () => fetchCheckinsMinisterio());
+document.getElementById('checkinMinisterioData')?.addEventListener('change', () => {
+  resetCheckinsMinisterioListPage();
+  fetchCheckinsMinisterio();
+});
 document.getElementById('btnExportCheckinsCsv')?.addEventListener('click', () => exportCheckinsCsv());
 document.getElementById('btnExportFormularioMembroCsv')?.addEventListener('click', () => exportFormularioMembroCsv());
 document.getElementById('btnExportFormularioConsolidacaoCsv')?.addEventListener('click', () => exportFormularioConsolidacaoCsv());
