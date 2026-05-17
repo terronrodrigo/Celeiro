@@ -207,6 +207,11 @@ export async function initPostgres(connectionString) {
   `);
   const { migrateCultosRecorrentesSchema } = await import('./cultos-recorrentes.js');
   await migrateCultosRecorrentesSchema();
+  const { migrateConvitesLiderSchema } = await import('./convites-lider.js');
+  await migrateConvitesLiderSchema();
+  const { migrateAuthSessionsSchema, pgPurgeExpiredAuthSessions } = await import('./auth-sessions.js');
+  await migrateAuthSessionsSchema();
+  await pgPurgeExpiredAuthSessions().catch(() => {});
   await seedIfEmpty();
   return pool;
 }

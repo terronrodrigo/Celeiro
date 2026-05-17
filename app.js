@@ -373,7 +373,7 @@ function clearUserContent() {
 function setAuthSession(data) {
   clearUserContent();
   authToken = data?.token || '';
-  authVerified = true;
+  authVerified = false;
   const user = data?.user;
   authUser = typeof user === 'string' ? user : (user?.nome || user?.email || '');
   const rawRole = (user && user.role) != null ? user.role : (data?.role != null ? data.role : 'admin');
@@ -506,11 +506,12 @@ function getAuthHeaders() {
 }
 
 async function authFetch(url, options = {}) {
+  const tokenAtRequest = authToken;
   const headers = { ...(options.headers || {}), ...getAuthHeaders() };
   const slug = getTenantSlugForLinks();
   if (slug) headers['X-Igreja-Slug'] = slug;
   const r = await fetch(url, { ...options, headers });
-  if (r.status === 401) {
+  if (r.status === 401 && authToken && authToken === tokenAtRequest) {
     clearAuthSession();
     throw new Error('AUTH_REQUIRED');
   }
@@ -519,9 +520,17 @@ async function authFetch(url, options = {}) {
 
 async function verifyAuth() {
   if (!authToken) return false;
+  const tokenAtStart = authToken;
   try {
-    const r = await authFetch(`${API_BASE}/api/me`);
-    if (!r.ok) return false;
+    const headers = { Authorization: `Bearer ${tokenAtStart}` };
+    const slug = getTenantSlugForLinks();
+    if (slug) headers['X-Igreja-Slug'] = slug;
+    const r = await fetch(`${API_BASE}/api/me`, { headers });
+    if (authToken !== tokenAtStart) return false;
+    if (!r.ok) {
+      if (authToken === tokenAtStart) clearAuthSession();
+      return false;
+    }
     const data = await r.json();
     authUser = (data.user != null ? data.user : authUser);
     if (typeof authUser === 'object') authUser = authUser?.nome || authUser?.email || '';
@@ -559,7 +568,7 @@ async function verifyAuth() {
     updateAuthUi();
     return true;
   } catch (e) {
-    clearAuthSession();
+    if (authToken === tokenAtStart) clearAuthSession();
     return false;
   }
 }
@@ -664,6 +673,11 @@ const VOLUNTARIO_VIEWS = ['perfil', 'checkin-hoje', 'meus-checkins', 'escalas'];
 
 let currentView = '';
 let ministrosList = [];
+/** Links de cadastro de líder por ministério (admin). */
+let convitesLiderByMinId = {};
+let convitesLiderBulkText = '';
+/** Token do link ?convite-lider= (cadastro público de líder). */
+let conviteLiderToken = '';
 let usersList = [];
 let checkinsMinisterio = [];
 let checkinMinisterioResumo = {};
@@ -940,10 +954,80 @@ async function fetchMinistros() {
     const r = await authFetch(`${API_BASE}/api/ministros`);
     if (!r.ok) return;
     ministrosList = await r.json();
+    await fetchConvitesLider();
     if (currentView !== 'ministros') return;
     renderMinistros();
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
   finally { setViewLoading('ministros', false); }
+}
+
+async function fetchConvitesLider() {
+  try {
+    const r = await authFetch(`${API_BASE}/api/convites-lider`);
+    if (!r.ok) return;
+    const data = await r.json().catch(() => ({}));
+    const list = data.convites || [];
+    convitesLiderByMinId = {};
+    list.forEach((c) => {
+      if (c.ministerioId) convitesLiderByMinId[String(c.ministerioId)] = c;
+    });
+    updateConvitesLiderBulkUi();
+  } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
+}
+
+function formatConvitesLiderBulkText(convites) {
+  return (convites || [])
+    .filter((c) => c.link)
+    .map((c) => `${c.ministerioNome || 'Ministério'}:\n${c.link}`)
+    .join('\n\n');
+}
+
+function updateConvitesLiderBulkUi() {
+  const wrap = document.getElementById('convitesLiderBulkWrap');
+  const pre = document.getElementById('convitesLiderBulkText');
+  const btnCopyAll = document.getElementById('btnCopiarTodosConvitesLider');
+  if (!convitesLiderBulkText) {
+    if (wrap) wrap.style.display = 'none';
+    if (btnCopyAll) btnCopyAll.disabled = true;
+    return;
+  }
+  if (wrap) wrap.style.display = 'block';
+  if (pre) pre.textContent = convitesLiderBulkText;
+  if (btnCopyAll) btnCopyAll.disabled = false;
+}
+
+async function gerarConviteLider(ministerioId, { regenerar = false } = {}) {
+  const r = await authFetch(`${API_BASE}/api/convites-lider/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ministerioId, regenerar }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'Falha ao gerar link.');
+  if (data.ministerioId) {
+    convitesLiderByMinId[String(data.ministerioId)] = {
+      ministerioId: data.ministerioId,
+      ministerioNome: data.ministerioNome,
+      link: data.link,
+      expiresAt: data.expiresAt,
+    };
+  }
+  return data;
+}
+
+async function copiarLinkConviteLider(ministerioId) {
+  let link = convitesLiderByMinId[String(ministerioId)]?.link;
+  if (!link) {
+    const data = await gerarConviteLider(ministerioId);
+    link = data.link;
+  }
+  if (!link) { showToast('Não foi possível obter o link.', 'error'); return; }
+  try {
+    await navigator.clipboard.writeText(link);
+    showToast('Link copiado!', 'success');
+  } catch (_) {
+    prompt('Copie o link:', link);
+  }
 }
 
 function renderMinistros() {
@@ -959,10 +1043,12 @@ function renderMinistros() {
   tbody.innerHTML = list.map(m => {
     const lideres = m.lideres || [];
     const liderNomes = lideres.length ? lideres.map(l => escapeHtml(l.nome || l.email || '—')).join(', ') : '—';
+    const temLink = !!convitesLiderByMinId[String(m._id)]?.link;
     return `<tr data-ministerio-id="${escapeAttr(m._id)}">
       <td>${escapeHtml(m.nome || '—')}</td>
       <td>${liderNomes}</td>
       <td>
+        <button type="button" class="btn btn-sm btn-ghost" data-convite-lider="${escapeAttr(m._id)}" title="Link para o líder criar email e senha">${temLink ? 'Copiar link cadastro' : 'Gerar link cadastro'}</button>
         <button type="button" class="btn btn-sm btn-primary" data-assign-lider="${escapeAttr(m._id)}" data-ministerio-nome="${escapeAttr(m.nome || '')}">Definir líderes</button>
         <button type="button" class="btn btn-sm btn-ghost" data-edit-ministerio="${escapeAttr(m._id)}" data-edit-nome="${escapeAttr(m.nome || '')}">Editar</button>
         <button type="button" class="btn btn-sm btn-ghost" data-delete-ministerio="${escapeAttr(m._id)}" data-delete-nome="${escapeAttr(m.nome || '')}">Excluir</button>
@@ -972,6 +1058,15 @@ function renderMinistros() {
   if (ministrosList.length > LIST_PAGE_SIZE) {
     tbody.innerHTML += `<tr><td colspan="3" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${ministrosList.length} ministérios.</td></tr>`;
   }
+  tbody.querySelectorAll('[data-convite-lider]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-convite-lider');
+      btn.disabled = true;
+      try { await copiarLinkConviteLider(id); renderMinistros(); }
+      catch (err) { showToast(err.message || 'Erro ao gerar link.', 'error'); }
+      finally { btn.disabled = false; }
+    });
+  });
   tbody.querySelectorAll('[data-assign-lider]').forEach(btn => {
     btn.addEventListener('click', () => openAssignLider(btn.getAttribute('data-assign-lider'), btn.getAttribute('data-ministerio-nome')));
   });
@@ -4970,6 +5065,11 @@ async function handleLogin(e) {
     loginSucceeded = true;
     resetLoginIgrejaChoiceUi();
     setAuthSession(data);
+    const sessionOk = await verifyAuth();
+    if (!sessionOk) {
+      if (loginError) loginError.textContent = 'Login aceito, mas a sessão não foi validada. Tente de novo ou atualize a página.';
+      return;
+    }
     if (authMustChangePassword) {
       updateAuthUi();
       return;
@@ -5350,6 +5450,41 @@ formNovoEventoFormulario?.addEventListener('submit', async (e) => {
 });
 
 document.getElementById('btnNovoMinisterio')?.addEventListener('click', () => { document.getElementById('ministerioNome').value = ''; document.getElementById('modalNovoMinisterio')?.classList.add('open'); });
+document.getElementById('btnGerarTodosConvitesLider')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btnGerarTodosConvitesLider');
+  if (btn) { btn.disabled = true; btn.textContent = 'Gerando...'; }
+  try {
+    const r = await authFetch(`${API_BASE}/api/convites-lider/generate-all`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regenerar: false }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Falha ao gerar links.');
+    (data.convites || []).forEach((c) => {
+      if (c.ministerioId) convitesLiderByMinId[String(c.ministerioId)] = c;
+    });
+    convitesLiderBulkText = formatConvitesLiderBulkText(data.convites);
+    updateConvitesLiderBulkUi();
+    renderMinistros();
+    showToast(`${data.total || 0} link(s) gerado(s).`, 'success');
+  } catch (err) { showToast(err.message || 'Erro ao gerar links.', 'error'); }
+  finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Gerar links de cadastro (todos)'; }
+  }
+});
+document.getElementById('btnCopiarTodosConvitesLider')?.addEventListener('click', async () => {
+  if (!convitesLiderBulkText) {
+    showToast('Gere os links primeiro.', 'error');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(convitesLiderBulkText);
+    showToast('Todos os links copiados!', 'success');
+  } catch (_) {
+    prompt('Copie os links:', convitesLiderBulkText);
+  }
+});
 document.getElementById('formNovoMinisterio')?.addEventListener('submit', createMinisterio);
 document.getElementById('modalNovoMinisterioClose')?.addEventListener('click', () => document.getElementById('modalNovoMinisterio')?.classList.remove('open'));
 document.getElementById('modalNovoMinisterioCancel')?.addEventListener('click', () => document.getElementById('modalNovoMinisterio')?.classList.remove('open'));
@@ -5964,6 +6099,7 @@ function hideAllPublicOverlays() {
     'formularioApresentacaoPublicOverlay',
     'checkinPublicOverlay',
     'escalaPublicOverlay',
+    'conviteLiderOverlay',
   ].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
@@ -5976,7 +6112,7 @@ function hideAllPublicOverlays() {
 function clearPublicOverlayQueryParamsAndHash() {
   try {
     const url = new URL(window.location.href);
-    ['checkin', 'batismo', 'apresentacao', 'escala'].forEach((k) => url.searchParams.delete(k));
+    ['checkin', 'batismo', 'apresentacao', 'escala', 'convite-lider'].forEach((k) => url.searchParams.delete(k));
     url.hash = '';
     const qs = url.searchParams.toString();
     url.search = qs ? `?${qs}` : '';
@@ -6369,8 +6505,120 @@ function initPublicFormOrShell() {
     loadEscalaPublic(escalaParam, ministerioParam);
     return true;
   }
+  const conviteLiderParam = urlSearchParams.get('convite-lider');
+  if (conviteLiderParam) {
+    showConviteLiderPublicOverlay();
+    loadConviteLiderPublic(conviteLiderParam);
+    return true;
+  }
   return false;
 }
+
+function showConviteLiderPublicOverlay() {
+  preparePublicFormSession();
+  hideAllPublicOverlays();
+  const overlay = document.getElementById('conviteLiderOverlay');
+  const auth = document.getElementById('authOverlay');
+  const content = document.getElementById('content');
+  if (overlay) overlay.style.display = 'flex';
+  if (auth) auth.style.display = 'none';
+  if (content) content.style.display = 'none';
+}
+
+function hideConviteLiderPublicOverlay() {
+  const overlay = document.getElementById('conviteLiderOverlay');
+  if (overlay) overlay.style.display = 'none';
+  conviteLiderToken = '';
+  restoreAppShellFromPublicForm();
+  clearPublicOverlayQueryParamsAndHash();
+  updateAuthUi();
+  if (authToken && contentEl) contentEl.style.display = 'block';
+}
+
+async function loadConviteLiderPublic(token) {
+  conviteLiderToken = (token || '').trim();
+  const errEl = document.getElementById('conviteLiderError');
+  const labelEl = document.getElementById('conviteLiderMinisterioLabel');
+  const subEl = document.getElementById('conviteLiderSubtitle');
+  if (errEl) errEl.textContent = '';
+  if (labelEl) labelEl.textContent = 'Carregando...';
+  if (subEl) subEl.textContent = 'Cadastro de liderança';
+  try {
+    const r = await fetch(`${API_BASE}/api/convite-lider?token=${encodeURIComponent(conviteLiderToken)}`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (labelEl) labelEl.textContent = '';
+      if (errEl) errEl.textContent = data.error || 'Link inválido ou expirado.';
+      return;
+    }
+    if (labelEl) labelEl.textContent = `Ministério: ${data.ministerioNome || '—'}`;
+    if (subEl) subEl.textContent = data.igrejaNome ? `Igreja: ${data.igrejaNome}` : 'Cadastro de liderança';
+  } catch (_) {
+    if (labelEl) labelEl.textContent = '';
+    if (errEl) errEl.textContent = 'Erro ao carregar. Tente novamente.';
+  }
+}
+
+document.getElementById('linkSairConviteLider')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  hideConviteLiderPublicOverlay();
+  if (authOverlay) authOverlay.style.display = 'flex';
+});
+
+document.getElementById('conviteLiderForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('conviteLiderError');
+  const okEl = document.getElementById('conviteLiderSuccess');
+  if (errEl) errEl.textContent = '';
+  if (okEl) { okEl.style.display = 'none'; okEl.textContent = ''; }
+  if (!conviteLiderToken) {
+    if (errEl) errEl.textContent = 'Link inválido. Peça um novo link ao administrador.';
+    return;
+  }
+  const nome = (document.getElementById('conviteLiderNome')?.value || '').trim();
+  const email = (document.getElementById('conviteLiderEmail')?.value || '').trim().toLowerCase();
+  const senha = (document.getElementById('conviteLiderSenha')?.value || '').trim();
+  if (!nome || !email || !senha) {
+    if (errEl) errEl.textContent = 'Preencha nome, email e senha.';
+    return;
+  }
+  if (!email.includes('@')) {
+    if (errEl) errEl.textContent = 'Email inválido.';
+    return;
+  }
+  if (senha.length < 6) {
+    if (errEl) errEl.textContent = 'Senha deve ter no mínimo 6 caracteres.';
+    return;
+  }
+  const btn = document.getElementById('btnConviteLiderSubmit');
+  if (btn) { btn.disabled = true; btn.textContent = 'Criando conta...'; }
+  try {
+    const r = await fetch(`${API_BASE}/api/auth/register-lider`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: conviteLiderToken, nome, email, senha }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (errEl) errEl.textContent = data.error || 'Falha ao cadastrar.';
+      return;
+    }
+    hideConviteLiderPublicOverlay();
+    setAuthSession(data);
+    if (authOverlay) authOverlay.style.display = 'none';
+    if (contentEl) contentEl.style.display = 'block';
+    restoreAppShellFromPublicForm();
+    setView('checkin-ministerio');
+    await fetchCheckinsMinisterio();
+    await fetchMeusCheckins();
+    await fetchPerfil();
+    showToast(data.message || 'Conta criada!', 'success');
+  } catch (err) {
+    if (errEl) errEl.textContent = err.message || 'Erro de rede.';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Criar conta e entrar'; }
+  }
+});
 
 window.addEventListener('pageshow', function(ev) {
   if (ev.persisted) {
@@ -6379,7 +6627,8 @@ window.addEventListener('pageshow', function(ev) {
     var checkinId = params.get('checkin');
     var batismoId = params.get('batismo');
     var apresentacaoId = params.get('apresentacao');
-    if (escalaId || checkinId || batismoId || apresentacaoId) {
+    var conviteLiderId = params.get('convite-lider');
+    if (escalaId || checkinId || batismoId || apresentacaoId || conviteLiderId) {
       var loading = document.getElementById('loading');
       var appShell = document.querySelector('.app-shell');
       if (loading) loading.style.display = 'none';
@@ -6399,6 +6648,10 @@ window.addEventListener('pageshow', function(ev) {
       if (apresentacaoId) {
         var ov = document.getElementById('formularioApresentacaoPublicOverlay');
         if (ov) ov.style.display = 'block';
+      }
+      if (conviteLiderId) {
+        var ov = document.getElementById('conviteLiderOverlay');
+        if (ov) ov.style.display = 'flex';
       }
     }
   }

@@ -74,6 +74,13 @@ import {
   pgListCheckins, pgListCandidaturasByEscala, pgFindCandidaturaById,
   pgUpdateCandidaturaStatus, pgBulkUpdateCandidaturaStatus, pgCandidaturaStatsByEmails,
 } from './db/postgres/operational-data.js';
+import {
+  pgFindConviteByToken, pgUpsertConviteLider, pgListConvitesLider,
+  pgIncrementConviteUso, conviteLiderValido,
+} from './db/postgres/convites-lider.js';
+import {
+  pgSaveAuthSession, pgLoadAuthSession, pgDeleteAuthSession,
+} from './db/postgres/auth-sessions.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -177,13 +184,14 @@ const createAuthTokenForUser = async (user) => {
   const roleFinal = roleNorm === 'lider' || roleNorm.includes('lider') ? 'lider' : roleNorm;
   const igrejaIdStr = user.igrejaId ? String(user.igrejaId) : null;
   const isGlobalAdmin = roleFinal === 'admin' && !user.igrejaId;
-  authTokens.set(token, {
+  const sessionData = {
     user: user.nome, userId: user._id, role: roleFinal, email: user.email,
     ministerioId, ministerioNome, ministerioIds, ministerioNomes, expiresAt,
     mustChangePassword: !!user.mustChangePassword,
     igrejaId: igrejaIdStr,
     isGlobalAdmin,
-  });
+  };
+  await persistAuthToken(token, sessionData);
   return { token, expiresAt };
 };
 const whatsappHandler = createWhatsAppHandler({ createAuthTokenForUser });
@@ -211,6 +219,29 @@ const CACHE_TTL = (Number(process.env.CACHE_TTL_MINUTES) || 30) * 60 * 1000;
 
 const authTokens = new Map();
 
+async function persistAuthToken(token, data) {
+  authTokens.set(token, data);
+  if (isPostgres()) {
+    try {
+      await pgSaveAuthSession(token, data);
+    } catch (err) {
+      console.error('Erro ao persistir sessão:', err.message || err);
+    }
+  }
+}
+
+async function loadAuthTokenData(token) {
+  const cached = authTokens.get(token);
+  if (cached && !isTokenExpired(cached)) return cached;
+  if (!isPostgres()) return cached || null;
+  const fromPg = await pgLoadAuthSession(token);
+  if (fromPg) {
+    authTokens.set(token, fromPg);
+    return fromPg;
+  }
+  return null;
+}
+
 // Segurança: headers HTTP (Helmet) e rate limiting em rotas sensíveis
 app.use(helmet({ contentSecurityPolicy: false })); // CSP desativado para não quebrar recursos estáticos/APIs
 const authLimiter = rateLimit({
@@ -233,6 +264,7 @@ app.use('/api/login', authLimiter);
 app.use('/api/setup', authLimiter);
 app.use('/api/auth/login-email', authLimiter);
 app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/register-lider', cadastroLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
 app.use('/api/auth/reset-password', authLimiter);
 app.use('/api/cadastro', cadastroLimiter);
@@ -386,26 +418,31 @@ function isTokenExpired(data) {
   return Date.now() > data.expiresAt;
 }
 
-function requireAuth(req, res, next) {
-  const token = getAuthToken(req);
-  if (!token) return res.status(401).json({ error: 'Não autenticado.' });
-  const data = authTokens.get(token);
-  if (!data || isTokenExpired(data)) {
-    authTokens.delete(token);
-    return res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' });
+async function requireAuth(req, res, next) {
+  try {
+    const token = getAuthToken(req);
+    if (!token) return res.status(401).json({ error: 'Não autenticado.' });
+    const data = await loadAuthTokenData(token);
+    if (!data || isTokenExpired(data)) {
+      authTokens.delete(token);
+      if (isPostgres()) await pgDeleteAuthSession(token).catch(() => {});
+      return res.status(401).json({ error: 'Sessão expirada. Faça login novamente.' });
+    }
+    req.user = data.user;
+    req.userId = data.userId;
+    req.userRole = data.role || 'admin';
+    req.userEmail = data.email || null;
+    req.userMinisterioId = data.ministerioId || null;
+    req.userMinisterioNome = data.ministerioNome || null;
+    req.userMinisterioIds = Array.isArray(data.ministerioIds) ? data.ministerioIds : [];
+    req.userMinisterioNomes = Array.isArray(data.ministerioNomes) ? data.ministerioNomes : (data.ministerioNome ? [data.ministerioNome] : []);
+    req.authIgrejaIdStr = data.igrejaId != null && data.igrejaId !== '' ? String(data.igrejaId) : null;
+    req.authIsGlobalAdmin = data.isGlobalAdmin === true;
+    req.token = token;
+    next();
+  } catch (err) {
+    next(err);
   }
-  req.user = data.user;
-  req.userId = data.userId;
-  req.userRole = data.role || 'admin';
-  req.userEmail = data.email || null;
-  req.userMinisterioId = data.ministerioId || null;
-  req.userMinisterioNome = data.ministerioNome || null;
-  req.userMinisterioIds = Array.isArray(data.ministerioIds) ? data.ministerioIds : [];
-  req.userMinisterioNomes = Array.isArray(data.ministerioNomes) ? data.ministerioNomes : (data.ministerioNome ? [data.ministerioNome] : []);
-  req.authIgrejaIdStr = data.igrejaId != null && data.igrejaId !== '' ? String(data.igrejaId) : null;
-  req.authIsGlobalAdmin = data.isGlobalAdmin === true;
-  req.token = token;
-  next();
 }
 
 function requireAdmin(req, res, next) {
@@ -1015,9 +1052,11 @@ app.post('/api/login', async (req, res) => {
       } catch (_) {}
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
-      authTokens.set(token, {
+      await persistAuthToken(token, {
         user: ADMIN_USER, userId: null, role: 'admin', email: null, expiresAt,
         igrejaId: null, isGlobalAdmin: true,
+        ministerioId: null, ministerioNome: null, ministerioIds: [], ministerioNomes: [],
+        mustChangePassword: false,
       });
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       return res.json({
@@ -1179,8 +1218,9 @@ app.delete('/api/me/foto', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/logout', requireAuth, (req, res) => {
+app.post('/api/logout', requireAuth, async (req, res) => {
   authTokens.delete(req.token);
+  if (isPostgres()) await pgDeleteAuthSession(req.token).catch(() => {});
   invalidateCache();
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({ ok: true });
@@ -3047,6 +3087,163 @@ app.post('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao criar usuário.');
+  }
+});
+
+function buildConviteLiderPublicUrl(req, igrejaSlug, token) {
+  const base = (process.env.APP_URL || '').trim()
+    || `${req.protocol}://${req.get('host')}`;
+  return `${base.replace(/\/$/, '')}/?igreja=${encodeURIComponent(igrejaSlug)}&convite-lider=${encodeURIComponent(token)}`;
+}
+
+// GET /api/convite-lider — dados públicos do convite (sem auth)
+app.get('/api/convite-lider', async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Convites de líder disponíveis em modo PostgreSQL.');
+    const token = (req.query.token || '').toString().trim();
+    if (!token) return sendError(res, 400, 'Token ausente.');
+    const convite = await pgFindConviteByToken(token);
+    if (!convite) return sendError(res, 404, 'Link inválido ou expirado.');
+    if (!conviteLiderValido(convite)) return sendError(res, 410, 'Este link expirou. Peça um novo link ao administrador.');
+    res.json({
+      ministerioNome: convite.ministerioNome,
+      igrejaNome: convite.igrejaNome,
+      igrejaSlug: convite.igrejaSlug,
+    });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao validar convite.');
+  }
+});
+
+// POST /api/auth/register-lider — cadastro público de líder via link do ministério
+app.post('/api/auth/register-lider', async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Cadastro de líder disponível em modo PostgreSQL.');
+    const { token, nome, email, senha } = req.body || {};
+    const tok = String(token || '').trim();
+    const nomeVal = String(nome || '').trim();
+    const emailVal = String(email || '').trim().toLowerCase();
+    const senhaVal = String(senha || '');
+    if (!tok || !nomeVal || !emailVal || !senhaVal) {
+      return sendError(res, 400, 'Nome, email, senha e link são obrigatórios.');
+    }
+    if (!emailVal.includes('@')) return sendError(res, 400, 'Email inválido.');
+    if (senhaVal.length < 6) return sendError(res, 400, 'Senha deve ter no mínimo 6 caracteres.');
+
+    const convite = await pgFindConviteByToken(tok);
+    if (!convite || !conviteLiderValido(convite)) {
+      return sendError(res, 410, 'Link inválido ou expirado. Peça um novo link ao administrador.');
+    }
+
+    const bcrypt = (await import('bcryptjs')).default;
+    const hash = await bcrypt.hash(senhaVal, 10);
+    const existing = await pgFindUserByEmailInIgreja(convite.igrejaId, emailVal);
+    const ministerioIds = [...new Set([
+      ...(existing?.ministerioIds || []).map(String),
+      String(convite.ministerioId),
+    ])];
+    const { user, created } = await pgUpsertUserWithPasswordHash({
+      email: emailVal,
+      nome: nomeVal,
+      senhaHash: hash,
+      role: 'lider',
+      igrejaId: convite.igrejaId,
+      ministerioIds,
+      mustChangePassword: false,
+      ativo: true,
+    });
+
+    await pgIncrementConviteUso(tok);
+    invalidateCache();
+
+    const userRow = await pgFindUserById(user._id);
+    const { token: authToken, expiresAt } = await createAuthTokenForUser(userRow);
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.status(created ? 201 : 200).json({
+      message: created
+        ? 'Conta criada! Você já pode usar a plataforma.'
+        : 'Senha atualizada e acesso de líder restaurado para este ministério.',
+      token: authToken,
+      expiresAt,
+      user: {
+        ...user,
+        mustChangePassword: false,
+        igrejaId: convite.igrejaId,
+        igrejaNome: convite.igrejaNome,
+        igrejaSlug: convite.igrejaSlug,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao cadastrar líder.');
+  }
+});
+
+// GET /api/convites-lider — links de cadastro por ministério (admin)
+app.get('/api/convites-lider', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const list = await pgListConvitesLider(req.tenantIgrejaId);
+    const slug = req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG;
+    const convites = list.map((c) => ({
+      ...c,
+      link: c.token ? buildConviteLiderPublicUrl(req, slug, c.token) : null,
+    }));
+    res.json({ convites });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao listar convites.');
+  }
+});
+
+// POST /api/convites-lider/generate — gera ou renova link de um ministério
+app.post('/api/convites-lider/generate', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const ministerioId = (req.body?.ministerioId || '').toString().trim();
+    const regenerar = !!req.body?.regenerar;
+    if (!ministerioId) return sendError(res, 400, 'ministerioId é obrigatório.');
+    const mins = await pgListMinisterios(req.tenantIgrejaId);
+    const min = mins.find((x) => String(x._id) === ministerioId);
+    if (!min) return sendError(res, 404, 'Ministério não encontrado.');
+    const convite = await pgUpsertConviteLider(req.tenantIgrejaId, ministerioId, { regenerar });
+    const slug = req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG;
+    res.json({
+      ministerioId,
+      ministerioNome: min.nome,
+      link: buildConviteLiderPublicUrl(req, slug, convite.token),
+      expiresAt: convite.expiresAt,
+    });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao gerar convite.');
+  }
+});
+
+// POST /api/convites-lider/generate-all — gera links para todos os ministérios ativos
+app.post('/api/convites-lider/generate-all', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const regenerar = !!req.body?.regenerar;
+    const mins = await pgListMinisterios(req.tenantIgrejaId);
+    const slug = req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG;
+    const convites = [];
+    for (const m of mins) {
+      if (m.ativo === false) continue;
+      const convite = await pgUpsertConviteLider(req.tenantIgrejaId, m._id, { regenerar });
+      convites.push({
+        ministerioId: m._id,
+        ministerioNome: m.nome,
+        link: buildConviteLiderPublicUrl(req, slug, convite.token),
+        expiresAt: convite.expiresAt,
+      });
+    }
+    res.json({ convites, total: convites.length });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao gerar convites.');
   }
 });
 
