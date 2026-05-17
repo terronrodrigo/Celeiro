@@ -798,6 +798,9 @@ const LIST_PAGE_SIZE = 50;
 let voluntariosPageOffset = 0;
 let checkinsDisplayLimit = LIST_PAGE_SIZE;
 let checkinsMinisterioDisplayLimit = LIST_PAGE_SIZE;
+let eventosCheckinDisplayLimit = LIST_PAGE_SIZE;
+let eventosCheckinSortOrder = 'date-desc';
+const eventosCheckinFilters = { search: '', status: '' };
 let checkinSortOrder = 'date-desc';
 let checkinMinisterioSortOrder = 'date-desc';
 
@@ -1561,6 +1564,125 @@ function exportCheckinsMinisterioCsv() {
   URL.revokeObjectURL(a.href);
 }
 
+function getEventoDataMs(e) {
+  if (!e?.data) return 0;
+  const d = e.data instanceof Date ? e.data : new Date(e.data);
+  const t = d.getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function sortEventosCheckinList(list, order) {
+  const arr = Array.isArray(list) ? [...list] : [];
+  const sortKey = order || eventosCheckinSortOrder || 'date-desc';
+  return arr.sort((a, b) => {
+    if (sortKey === 'date-asc') return getEventoDataMs(a) - getEventoDataMs(b);
+    if (sortKey === 'label-asc') {
+      const la = (a.label || '').trim() || new Date(a.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
+      const lb = (b.label || '').trim() || new Date(b.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
+      return la.localeCompare(lb, 'pt-BR', { sensitivity: 'base' });
+    }
+    return getEventoDataMs(b) - getEventoDataMs(a);
+  });
+}
+
+function resetEventosCheckinListPage() {
+  eventosCheckinDisplayLimit = LIST_PAGE_SIZE;
+}
+
+function getFilteredEventosCheckin() {
+  const q = (eventosCheckinFilters.search || '').trim().toLowerCase();
+  const status = eventosCheckinFilters.status || '';
+  const list = Array.isArray(eventosCheckin) ? eventosCheckin : [];
+  const filtered = list.filter((e) => {
+    const ativo = e.ativo !== false;
+    if (status === 'ativo' && !ativo) return false;
+    if (status === 'inativo' && ativo) return false;
+    if (q) {
+      const d = new Date(e.data);
+      const label = (e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })).toLowerCase();
+      const dataStr = d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }).toLowerCase();
+      if (!label.includes(q) && !dataStr.includes(q)) return false;
+    }
+    return true;
+  });
+  return sortEventosCheckinList(filtered, eventosCheckinSortOrder);
+}
+
+function updateEventosCheckinRangeAndMore(total, shown) {
+  const rangeEl = document.getElementById('eventosCheckinRange');
+  const btnMore = document.getElementById('btnVerMaisEventosCheckin');
+  const countEl = document.getElementById('eventosCheckinCount');
+  if (countEl) countEl.textContent = total ? `(${total})` : '(0)';
+  if (!rangeEl) return;
+  if (total <= LIST_PAGE_SIZE) {
+    rangeEl.textContent = total ? ` ${total} evento${total === 1 ? '' : 's'}` : '';
+    if (btnMore) btnMore.style.display = 'none';
+    return;
+  }
+  rangeEl.textContent = shown < total ? ` — exibindo 1–${shown} de ${total}` : ` — exibindo todos os ${total}`;
+  if (btnMore) btnMore.style.display = shown < total ? 'inline-block' : 'none';
+}
+
+function renderEventoCheckinRowHtml(e) {
+  const eventId = (e._id != null ? String(e._id) : '');
+  const d = new Date(e.data);
+  const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
+  const hin = (e.horarioInicio || '').trim();
+  const hfi = (e.horarioFim || '').trim();
+  const horarioText = (hin || hfi) ? `${hin || '—'} – ${hfi || '—'} (Brasília)` : 'Dia inteiro (Brasília)';
+  const ativo = e.ativo !== false;
+  const statusText = ativo ? 'Ativo' : 'Inativo';
+  const btnLabel = ativo ? 'Desligar' : 'Ligar';
+  return `<tr data-event-id="${escapeAttr(eventId)}">
+    <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
+    <td>${escapeHtml(label)}</td>
+    <td>${escapeHtml(horarioText)}</td>
+    <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
+    <td><button type="button" class="btn btn-sm btn-primary" data-event-link="${escapeAttr(eventId)}" title="Copiar link para check-in público (qualquer pessoa)">Copiar link</button></td>
+    <td><button type="button" class="btn btn-sm btn-ghost" data-event-edit="${escapeAttr(eventId)}" title="Editar horários e status">Editar</button> <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-event-toggle="${escapeAttr(eventId)}">${btnLabel}</button> <button type="button" class="btn btn-sm btn-ghost" data-event-delete="${escapeAttr(eventId)}" title="Excluir evento">Excluir</button></td>
+  </tr>`;
+}
+
+function wireEventosCheckinTableActions() {
+  if (!eventosCheckinBody) return;
+  eventosCheckinBody.querySelectorAll('[data-event-edit]').forEach(btn => {
+    btn.addEventListener('click', () => openModalEditarEvento(btn.getAttribute('data-event-edit')));
+  });
+  eventosCheckinBody.querySelectorAll('[data-event-toggle]').forEach(btn => {
+    btn.addEventListener('click', () => toggleEventoAtivo(btn.getAttribute('data-event-toggle')));
+  });
+  eventosCheckinBody.querySelectorAll('[data-event-link]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-event-link');
+      const ig = encodeURIComponent(getTenantSlugForLinks());
+      const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}`;
+      const url = `${base}?checkin=${encodeURIComponent(id)}&igreja=${ig}`;
+      navigator.clipboard.writeText(url).then(() => alert('Link copiado! Compartilhe para as pessoas fazerem check-in (email + ministério).')).catch(() => prompt('Copie o link:', url));
+    });
+  });
+  eventosCheckinBody.querySelectorAll('[data-event-delete]').forEach(btn => {
+    btn.addEventListener('click', () => excluirEventoCheckin(btn.getAttribute('data-event-delete')));
+  });
+}
+
+function renderEventosCheckin() {
+  if (!eventosCheckinBody) return;
+  const filtered = getFilteredEventosCheckin();
+  const total = filtered.length;
+  const shown = Math.min(eventosCheckinDisplayLimit, total);
+  const displayList = filtered.slice(0, shown);
+  if (!total) {
+    const hasAny = (eventosCheckin || []).length > 0;
+    eventosCheckinBody.innerHTML = hasAny
+      ? '<tr><td colspan="6">Nenhum evento corresponde aos filtros.</td></tr>'
+      : '<tr><td colspan="6">Nenhum evento. Clique em "Novo evento de check-in" para criar.</td></tr>';
+  } else {
+    eventosCheckinBody.innerHTML = displayList.map(renderEventoCheckinRowHtml).join('');
+    wireEventosCheckinTableActions();
+  }
+  updateEventosCheckinRangeAndMore(total, shown);
+}
+
 async function fetchEventosCheckin() {
   if (!authToken) return;
   try {
@@ -1569,56 +1691,7 @@ async function fetchEventosCheckin() {
     const list = await r.json();
     if (currentView !== 'eventos-checkin') return;
     eventosCheckin = list || [];
-    const countEl = document.getElementById('eventosCheckinCount');
-    if (countEl) countEl.textContent = `(${eventosCheckin.length})`;
-    if (eventosCheckinBody) {
-      if (!eventosCheckin.length) {
-        eventosCheckinBody.innerHTML = '<tr><td colspan="6">Nenhum evento. Clique em "Novo evento de check-in" para criar.</td></tr>';
-      } else {
-        const displayList = eventosCheckin.slice(0, LIST_PAGE_SIZE);
-        eventosCheckinBody.innerHTML = displayList.map(e => {
-          const eventId = (e._id != null ? String(e._id) : '');
-          const d = new Date(e.data);
-          const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
-          const hin = (e.horarioInicio || '').trim();
-          const hfi = (e.horarioFim || '').trim();
-          const horarioText = (hin || hfi) ? `${hin || '—'} – ${hfi || '—'} (Brasília)` : 'Dia inteiro (Brasília)';
-          const ativo = e.ativo !== false;
-          const statusText = ativo ? 'Ativo' : 'Inativo';
-          const btnLabel = ativo ? 'Desligar' : 'Ligar';
-          return `<tr data-event-id="${escapeAttr(eventId)}">
-            <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
-            <td>${escapeHtml(label)}</td>
-            <td>${escapeHtml(horarioText)}</td>
-            <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
-            <td><button type="button" class="btn btn-sm btn-primary" data-event-link="${escapeAttr(eventId)}" title="Copiar link para check-in público (qualquer pessoa)">Copiar link</button></td>
-            <td><button type="button" class="btn btn-sm btn-ghost" data-event-edit="${escapeAttr(eventId)}" title="Editar horários e status">Editar</button> <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-event-toggle="${escapeAttr(eventId)}">${btnLabel}</button> <button type="button" class="btn btn-sm btn-ghost" data-event-delete="${escapeAttr(eventId)}" title="Excluir evento">Excluir</button></td>
-          </tr>`;
-        }).join('');
-        if (eventosCheckin.length > LIST_PAGE_SIZE) {
-          eventosCheckinBody.innerHTML += `<tr><td colspan="6" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${eventosCheckin.length} eventos.</td></tr>`;
-        }
-        eventosCheckinBody.querySelectorAll('[data-event-edit]').forEach(btn => {
-          btn.addEventListener('click', () => openModalEditarEvento(btn.getAttribute('data-event-edit')));
-        });
-        eventosCheckinBody.querySelectorAll('[data-event-toggle]').forEach(btn => {
-          btn.addEventListener('click', () => toggleEventoAtivo(btn.getAttribute('data-event-toggle')));
-        });
-        eventosCheckinBody.querySelectorAll('[data-event-link]').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const id = btn.getAttribute('data-event-link');
-            const ig = encodeURIComponent(getTenantSlugForLinks());
-            const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}`;
-            // ?igreja= é obrigatório em rotas públicas multi-tenant; sem isso o padrão vira celeiro-sp e o evento "some".
-            const url = `${base}?checkin=${encodeURIComponent(id)}&igreja=${ig}`;
-            navigator.clipboard.writeText(url).then(() => alert('Link copiado! Compartilhe para as pessoas fazerem check-in (email + ministério).')).catch(() => prompt('Copie o link:', url));
-          });
-        });
-        eventosCheckinBody.querySelectorAll('[data-event-delete]').forEach(btn => {
-          btn.addEventListener('click', () => excluirEventoCheckin(btn.getAttribute('data-event-delete')));
-        });
-      }
-    }
+    renderEventosCheckin();
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
   finally { setViewLoading('eventos-checkin', false); }
 }
@@ -5493,6 +5566,38 @@ checkinSort?.addEventListener('change', () => {
 document.getElementById('btnVerMaisCheckins')?.addEventListener('click', () => {
   checkinsDisplayLimit += LIST_PAGE_SIZE;
   renderCheckinTable(getFilteredCheckins());
+});
+document.getElementById('btnVerMaisEventosCheckin')?.addEventListener('click', () => {
+  eventosCheckinDisplayLimit += LIST_PAGE_SIZE;
+  renderEventosCheckin();
+});
+document.getElementById('eventosCheckinSearch')?.addEventListener('input', debounce(() => {
+  eventosCheckinFilters.search = document.getElementById('eventosCheckinSearch')?.value || '';
+  resetEventosCheckinListPage();
+  renderEventosCheckin();
+}, 300));
+document.getElementById('eventosCheckinStatus')?.addEventListener('change', () => {
+  eventosCheckinFilters.status = document.getElementById('eventosCheckinStatus')?.value || '';
+  resetEventosCheckinListPage();
+  renderEventosCheckin();
+});
+document.getElementById('eventosCheckinSort')?.addEventListener('change', () => {
+  eventosCheckinSortOrder = document.getElementById('eventosCheckinSort')?.value || 'date-desc';
+  resetEventosCheckinListPage();
+  renderEventosCheckin();
+});
+document.getElementById('btnClearEventosCheckinFilters')?.addEventListener('click', () => {
+  eventosCheckinFilters.search = '';
+  eventosCheckinFilters.status = '';
+  eventosCheckinSortOrder = 'date-desc';
+  const searchEl = document.getElementById('eventosCheckinSearch');
+  const statusEl = document.getElementById('eventosCheckinStatus');
+  const sortEl = document.getElementById('eventosCheckinSort');
+  if (searchEl) searchEl.value = '';
+  if (statusEl) statusEl.value = '';
+  if (sortEl) sortEl.value = 'date-desc';
+  resetEventosCheckinListPage();
+  renderEventosCheckin();
 });
 checkinMinisterioSort?.addEventListener('change', () => {
   checkinMinisterioSortOrder = checkinMinisterioSort.value || 'date-desc';

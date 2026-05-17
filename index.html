@@ -513,6 +513,33 @@
               <button type="button" class="btn btn-primary" id="btnNovoEvento">➕ Novo evento de check-in</button>
             </div>
           </section>
+          <section class="filters-row">
+            <div class="filters-card filters-grid">
+              <div class="form-group compact">
+                <label for="eventosCheckinSearch">Buscar</label>
+                <input type="text" id="eventosCheckinSearch" placeholder="Nome do evento">
+              </div>
+              <div class="form-group compact">
+                <label for="eventosCheckinStatus">Status</label>
+                <select id="eventosCheckinStatus">
+                  <option value="">Todos</option>
+                  <option value="ativo">Ativos</option>
+                  <option value="inativo">Inativos</option>
+                </select>
+              </div>
+              <div class="form-group compact">
+                <label for="eventosCheckinSort">Ordenar</label>
+                <select id="eventosCheckinSort">
+                  <option value="date-desc">Data (mais recente)</option>
+                  <option value="date-asc">Data (mais antiga)</option>
+                  <option value="label-asc">Nome (A–Z)</option>
+                </select>
+              </div>
+            </div>
+            <div class="filters-actions">
+              <button type="button" class="btn btn-ghost btn-sm" id="btnClearEventosCheckinFilters">Limpar filtros</button>
+            </div>
+          </section>
           <div id="eventosCheckinList" class="table-card">
             <div class="chart-header"><h2>Eventos de check-in</h2></div>
             <p class="auth-subtitle">Datas de culto para check-in. <span id="eventosCheckinCount" class="list-count">(0)</span></p>
@@ -521,6 +548,10 @@
                 <thead><tr><th>Data</th><th>Nome</th><th>Horário (SP)</th><th>Status</th><th>Link público</th><th>Ação</th></tr></thead>
                 <tbody id="eventosCheckinBody"></tbody>
               </table>
+            </div>
+            <div class="table-footer">
+              <span id="eventosCheckinRange" class="list-range"></span>
+              <button type="button" class="btn btn-ghost btn-sm" id="btnVerMaisEventosCheckin" style="display: none;">Ver mais</button>
             </div>
             <p class="form-hint" style="margin-top:8px">Use o botão "Copiar link" na coluna <strong>Link público</strong> para compartilhar: qualquer pessoa pode abrir o link, informar email e ministério e fazer o check-in (sem precisar de conta).</p>
           </div>
@@ -1638,6 +1669,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.4.1"></script>
+  <script defer src="app.js?v=1.4.2"></script>
 </body>
 </html>
