@@ -42,7 +42,7 @@ import {
 import {
   pgHasAdmin, pgCreateAdmin, pgFindUserById, pgFindUsersByEmail, pgFindMinisteriosByIds, pgFindIgrejaById,
   pgListMinisterios, pgFindMinisterioByNome, pgCreateMinisterio, pgLeadersByMinisterioId,
-  pgListUsers, pgFindUserByEmailInIgreja, pgCreateUser, pgUpdateUser,
+  pgListUsers, pgFindUserByEmailInIgreja, pgCreateUser, pgUpdateUser, pgUpsertUserWithPasswordHash,
 } from './db/postgres/repos.js';
 import {
   pgListEscalas, pgFindEscalaById, pgCreateEscala, pgUpdateEscala, pgCountCandidaturasByEscala,
@@ -3207,8 +3207,12 @@ app.post('/api/auth/register-lider', async (req, res) => {
     const bcrypt = (await import('bcryptjs')).default;
     const hash = await bcrypt.hash(senhaVal, 10);
     const existing = await pgFindUserByEmailInIgreja(convite.igrejaId, emailVal);
+    const normalizeMinisterioId = (m) => {
+      if (m && typeof m === 'object' && m._id != null) return String(m._id);
+      return String(m || '').trim();
+    };
     const ministerioIds = [...new Set([
-      ...(existing?.ministerioIds || []).map(String),
+      ...(existing?.ministerioIds || []).map(normalizeMinisterioId).filter(Boolean),
       String(convite.ministerioId),
     ])];
     const { user, created } = await pgUpsertUserWithPasswordHash({
