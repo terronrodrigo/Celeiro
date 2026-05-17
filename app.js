@@ -122,6 +122,9 @@ let authMustChangePassword = false;
 let authIsMasterAdmin = false;
 let authIsGlobalAdmin = false;
 let authVerified = false;
+/** Incrementado a cada login/setAuth; evita verify da página apagar sessão nova. */
+let authVerifyGeneration = 0;
+let loginInProgress = false;
 let eventosCheckin = [];
 let eventosBatismo = [];
 let eventosApresentacao = [];
@@ -376,6 +379,7 @@ function clearUserContent() {
 }
 
 function setAuthSession(data, { verified = false } = {}) {
+  authVerifyGeneration += 1;
   clearUserContent();
   authToken = data?.token || '';
   authVerified = !!verified;
@@ -548,7 +552,7 @@ async function verifyAuth() {
     if (slug) headers['X-Igreja-Slug'] = slug;
     const r = await fetch(`${API_BASE}/api/me`, { headers });
     if (authToken !== tokenAtStart) {
-      return { ok: false, status: 0, error: 'Verificação cancelada (nova tentativa de login).' };
+      return { ok: false, stale: true, status: 0, error: 'Verificação cancelada (nova tentativa de login).' };
     }
     if (!r.ok) {
       let errBody = {};
@@ -5046,8 +5050,11 @@ async function reenviarUltimoEnvio() {
 async function handleLogin(e) {
   e.preventDefault();
   if (loginError) { loginError.textContent = ''; loginError.style.color = ''; loginError.removeAttribute('role'); }
-  const login = (loginEmail?.value || '').trim();
+  const savedLogin = (loginEmail?.value || '').trim();
+  const login = savedLogin;
   const password = (loginPass?.value || '').trim();
+  loginInProgress = true;
+  authVerifyGeneration += 1;
   if (!login || !password) {
     showLoginError('Informe email/usuário e senha.');
     return;
@@ -5138,8 +5145,13 @@ async function handleLogin(e) {
     updateAuthUi();
     showLoginError('Erro inesperado ao entrar.', err.message || String(err));
   } finally {
-    if (!loginFullySucceeded) updateAuthUi();
-    if (loginFullySucceeded && loginPass) loginPass.value = '';
+    loginInProgress = false;
+    if (!loginFullySucceeded) {
+      updateAuthUi();
+      if (loginEmail && savedLogin) loginEmail.value = savedLogin;
+    } else if (loginPass) {
+      loginPass.value = '';
+    }
     if (btnLogin) {
       btnLogin.disabled = false;
       btnLogin.textContent = 'Entrar';
@@ -6752,6 +6764,7 @@ window.addEventListener('pageshow', function(ev) {
   }
   updateAuthUi();
   if (!authToken) return;
+  const initVerifyGen = authVerifyGeneration;
   Promise.race([
     verifyAuth(),
     new Promise((resolve) => setTimeout(
@@ -6759,6 +6772,7 @@ window.addEventListener('pageshow', function(ev) {
       15000,
     )),
   ]).then((vr) => {
+    if (loginInProgress || authVerifyGeneration !== initVerifyGen || vr?.stale) return;
     const ok = !!(vr && vr.ok);
     if (ok && authMustChangePassword) return;
     if (ok) {
@@ -6781,6 +6795,7 @@ window.addEventListener('pageshow', function(ev) {
       updateAuthUi();
     }
   }).catch((err) => {
+    if (loginInProgress || authVerifyGeneration !== initVerifyGen) return;
     if (authToken) {
       clearAuthSession();
       updateAuthUi();
