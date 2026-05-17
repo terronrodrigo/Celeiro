@@ -1285,7 +1285,7 @@
         </div>
         <p class="auth-subtitle">Use email ou usuário admin.</p>
       </div>
-      <form id="loginForm" class="auth-form" method="post" action="#" novalidate>
+      <form id="loginForm" class="auth-form" novalidate>
         <div class="form-group">
           <label for="loginEmail">Email ou usuário</label>
           <input type="text" id="loginEmail" autocomplete="username" placeholder="admin ou seu@email.com">
@@ -1299,7 +1299,7 @@
           <select id="loginIgrejaSelect" class="auth-select" aria-label="Igreja para login"></select>
         </div>
         <p id="loginError" class="auth-error"></p>
-        <button type="submit" class="btn btn-primary" id="btnLogin">Entrar</button>
+        <button type="button" class="btn btn-primary" id="btnLogin">Entrar</button>
         <p class="auth-footer-link"><a href="#" id="linkEsqueciSenha">Esqueci a senha</a></p>
         <p class="auth-footer-link">Não tem conta? <a href="#" id="linkRegistro">Cadastre-se como voluntário</a></p>
         <p class="auth-footer-link" id="setupLinkWrap" style="display: none;"><a href="#" id="linkSetup">Configurar primeiro admin (deploy)</a></p>
@@ -1572,6 +1572,12 @@
   <!-- Script inline: esconde loading e mostra overlay/form conforme URL (fix iOS e sessão) -->
   <script>
     (function() {
+      try {
+        var hrefNoHash = window.location.href.split('#')[0];
+        if (hrefNoHash.endsWith('?')) {
+          window.history.replaceState({}, '', window.location.pathname + (window.location.hash || ''));
+        }
+      } catch (_) {}
       var q = window.location.search || '';
       var escala = q.indexOf('escala=') >= 0;
       var checkin = q.indexOf('checkin=') >= 0;
@@ -1608,6 +1614,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.3.7"></script>
+  <script defer src="app.js?v=1.3.8"></script>
 </body>
 </html>

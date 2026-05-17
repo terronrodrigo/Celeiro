@@ -176,7 +176,12 @@ const loginError = document.getElementById('loginError');
 const btnLogin = document.getElementById('btnLogin');
 if (loginForm) {
   loginForm.setAttribute('novalidate', '');
-  loginForm.addEventListener('submit', (ev) => ev.preventDefault(), { capture: true });
+  loginForm.removeAttribute('action');
+  loginForm.removeAttribute('method');
+  loginForm.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+  }, { capture: true });
 }
 const btnLogout = document.getElementById('btnLogoutSidebar');
 const authUserName = document.getElementById('authUserName');
@@ -5060,7 +5065,10 @@ async function reenviarUltimoEnvio() {
 }
 
 async function handleLogin(e) {
-  e.preventDefault();
+  if (e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
   if (loginError) { loginError.textContent = ''; loginError.style.color = ''; loginError.removeAttribute('role'); }
   const savedLogin = (loginEmail?.value || '').trim();
   const login = savedLogin;
@@ -5321,7 +5329,16 @@ btnReviewLLM?.addEventListener('click', async () => {
     btnReviewLLM.textContent = '✨ Revisar com IA';
   }
 });
-if (loginForm) loginForm.addEventListener('submit', handleLogin);
+if (loginForm) {
+  loginForm.addEventListener('submit', handleLogin);
+  if (btnLogin) {
+    btnLogin.setAttribute('type', 'button');
+    btnLogin.addEventListener('click', () => {
+      if (loginForm.requestSubmit) loginForm.requestSubmit();
+      else handleLogin(new Event('submit', { cancelable: true }));
+    });
+  }
+}
 window.__celeiroHandleLogin = handleLogin;
 btnLogout?.addEventListener('click', handleLogout);
 filterArea?.addEventListener('change', () => {
