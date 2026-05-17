@@ -46,4 +46,24 @@ describe('escala-checkin-rules', () => {
     const fechado = { ...evento, ativo: false };
     assert.equal(isCheckinEventAberto(fechado, '2026-05-17'), false);
   });
+
+  it('evento criado em YMD não muda de dia ao ler/formatar (regressão TZ)', () => {
+    // Simula o que pgCreateEventoCheckin grava e pgFindEventoCheckinById devolve
+    // depois que o parser global de DATE retorna string. Garante que isCheckinEventAberto
+    // valida o dia correto em Brasília, sem voltar 1 dia.
+    const eventoFromPg = {
+      ativo: true,
+      data: new Date('2026-05-17T03:00:00.000Z'),
+      horarioInicio: '08:00',
+      horarioFim: '23:00',
+    };
+    assert.equal(isWithinCheckinWindow(
+      eventoFromPg,
+      '2026-05-17',
+    ), true);
+    assert.equal(isWithinCheckinWindow(
+      eventoFromPg,
+      '2026-05-16',
+    ), false);
+  });
 });

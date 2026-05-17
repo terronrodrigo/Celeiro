@@ -29,9 +29,14 @@ function mapEscalaRow(row) {
 }
 
 function mapEventoRow(row) {
-  const ymd = row.data instanceof Date
-    ? escalaDataToYMD(row.data)
-    : String(row.data || '').slice(0, 10);
+  let ymd = '';
+  if (row.data instanceof Date) {
+    // Caso o parser global não tenha sido aplicado (conexão antiga): use componentes UTC
+    // diretamente, já que pg interpreta DATE como meia-noite no TZ local do processo.
+    ymd = row.data.toISOString().slice(0, 10);
+  } else if (row.data != null) {
+    ymd = String(row.data).slice(0, 10);
+  }
   return {
     _id: row.id,
     igrejaId: row.igreja_id,

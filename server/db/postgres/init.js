@@ -2,7 +2,12 @@ import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 
-const { Pool } = pg;
+const { Pool, types: pgTypes } = pg;
+
+// PostgreSQL DATE (OID 1082): mantém como string 'YYYY-MM-DD'.
+// Default do node-postgres converte para Date em meia-noite no TZ local do processo
+// (UTC no Railway), o que muda o dia ao formatar em America/Sao_Paulo.
+pgTypes.setTypeParser(1082, (val) => (val == null ? val : String(val)));
 
 let pool = null;
 
