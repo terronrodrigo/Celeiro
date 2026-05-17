@@ -272,12 +272,15 @@ function updateAuthUi() {
   const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
   const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
   const isAdmin = authRole === 'admin';
+  const isVerifying = isLogged && !authVerified;
   if (authOverlay) {
     if (isLogged && authMustChangePassword) {
       authOverlay.style.display = 'flex';
       if (loginCard) loginCard.style.display = 'none';
       if (mustChangePasswordCard) mustChangePasswordCard.style.display = 'block';
       [forgotPasswordCard, resetPasswordCard, setupCard, registerCard].forEach(c => { if (c) c.style.display = 'none'; });
+    } else if (isVerifying) {
+      authOverlay.style.display = 'none';
     } else if (isLogged && authVerified) {
       authOverlay.style.display = 'none';
       if (loginCard) loginCard.style.display = 'block';
@@ -289,14 +292,16 @@ function updateAuthUi() {
     }
   }
   const appShellEl = document.querySelector('.app-shell');
-  const showMainShell = isLogged && authVerified;
-  if (appShellEl) appShellEl.style.display = showMainShell ? '' : 'none';
+  // Shell visível enquanto valida sessão (loading fica dentro dele).
+  if (appShellEl) appShellEl.style.display = isLogged ? '' : 'none';
   if (loadingEl) loadingEl.style.display = 'none';
-  if (!isLogged || !authVerified) {
+  if (errorEl) errorEl.style.display = 'none';
+  if (isVerifying) {
     if (contentEl) contentEl.style.display = 'none';
-    if (errorEl) errorEl.style.display = 'none';
-    if (isLogged && !authVerified && loadingEl) loadingEl.style.display = 'flex';
-  } else {
+    if (loadingEl) loadingEl.style.display = 'flex';
+  } else if (!isLogged) {
+    if (contentEl) contentEl.style.display = 'none';
+  } else if (isLogged && authVerified) {
     if (loadingEl) loadingEl.style.display = 'none';
     if (contentEl) contentEl.style.display = authMustChangePassword ? 'none' : 'block';
   }
@@ -6088,9 +6093,8 @@ function hideFormularioConsolidacaoPublico() {
   if (authToken && contentEl) contentEl.style.display = 'block';
 }
 
-// Usuário autenticado: esconde overlays públicos (links ?checkin=, ?batismo=, etc.)
-// que possam ter ficado visíveis por conta de query params/hash (ex.: ?batismo=...).
-function hideAllPublicOverlays() {
+/** Esconde apenas os overlays de formulários públicos (sem alterar login/shell). */
+function hidePublicOverlayElements() {
   [
     'cadastroOverlay',
     'formularioMembroOverlay',
@@ -6104,9 +6108,15 @@ function hideAllPublicOverlays() {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
-  // Garante que a área principal (app shell) volte a aparecer.
-  if (contentEl) contentEl.style.display = 'block';
-  if (authOverlay) authOverlay.style.display = 'none';
+}
+
+// Usuário autenticado: esconde overlays públicos (links ?checkin=, ?batismo=, etc.)
+function hideAllPublicOverlays() {
+  hidePublicOverlayElements();
+  if (authToken && authVerified) {
+    if (contentEl) contentEl.style.display = 'block';
+    if (authOverlay) authOverlay.style.display = 'none';
+  }
 }
 
 function clearPublicOverlayQueryParamsAndHash() {
@@ -6478,7 +6488,7 @@ document.getElementById('formularioApresentacaoForm')?.addEventListener('submit'
 
 function initPublicFormOrShell() {
   // Evita sobreposição de overlays públicos por estado anterior/cached navigation.
-  hideAllPublicOverlays();
+  hidePublicOverlayElements();
   const urlSearchParams = new URLSearchParams(window.location.search);
   const checkinParam = urlSearchParams.get('checkin');
   if (checkinParam) {
@@ -6658,8 +6668,7 @@ window.addEventListener('pageshow', function(ev) {
 });
 
 (() => {
-  // Sempre inicia com overlays públicos fechados; cada fluxo abre apenas o necessário.
-  hideAllPublicOverlays();
+  hidePublicOverlayElements();
   if (initPublicFormOrShell()) return;
   if (window.location.hash === '#cadastro') {
     showCadastroPublico();
@@ -6695,9 +6704,10 @@ window.addEventListener('pageshow', function(ev) {
     }
   }
   updateAuthUi();
+  if (!authToken) return;
   Promise.race([
     verifyAuth(),
-    new Promise(r => setTimeout(() => r(false), 8000))
+    new Promise(r => setTimeout(() => r(false), 15000))
   ]).then(ok => {
     if (ok && authMustChangePassword) return;
     if (ok) {
@@ -6712,11 +6722,13 @@ window.addEventListener('pageshow', function(ev) {
       if (authRole === 'admin') prefetchAllCheckinsForKpis();
       else if (isLiderRole && authRole !== 'admin') { fetchCheckinsMinisterio(); fetchMeusCheckins(); fetchPerfil(); }
       else { fetchEventosHoje(); fetchMeusCheckins(); fetchPerfil(); }
-    } else {
+    } else if (authToken) {
       clearAuthSession();
-      return;
+    } else {
+      updateAuthUi();
     }
   }).catch(() => {
-    clearAuthSession();
+    if (authToken) clearAuthSession();
+    else updateAuthUi();
   });
 })();
