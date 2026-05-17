@@ -375,10 +375,10 @@ function clearUserContent() {
   if (formConfirmarCheckin) formConfirmarCheckin.style.display = 'none';
 }
 
-function setAuthSession(data) {
+function setAuthSession(data, { verified = false } = {}) {
   clearUserContent();
   authToken = data?.token || '';
-  authVerified = false;
+  authVerified = !!verified;
   const user = data?.user;
   authUser = typeof user === 'string' ? user : (user?.nome || user?.email || '');
   const rawRole = (user && user.role) != null ? user.role : (data?.role != null ? data.role : 'admin');
@@ -523,18 +523,39 @@ async function authFetch(url, options = {}) {
   return r;
 }
 
+/** Exibe erro de login de forma visível (texto + toast + console). */
+function showLoginError(message, detail) {
+  const msg = String(message || 'Falha ao entrar.').trim();
+  const extra = detail ? String(detail).trim() : '';
+  const full = extra ? `${msg} (${extra})` : msg;
+  if (loginError) {
+    loginError.textContent = full;
+    loginError.style.color = '';
+    loginError.setAttribute('role', 'alert');
+    loginError.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  showToast(msg, 'error');
+  if (extra) console.warn('[login]', msg, extra);
+  else console.warn('[login]', msg);
+}
+
 async function verifyAuth() {
-  if (!authToken) return false;
+  if (!authToken) return { ok: false, status: 0, error: 'Sem token de sessão.' };
   const tokenAtStart = authToken;
   try {
     const headers = { Authorization: `Bearer ${tokenAtStart}` };
     const slug = getTenantSlugForLinks();
     if (slug) headers['X-Igreja-Slug'] = slug;
     const r = await fetch(`${API_BASE}/api/me`, { headers });
-    if (authToken !== tokenAtStart) return false;
+    if (authToken !== tokenAtStart) {
+      return { ok: false, status: 0, error: 'Verificação cancelada (nova tentativa de login).' };
+    }
     if (!r.ok) {
+      let errBody = {};
+      try { errBody = await r.json(); } catch (_) {}
+      const errMsg = errBody.error || `HTTP ${r.status}`;
       if (authToken === tokenAtStart) clearAuthSession();
-      return false;
+      return { ok: false, status: r.status, error: errMsg };
     }
     const data = await r.json();
     authUser = (data.user != null ? data.user : authUser);
@@ -571,10 +592,10 @@ async function verifyAuth() {
     }
     authVerified = true;
     updateAuthUi();
-    return true;
+    return { ok: true, status: 200 };
   } catch (e) {
     if (authToken === tokenAtStart) clearAuthSession();
-    return false;
+    return { ok: false, status: 0, error: e.message || 'Erro de rede ao validar sessão.' };
   }
 }
 
@@ -5024,11 +5045,11 @@ async function reenviarUltimoEnvio() {
 
 async function handleLogin(e) {
   e.preventDefault();
-  if (loginError) { loginError.textContent = ''; loginError.style.color = ''; }
+  if (loginError) { loginError.textContent = ''; loginError.style.color = ''; loginError.removeAttribute('role'); }
   const login = (loginEmail?.value || '').trim();
   const password = (loginPass?.value || '').trim();
   if (!login || !password) {
-    if (loginError) loginError.textContent = 'Informe email/usuário e senha.';
+    showLoginError('Informe email/usuário e senha.');
     return;
   }
   const loginIgrejaWrap = document.getElementById('loginIgrejaWrap');
@@ -5040,16 +5061,28 @@ async function handleLogin(e) {
     btnLogin.disabled = true;
     btnLogin.textContent = 'Entrando...';
   }
-  let loginSucceeded = false;
+  let loginFullySucceeded = false;
   try {
     const payload = { username: login, email: login, password };
     if (igrejaSlugChosen) payload.igrejaSlug = igrejaSlugChosen;
-    const r = await fetch(`${API_BASE}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await r.json().catch(() => ({}));
+    let r;
+    try {
+      r = await fetch(`${API_BASE}/api/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (netErr) {
+      showLoginError('Não foi possível contactar o servidor.', netErr.message || 'verifique sua conexão');
+      return;
+    }
+    let data = {};
+    try {
+      data = await r.json();
+    } catch (_) {
+      showLoginError('Resposta inválida do servidor.', `HTTP ${r.status}`);
+      return;
+    }
     if (r.status === 409 && data.needIgrejaChoice && Array.isArray(data.igrejas) && data.igrejas.length > 0) {
       fillIgrejaChoiceSelect(loginIgrejaSelect, data.igrejas);
       if (loginIgrejaWrap) loginIgrejaWrap.style.display = 'block';
@@ -5058,25 +5091,24 @@ async function handleLogin(e) {
         loginError.style.color = 'var(--text-secondary, #a1a1aa)';
         loginError.textContent = data.error || 'Escolha a igreja e clique em Entrar de novo.';
       }
+      showToast(data.error || 'Escolha a igreja e entre de novo.', 'info');
       return;
     }
     if (!r.ok) {
-      if (loginError) {
-        loginError.style.color = '';
-        loginError.textContent = data.error || 'Falha ao autenticar.';
-      }
+      const hint = data.hint ? ` ${data.hint}` : '';
+      showLoginError(data.error || 'Falha ao autenticar.', `código ${r.status}${hint}`);
       return;
     }
-    loginSucceeded = true;
+    if (!data.token) {
+      showLoginError('Servidor não devolveu token de sessão.', 'tente de novo ou contate o suporte');
+      return;
+    }
     resetLoginIgrejaChoiceUi();
-    setAuthSession(data);
-    const sessionOk = await verifyAuth();
-    if (!sessionOk) {
-      if (loginError) loginError.textContent = 'Login aceito, mas a sessão não foi validada. Tente de novo ou atualize a página.';
-      return;
-    }
+    setAuthSession(data, { verified: true });
+    if (data.sessionWarning) showToast(data.sessionWarning, 'info');
     if (authMustChangePassword) {
       updateAuthUi();
+      loginFullySucceeded = true;
       return;
     }
     if (authOverlay) authOverlay.style.display = 'none';
@@ -5086,13 +5118,28 @@ async function handleLogin(e) {
     const isLiderRole = authRole === 'lider' || isLider;
     const defaultView = isVol ? 'perfil' : (isLiderRole && authRole !== 'admin' ? 'checkin-ministerio' : 'resumo');
     setView(defaultView);
-    if (authRole === 'admin') await fetchAllData();
-    else if (isLiderRole && authRole !== 'admin') { await fetchCheckinsMinisterio(); await fetchMeusCheckins(); await fetchPerfil(); }
-    else { await fetchEventosHoje(); await fetchMeusCheckins(); await fetchPerfil(); }
+    try {
+      if (authRole === 'admin') await fetchAllData();
+      else if (isLiderRole && authRole !== 'admin') { await fetchCheckinsMinisterio(); await fetchMeusCheckins(); await fetchPerfil(); }
+      else { await fetchEventosHoje(); await fetchMeusCheckins(); await fetchPerfil(); }
+    } catch (loadErr) {
+      if (loadErr.message === 'AUTH_REQUIRED') {
+        showLoginError('Sessão recusada ao carregar dados.', 'faça login novamente');
+        return;
+      }
+      showToast('Entrou, mas alguns dados não carregaram: ' + (loadErr.message || 'erro'), 'error');
+    }
+    loginFullySucceeded = true;
+    void verifyAuth().then((vr) => {
+      if (!vr.ok) console.warn('[login] Revalidação /api/me:', vr.error);
+    });
   } catch (err) {
-    if (loginError) loginError.textContent = err.message || 'Erro de rede.';
+    clearAuthSession();
+    updateAuthUi();
+    showLoginError('Erro inesperado ao entrar.', err.message || String(err));
   } finally {
-    if (loginSucceeded && loginPass) loginPass.value = '';
+    if (!loginFullySucceeded) updateAuthUi();
+    if (loginFullySucceeded && loginPass) loginPass.value = '';
     if (btnLogin) {
       btnLogin.disabled = false;
       btnLogin.textContent = 'Entrar';
@@ -5888,7 +5935,7 @@ registerForm?.addEventListener('submit', async (e) => {
     if (registerNome) registerNome.value = '';
     if (registerEmail) registerEmail.value = '';
     if (registerPass) registerPass.value = '';
-    setAuthSession(data);
+    setAuthSession(data, { verified: true });
     if (authOverlay) authOverlay.style.display = 'none';
     if (registerCard) registerCard.style.display = 'none'; if (loginCard) loginCard.style.display = 'block';
     await fetchEventosHoje(); await fetchMeusCheckins(); await fetchPerfil();
@@ -6614,7 +6661,7 @@ document.getElementById('conviteLiderForm')?.addEventListener('submit', async (e
       return;
     }
     hideConviteLiderPublicOverlay();
-    setAuthSession(data);
+    setAuthSession(data, { verified: true });
     if (authOverlay) authOverlay.style.display = 'none';
     if (contentEl) contentEl.style.display = 'block';
     restoreAppShellFromPublicForm();
@@ -6707,8 +6754,12 @@ window.addEventListener('pageshow', function(ev) {
   if (!authToken) return;
   Promise.race([
     verifyAuth(),
-    new Promise(r => setTimeout(() => r(false), 15000))
-  ]).then(ok => {
+    new Promise((resolve) => setTimeout(
+      () => resolve({ ok: false, status: 0, error: 'Tempo esgotado ao validar sessão (15s).' }),
+      15000,
+    )),
+  ]).then((vr) => {
+    const ok = !!(vr && vr.ok);
     if (ok && authMustChangePassword) return;
     if (ok) {
       hideAllPublicOverlays();
@@ -6724,11 +6775,18 @@ window.addEventListener('pageshow', function(ev) {
       else { fetchEventosHoje(); fetchMeusCheckins(); fetchPerfil(); }
     } else if (authToken) {
       clearAuthSession();
+      updateAuthUi();
+      showLoginError('Não foi possível restaurar sua sessão.', vr?.error || 'faça login novamente');
     } else {
       updateAuthUi();
     }
-  }).catch(() => {
-    if (authToken) clearAuthSession();
-    else updateAuthUi();
+  }).catch((err) => {
+    if (authToken) {
+      clearAuthSession();
+      updateAuthUi();
+      showLoginError('Erro ao validar sessão salva.', err?.message || String(err));
+    } else {
+      updateAuthUi();
+    }
   });
 })();

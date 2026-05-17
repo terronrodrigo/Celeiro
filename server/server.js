@@ -191,8 +191,8 @@ const createAuthTokenForUser = async (user) => {
     igrejaId: igrejaIdStr,
     isGlobalAdmin,
   };
-  await persistAuthToken(token, sessionData);
-  return { token, expiresAt };
+  const sessionPersisted = await persistAuthToken(token, sessionData);
+  return { token, expiresAt, sessionPersisted };
 };
 const whatsappHandler = createWhatsAppHandler({ createAuthTokenForUser });
 app.get('/api/whatsapp/webhook', (req, res) => whatsappHandler.handleVerify(req, res));
@@ -219,14 +219,25 @@ const CACHE_TTL = (Number(process.env.CACHE_TTL_MINUTES) || 30) * 60 * 1000;
 
 const authTokens = new Map();
 
+function matchesEnvAdminCredentials(login, senha) {
+  if (!ADMIN_USER || !ADMIN_PASS) return false;
+  const u = String(login || '').trim();
+  const adminUser = String(ADMIN_USER).trim();
+  const userOk = u === adminUser
+    || u.toLowerCase() === adminUser.toLowerCase()
+    || (adminUser.includes('@') && u.toLowerCase() === adminUser.toLowerCase());
+  return userOk && String(senha) === String(ADMIN_PASS);
+}
+
 async function persistAuthToken(token, data) {
   authTokens.set(token, data);
-  if (isPostgres()) {
-    try {
-      await pgSaveAuthSession(token, data);
-    } catch (err) {
-      console.error('Erro ao persistir sessão:', err.message || err);
-    }
+  if (!isPostgres()) return true;
+  try {
+    await pgSaveAuthSession(token, data);
+    return true;
+  } catch (err) {
+    console.error('Erro ao persistir sessão:', err.message || err);
+    return false;
   }
 }
 
@@ -960,7 +971,7 @@ async function finalizeDbUserLogin(res, user, { withCheckinLink = false } = {}) 
   const igrejaIdStr = user.igrejaId ? String(user.igrejaId) : null;
   const isGlobalAdmin = roleFinal === 'admin' && !user.igrejaId;
   const mustChangePassword = user.mustChangePassword === true;
-  const { token, expiresAt } = await createAuthTokenForUser(user);
+  const { token, expiresAt, sessionPersisted } = await createAuthTokenForUser(user);
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   const isMasterAdmin = MASTER_ADMIN_EMAIL && (user.email || '').toString().trim().toLowerCase() === MASTER_ADMIN_EMAIL;
   let igrejaNome = null;
@@ -971,15 +982,20 @@ async function finalizeDbUserLogin(res, user, { withCheckinLink = false } = {}) 
       : await pgFindIgrejaById(user.igrejaId);
     if (ig) { igrejaNome = ig.nome; igrejaSlug = ig.slug; }
   }
-  return res.json({
+  const payload = {
     token,
+    loginMode: 'db',
     user: {
       nome: user.nome, email: user.email, role: roleFinal, ministerioId, ministerioNome, ministerioIds, ministerioNomes,
       fotoUrl: user.fotoUrl || null, mustChangePassword, isMasterAdmin,
       igrejaId: igrejaIdStr, igrejaNome, igrejaSlug, isGlobalAdmin,
     },
     expiresAt,
-  });
+  };
+  if (!sessionPersisted) {
+    payload.sessionWarning = 'Sessão não gravada no banco; login pode falhar após reinício do servidor.';
+  }
+  return res.json(payload);
 }
 
 // Setup inicial: criar primeiro admin (após deploy). Protegido por SETUP_SECRET.
@@ -1042,35 +1058,56 @@ app.post('/api/login', async (req, res) => {
     const senha = String(password || '').trim();
     if (!login || !senha) return res.status(400).json({ error: 'Envie email/usuário e senha.' });
 
-    // 1) Tentar login admin (username do .env)
-    if (ADMIN_USER && ADMIN_PASS && login === ADMIN_USER && senha === ADMIN_PASS) {
+    // 1) Login admin (ADMIN_USER / ADMIN_PASS no Railway)
+    if (matchesEnvAdminCredentials(login, senha)) {
       let adminFotoUrl = null;
       try {
-        const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase(), igrejaId: null }).select('fotoUrl').lean()
-          || await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
-        if (adminUser && adminUser.fotoUrl) adminFotoUrl = adminUser.fotoUrl;
-      } catch (_) {}
+        if (isMongo()) {
+          const adminUser = await User.findOne({ email: String(ADMIN_USER).toLowerCase(), igrejaId: null }).select('fotoUrl').lean()
+            || await User.findOne({ email: String(ADMIN_USER).toLowerCase() }).select('fotoUrl').lean();
+          if (adminUser?.fotoUrl) adminFotoUrl = adminUser.fotoUrl;
+        } else if (isPostgres()) {
+          const users = await pgFindUsersByEmail(String(ADMIN_USER).toLowerCase());
+          const adminUser = users.find((u) => !u.igrejaId) || users[0];
+          if (adminUser?.fotoUrl) adminFotoUrl = adminUser.fotoUrl;
+        }
+      } catch (err) {
+        console.warn('Login admin: foto opcional não carregada:', err.message || err);
+      }
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = Date.now() + AUTH_TOKEN_TTL_HOURS * 60 * 60 * 1000;
-      await persistAuthToken(token, {
+      const sessionPersisted = await persistAuthToken(token, {
         user: ADMIN_USER, userId: null, role: 'admin', email: null, expiresAt,
         igrejaId: null, isGlobalAdmin: true,
         ministerioId: null, ministerioNome: null, ministerioIds: [], ministerioNomes: [],
         mustChangePassword: false,
       });
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      return res.json({
+      const payload = {
         token,
+        loginMode: 'env_admin',
         user: { nome: ADMIN_USER, email: null, role: 'admin', fotoUrl: adminFotoUrl, isGlobalAdmin: true },
         expiresAt,
-      });
+      };
+      if (!sessionPersisted) {
+        payload.sessionWarning = 'Sessão não gravada no banco; login pode falhar após reinício do servidor.';
+      }
+      return res.json(payload);
     }
 
     // 2) Login por email (User) — pode haver mais de uma conta com o mesmo email (igrejas diferentes)
     const igrejaSlugLogin = (req.body.igrejaSlug || req.body.igreja || '').toString().trim();
     const resolved = await resolveUserForEmailPasswordLogin(Igreja, User, login.toLowerCase(), senha, igrejaSlugLogin);
     if (!resolved.ok) {
-      return res.status(resolved.status).json(resolved.body);
+      const body = { ...resolved.body };
+      if (resolved.status === 401 && ADMIN_USER && ADMIN_PASS) {
+        const looksLikeEmail = login.includes('@');
+        const notEnvUser = login.toLowerCase() !== String(ADMIN_USER).trim().toLowerCase();
+        if (looksLikeEmail && notEnvUser) {
+          body.hint = `Se você usa o admin do deploy, o usuário é "${ADMIN_USER}" (variável ADMIN_USER), não necessariamente seu email.`;
+        }
+      }
+      return res.status(resolved.status).json(body);
     }
     return finalizeDbUserLogin(res, resolved.user, { withCheckinLink: false });
   } catch (err) {
