@@ -126,6 +126,40 @@ export async function pgUpdateEscala(id, igrejaId, patch) {
   return pgFindEscalaById(id, igrejaId);
 }
 
+export async function pgDeleteEscala(id, igrejaId) {
+  const { rows } = await getPostgresPool().query(
+    'SELECT COUNT(*)::int AS c FROM candidaturas WHERE escala_id = $1 AND igreja_id = $2',
+    [id, igrejaId],
+  );
+  const count = rows[0]?.c || 0;
+  if (count > 0) return { deleted: false, candidaturas: count };
+  const { rowCount } = await getPostgresPool().query(
+    'DELETE FROM escalas WHERE id = $1 AND igreja_id = $2',
+    [id, igrejaId],
+  );
+  return { deleted: rowCount > 0, candidaturas: 0 };
+}
+
+export async function pgGetEscalaInscricaoStatus(escalaId, ministerio) {
+  const { rows } = await getPostgresPool().query(
+    'SELECT ativo FROM escala_inscricoes_por_ministerio WHERE escala_id = $1 AND ministerio = $2 LIMIT 1',
+    [escalaId, ministerio],
+  );
+  if (!rows.length) return { ativo: true };
+  return { ativo: rows[0].ativo !== false };
+}
+
+export async function pgSetEscalaInscricaoStatus(escalaId, ministerio, ativo, criadoPor = null) {
+  await getPostgresPool().query(
+    `INSERT INTO escala_inscricoes_por_ministerio (escala_id, ministerio, ativo, criado_por)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (escala_id, ministerio)
+     DO UPDATE SET ativo = EXCLUDED.ativo, updated_at = NOW()`,
+    [escalaId, ministerio, !!ativo, criadoPor],
+  );
+  return { ativo: !!ativo };
+}
+
 export async function pgCountCandidaturasByEscala(igrejaId, escalaIds) {
   if (!escalaIds.length) return new Map();
   const { rows } = await getPostgresPool().query(

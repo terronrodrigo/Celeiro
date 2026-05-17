@@ -7,9 +7,26 @@ import { getSession, setSession, clearSession, createLoginCode, verifyLoginCode,
 import User from '../models/User.js';
 import Igreja from '../models/Igreja.js';
 import { DEFAULT_IGREJA_SLUG } from '../tenant-context.js';
+import { isPostgres, isMongo } from '../db/connection.js';
+import {
+  pgFindUsersByEmail, pgFindIgrejaBySlug, pgFindUserById, pgPopulateMinisterioIds,
+} from '../db/postgres/repos.js';
+import { getPostgresPool } from '../db/postgres/init.js';
 
 /** Mesmo email em várias igrejas: prioriza conta do tenant legado (Celeiro) no WhatsApp. */
 async function findUserForWhatsAppByEmail(emailLower) {
+  if (isPostgres()) {
+    const list = (await pgFindUsersByEmail(emailLower)).filter((u) => u.ativo !== false);
+    if (list.length === 0) return null;
+    if (list.length === 1) return list[0];
+    const ig = await pgFindIgrejaBySlug(DEFAULT_IGREJA_SLUG);
+    if (ig) {
+      const hit = list.find((u) => u.igrejaId && String(u.igrejaId) === String(ig._id || ig.id));
+      if (hit) return hit;
+    }
+    return list[0];
+  }
+  if (!isMongo()) return null;
   const list = await User.find({ email: emailLower, ativo: true }).lean();
   if (list.length === 0) return null;
   if (list.length === 1) return list[0];
@@ -19,6 +36,29 @@ async function findUserForWhatsAppByEmail(emailLower) {
     if (hit) return hit;
   }
   return list[0];
+}
+
+async function loadUserWithMinisterios(userId) {
+  if (isPostgres()) {
+    const u = await pgFindUserById(userId);
+    if (!u) return null;
+    const mins = u.ministerioIds?.length
+      ? await pgPopulateMinisterioIds(u.ministerioIds, u.igrejaId)
+      : [];
+    return { ...u, ministerioIds: mins };
+  }
+  if (!isMongo()) return null;
+  return await User.findById(userId).populate('ministerioIds', 'nome').lean();
+}
+
+async function saveUserWhatsapp(userId, phone) {
+  if (isPostgres()) {
+    await getPostgresPool().query('UPDATE users SET whatsapp = $2 WHERE id = $1', [userId, phone]).catch(() => {});
+    return;
+  }
+  if (isMongo()) {
+    await User.updateOne({ _id: userId }, { $set: { whatsapp: phone } }).catch(() => {});
+  }
 }
 
 const API_BASE = (process.env.APP_URL || process.env.API_BASE || `http://localhost:${process.env.PORT || 3001}`).replace(/\/$/, '');
@@ -207,7 +247,7 @@ export async function processMessage(whatsappId, text, sendCodeToWhatsApp, creat
       const { email } = verified;
       const row = await findUserForWhatsAppByEmail(email.toLowerCase());
       if (!row) return 'Código inválido ou expirado.';
-      const userForSession = await User.findById(row._id).populate('ministerioIds', 'nome').lean();
+      const userForSession = await loadUserWithMinisterios(row._id || row.id);
       if (!userForSession) return 'Código inválido ou expirado.';
       if (!createAuthTokenForUser) return 'Erro de configuração. Contate o admin.';
       const { token } = await createAuthTokenForUser(userForSession);
@@ -218,7 +258,7 @@ export async function processMessage(whatsappId, text, sendCodeToWhatsApp, creat
         email: userForSession.email,
         nome: userForSession.nome,
       });
-      await User.updateOne({ _id: userForSession._id }, { $set: { whatsapp: phone } });
+      await saveUserWhatsapp(userForSession._id, phone);
       return `Login feito, ${userForSession.nome}! Digite *menu* para ver opções.`;
     }
     return 'Para começar, digite seu email cadastrado.';

@@ -83,7 +83,7 @@ export function createWhatsAppHandler({ createAuthTokenForUser }) {
               const reply = await processMessage(from, text, sendCode, createAuthTokenForUser);
               if (reply) await sendWhatsAppText(from, reply);
             } catch (err) {
-              console.error('WhatsApp agent error:', err);
+              console.error('WhatsApp agent error:', err?.message || err);
               await sendWhatsAppText(from, 'Ocorreu um erro. Tente novamente em instantes.');
             }
           }

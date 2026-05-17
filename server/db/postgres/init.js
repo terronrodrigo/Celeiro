@@ -154,6 +154,16 @@ CREATE TABLE IF NOT EXISTS role_history (
   dados JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS escala_inscricoes_por_ministerio (
+  escala_id TEXT NOT NULL REFERENCES escalas(id) ON DELETE CASCADE,
+  ministerio TEXT NOT NULL,
+  ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  criado_por TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (escala_id, ministerio)
+);
 `;
 
 const MINISTERIOS_PADRAO = [
@@ -209,6 +219,14 @@ export async function initPostgres(connectionString) {
     CREATE INDEX IF NOT EXISTS candidaturas_igreja_escala_idx ON candidaturas (igreja_id, escala_id);
     CREATE INDEX IF NOT EXISTS escalas_igreja_created_idx ON escalas (igreja_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS eventos_checkin_igreja_data_idx ON eventos_checkin (igreja_id, data DESC);
+    CREATE INDEX IF NOT EXISTS voluntarios_igreja_ativo_idx ON voluntarios (igreja_id, ativo);
+    CREATE INDEX IF NOT EXISTS users_reset_token_idx ON users (reset_token) WHERE reset_token IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS eventos_formulario_igreja_data_idx ON eventos_formulario (igreja_id, tipo, data DESC);
+    CREATE INDEX IF NOT EXISTS formulario_membro_igreja_idx ON formulario_membro (igreja_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS formulario_consolidacao_igreja_idx ON formulario_consolidacao (igreja_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS formulario_batismo_evento_idx ON formulario_batismo (igreja_id, evento_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS formulario_apresentacao_evento_idx ON formulario_apresentacao (igreja_id, evento_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS role_history_user_idx ON role_history (user_id, created_at DESC);
   `);
   const { migrateCultosRecorrentesSchema } = await import('./cultos-recorrentes.js');
   await migrateCultosRecorrentesSchema();

@@ -217,12 +217,26 @@ export async function pgUpdateCandidaturaStatus(id, igrejaId, status, { aprovado
 }
 
 export async function pgBulkUpdateCandidaturaStatus(ids, igrejaId, status, { aprovadoPor = null } = {}) {
-  let modified = 0;
-  for (const id of ids) {
-    const r = await pgUpdateCandidaturaStatus(id, igrejaId, status, { aprovadoPor });
-    if (r) modified += 1;
-  }
-  return modified;
+  if (!ids?.length) return 0;
+  const aprovadoEm = status === 'aprovado' ? new Date().toISOString() : null;
+  // Atualiza em 1 query: mantém campos existentes e altera apenas status/aprovadoPor/aprovadoEm.
+  const { rowCount } = await getPostgresPool().query(
+    `UPDATE candidaturas
+     SET dados = jsonb_set(
+       jsonb_set(
+         jsonb_set(dados, '{status}', to_jsonb($3::text), true),
+         '{aprovadoPor}',
+         CASE WHEN $3::text = 'aprovado' THEN to_jsonb($4::text) ELSE COALESCE(dados->'aprovadoPor','null'::jsonb) END,
+         true
+       ),
+       '{aprovadoEm}',
+       CASE WHEN $3::text = 'aprovado' THEN to_jsonb($5::text) ELSE COALESCE(dados->'aprovadoEm','null'::jsonb) END,
+       true
+     )
+     WHERE id = ANY($1::text[]) AND igreja_id = $2`,
+    [ids, igrejaId, status, aprovadoPor, aprovadoEm],
+  );
+  return rowCount;
 }
 
 /** Stats por email para painel de candidaturas. */
@@ -268,12 +282,33 @@ export async function pgCandidaturaStatsByEmails(igrejaId, emails) {
 
 export async function pgFotoUrlByEmails(igrejaId, emails) {
   const map = {};
-  for (const em of emails) {
-    const users = await pgFindUsersByEmail(em);
-    const u = users.find((x) => x.igrejaId === igrejaId || !x.igrejaId);
-    if (u?.fotoUrl) map[em] = u.fotoUrl;
+  const emList = [...new Set((emails || []).map((e) => String(e || '').toLowerCase().trim()).filter(Boolean))];
+  if (!emList.length) return map;
+  // 1 única query: foto da igreja preferida; se não houver, foto global (igreja_id NULL).
+  const { rows } = await getPostgresPool().query(
+    `SELECT LOWER(email) AS em, foto_url, igreja_id
+     FROM users
+     WHERE LOWER(email) = ANY($1::text[]) AND (igreja_id = $2 OR igreja_id IS NULL)`,
+    [emList, igrejaId],
+  );
+  // Prioriza linha com igreja_id = igrejaId (vs igreja_id IS NULL).
+  for (const r of rows) {
+    if (!r.foto_url) continue;
+    const cur = map[r.em];
+    if (!cur || (!cur.scoped && String(r.igreja_id || '') === String(igrejaId))) {
+      map[r.em] = { url: r.foto_url, scoped: String(r.igreja_id || '') === String(igrejaId) };
+    }
   }
-  return map;
+  return Object.fromEntries(Object.entries(map).map(([k, v]) => [k, v.url]));
+}
+
+/** Lista emails distintos que fizeram check-in. Substitui `Checkin.distinct('email', ...)` do Mongo. */
+export async function pgListCheckinEmails(igrejaId) {
+  const { rows } = await getPostgresPool().query(
+    `SELECT DISTINCT LOWER(email) AS em FROM checkins WHERE igreja_id = $1 AND email IS NOT NULL AND email <> ''`,
+    [igrejaId],
+  );
+  return rows.map((r) => r.em).filter(Boolean);
 }
 
 export function buildVoluntariosResumo(list) {

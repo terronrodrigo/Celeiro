@@ -264,6 +264,18 @@ export async function pgPopulateMinisterioIds(ids, igrejaId) {
   return mins.map((m) => ({ _id: m._id, nome: m.nome }));
 }
 
+/** Versão batch: 1 única query para resolver nomes de todos os ministérios usados em uma lista de users. */
+async function buildMinisteriosLookupForUsers(users, igrejaId) {
+  const allIds = new Set();
+  for (const u of users) {
+    for (const mid of (u.ministerioIds || [])) allIds.add(String(mid));
+  }
+  if (allIds.size === 0) return new Map();
+  const idsArr = [...allIds];
+  const mins = await pgFindMinisteriosByIds(idsArr, igrejaId);
+  return new Map(mins.map((m) => [String(m._id), { _id: m._id, nome: m.nome }]));
+}
+
 export async function pgListUsers(igrejaId, { search, ativo } = {}) {
   const params = [igrejaId];
   let sql = 'SELECT * FROM users WHERE igreja_id = $1';
@@ -273,16 +285,16 @@ export async function pgListUsers(igrejaId, { search, ativo } = {}) {
     params.push(`%${String(search).trim()}%`);
     sql += ` AND (nome ILIKE $${params.length} OR email ILIKE $${params.length})`;
   }
-  sql += ' ORDER BY nome';
+  sql += ' ORDER BY nome LIMIT 1000';
   const { rows } = await getPostgresPool().query(sql, params);
   const users = rows.map(mapUserRow);
-  const out = [];
-  for (const u of users) {
-    const ids = u.ministerioIds || [];
-    const mins = ids.length ? await pgPopulateMinisterioIds(ids, igrejaId) : [];
-    out.push(mapUserForApi(u, mins));
-  }
-  return out;
+  const lookup = await buildMinisteriosLookupForUsers(users, igrejaId);
+  return users.map((u) => {
+    const mins = (u.ministerioIds || [])
+      .map((id) => lookup.get(String(id)))
+      .filter(Boolean);
+    return mapUserForApi(u, mins);
+  });
 }
 
 export async function pgFindUserByEmailInIgreja(igrejaId, emailLower) {
@@ -373,6 +385,197 @@ export async function pgUpdateUser(id, igrejaId, { nome, role, ativo, ministerio
   const u = await pgFindUserById(id);
   const mins = newIds.length ? await pgPopulateMinisterioIds(newIds, igrejaId) : [];
   return mapUserForApi(u, mins);
+}
+
+export async function pgSetUserFotoUrl(userId, fotoUrl) {
+  await getPostgresPool().query(
+    'UPDATE users SET foto_url = $2 WHERE id = $1',
+    [userId, fotoUrl == null ? null : String(fotoUrl)],
+  );
+}
+
+export async function pgFindUserFotoUrl(igrejaId, emailLower) {
+  const { rows } = await getPostgresPool().query(
+    'SELECT foto_url FROM users WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
+    [igrejaId, emailLower],
+  );
+  return rows[0]?.foto_url || null;
+}
+
+export async function pgFindMinisterioById(id, igrejaId) {
+  const { rows } = await getPostgresPool().query(
+    'SELECT * FROM ministerios WHERE id = $1 AND igreja_id = $2 LIMIT 1',
+    [id, igrejaId],
+  );
+  return mapMinisterioRow(rows[0]);
+}
+
+export async function pgUpdateMinisterio(id, igrejaId, { nome, ativo }) {
+  const sets = [];
+  const params = [id, igrejaId];
+  if (nome !== undefined) {
+    params.push(String(nome).trim());
+    sets.push(`nome = $${params.length}`);
+  }
+  if (ativo !== undefined) {
+    params.push(!!ativo);
+    sets.push(`ativo = $${params.length}`);
+  }
+  if (!sets.length) return pgFindMinisterioById(id, igrejaId);
+  await getPostgresPool().query(
+    `UPDATE ministerios SET ${sets.join(', ')} WHERE id = $1 AND igreja_id = $2`,
+    params,
+  );
+  return pgFindMinisterioById(id, igrejaId);
+}
+
+export async function pgDeleteMinisterio(id, igrejaId) {
+  const { rowCount } = await getPostgresPool().query(
+    'DELETE FROM ministerios WHERE id = $1 AND igreja_id = $2',
+    [id, igrejaId],
+  );
+  return rowCount > 0;
+}
+
+/**
+ * Atualiza líderes de um ministério em transação:
+ * - tira ex-líderes (que não estão em newLiderIds) e os volta a voluntário se não tiverem outros ministérios.
+ * - adiciona novos líderes (promove a 'lider' se for 'voluntario').
+ * - grava role_history para cada mudança.
+ * Retorna { addedUserIds, removedUserIds } para uso por logs/notificações.
+ */
+export async function pgSetMinisterioLideres(ministerioId, igrejaId, newLiderIds, changedBy) {
+  const pool = getPostgresPool();
+  const client = await pool.connect();
+  const added = [];
+  const removed = [];
+  try {
+    await client.query('BEGIN');
+    const { rows: currentRows } = await client.query(
+      `SELECT id, role, ministerio_ids FROM users
+       WHERE igreja_id = $1 AND ministerio_ids @> $2::jsonb`,
+      [igrejaId, JSON.stringify([ministerioId])],
+    );
+    const wantSet = new Set((newLiderIds || []).map(String).filter(Boolean));
+    const haveSet = new Set(currentRows.map((r) => String(r.id)));
+
+    for (const row of currentRows) {
+      if (wantSet.has(String(row.id))) continue;
+      const ids = Array.isArray(row.ministerio_ids)
+        ? row.ministerio_ids
+        : JSON.parse(row.ministerio_ids || '[]');
+      const newIds = ids.filter((id) => String(id) !== String(ministerioId));
+      const newRole = (newIds.length === 0 && row.role !== 'admin') ? 'voluntario' : (row.role || 'lider');
+      await client.query(
+        `UPDATE users SET ministerio_ids = $2::jsonb, role = $3 WHERE id = $1`,
+        [row.id, JSON.stringify(newIds), newRole],
+      );
+      await client.query(
+        `INSERT INTO role_history (id, igreja_id, user_id, dados)
+         VALUES ($1, $2, $3, $4::jsonb)`,
+        [randomUUID(), igrejaId, row.id, JSON.stringify({
+          fromRole: row.role || 'lider',
+          toRole: newRole,
+          ministerioId,
+          changedBy: changedBy || null,
+          createdAt: new Date().toISOString(),
+        })],
+      );
+      removed.push(String(row.id));
+    }
+
+    for (const uid of wantSet) {
+      if (haveSet.has(uid)) continue;
+      const { rows: ur } = await client.query(
+        'SELECT id, role, ministerio_ids FROM users WHERE id = $1 AND igreja_id = $2 LIMIT 1',
+        [uid, igrejaId],
+      );
+      if (!ur[0]) continue;
+      const u = ur[0];
+      const ids = Array.isArray(u.ministerio_ids)
+        ? u.ministerio_ids
+        : JSON.parse(u.ministerio_ids || '[]');
+      if (ids.some((id) => String(id) === String(ministerioId))) continue;
+      const newIds = [...ids, ministerioId];
+      const newRole = u.role === 'admin' ? 'admin' : 'lider';
+      await client.query(
+        `UPDATE users SET ministerio_ids = $2::jsonb, role = $3 WHERE id = $1`,
+        [u.id, JSON.stringify(newIds), newRole],
+      );
+      await client.query(
+        `INSERT INTO role_history (id, igreja_id, user_id, dados)
+         VALUES ($1, $2, $3, $4::jsonb)`,
+        [randomUUID(), igrejaId, u.id, JSON.stringify({
+          fromRole: u.role || 'voluntario',
+          toRole: newRole,
+          ministerioId,
+          changedBy: changedBy || null,
+          createdAt: new Date().toISOString(),
+        })],
+      );
+      added.push(String(u.id));
+    }
+
+    await client.query('COMMIT');
+    return { added, removed };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function pgListRoleHistoryByUser(userId, igrejaId) {
+  const { rows } = await getPostgresPool().query(
+    `SELECT rh.id, rh.dados, rh.created_at
+     FROM role_history rh
+     WHERE rh.user_id = $1 AND (rh.igreja_id IS NULL OR rh.igreja_id = $2)
+     ORDER BY rh.created_at DESC LIMIT 200`,
+    [userId, igrejaId],
+  );
+  if (!rows.length) return [];
+  const userIds = new Set();
+  const minIds = new Set();
+  for (const r of rows) {
+    const d = r.dados || {};
+    if (d.changedBy) userIds.add(String(d.changedBy));
+    if (d.ministerioId) minIds.add(String(d.ministerioId));
+  }
+  const usersMap = new Map();
+  if (userIds.size > 0) {
+    const { rows: ur } = await getPostgresPool().query(
+      'SELECT id, nome FROM users WHERE id = ANY($1::text[])',
+      [[...userIds]],
+    );
+    for (const u of ur) usersMap.set(String(u.id), { _id: u.id, nome: u.nome });
+  }
+  const minsMap = new Map();
+  if (minIds.size > 0) {
+    const mins = await pgFindMinisteriosByIds([...minIds], igrejaId);
+    for (const m of mins) minsMap.set(String(m._id), { _id: m._id, nome: m.nome });
+  }
+  return rows.map((r) => {
+    const d = r.dados || {};
+    return {
+      _id: r.id,
+      createdAt: r.created_at,
+      fromRole: d.fromRole || null,
+      toRole: d.toRole || null,
+      changedBy: d.changedBy ? (usersMap.get(String(d.changedBy)) || { _id: d.changedBy, nome: null }) : null,
+      ministerioId: d.ministerioId ? (minsMap.get(String(d.ministerioId)) || { _id: d.ministerioId, nome: null }) : null,
+    };
+  });
+}
+
+export async function pgCreateRoleHistory({ igrejaId, userId, fromRole, toRole, ministerioId, changedBy }) {
+  await getPostgresPool().query(
+    `INSERT INTO role_history (id, igreja_id, user_id, dados) VALUES ($1, $2, $3, $4::jsonb)`,
+    [randomUUID(), igrejaId, userId, JSON.stringify({
+      fromRole, toRole, ministerioId: ministerioId || null, changedBy: changedBy || null,
+      createdAt: new Date().toISOString(),
+    })],
+  );
 }
 
 /** Líderes ativos da igreja, agrupados por ministério (para GET /api/ministros). */
