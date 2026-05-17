@@ -143,11 +143,6 @@ const checkinFilters = {
   qtdCheckins: '',
 };
 
-Chart.defaults.color = '#a0a0a0';
-Chart.defaults.borderColor = '#2a2a2a';
-Chart.defaults.font.family = "'DM Sans', sans-serif";
-Chart.defaults.animation = { duration: 380 };
-
 const loadingEl = document.getElementById('loading');
 const errorEl = document.getElementById('error');
 const contentEl = document.getElementById('content');
@@ -179,6 +174,10 @@ const loginEmail = document.getElementById('loginEmail');
 const loginPass = document.getElementById('loginPass');
 const loginError = document.getElementById('loginError');
 const btnLogin = document.getElementById('btnLogin');
+if (loginForm) {
+  loginForm.setAttribute('novalidate', '');
+  loginForm.addEventListener('submit', (ev) => ev.preventDefault(), { capture: true });
+}
 const btnLogout = document.getElementById('btnLogoutSidebar');
 const authUserName = document.getElementById('authUserName');
 const authUserInitial = document.getElementById('authUserInitial');
@@ -520,7 +519,7 @@ async function authFetch(url, options = {}) {
   const slug = getTenantSlugForLinks();
   if (slug) headers['X-Igreja-Slug'] = slug;
   const r = await fetch(url, { ...options, headers });
-  if (r.status === 401 && authToken && authToken === tokenAtRequest) {
+  if (r.status === 401 && authToken && authToken === tokenAtRequest && !loginInProgress) {
     clearAuthSession();
     throw new Error('AUTH_REQUIRED');
   }
@@ -660,14 +659,27 @@ function showToast(message, type) {
 }
 
 let chartJsLoadPromise = null;
+function applyChartDefaults() {
+  if (typeof Chart === 'undefined') return;
+  Chart.defaults.color = '#a0a0a0';
+  Chart.defaults.borderColor = '#2a2a2a';
+  Chart.defaults.font.family = "'DM Sans', sans-serif";
+  Chart.defaults.animation = { duration: 380 };
+}
 function ensureChartJs() {
-  if (typeof Chart !== 'undefined') return Promise.resolve();
+  if (typeof Chart !== 'undefined') {
+    applyChartDefaults();
+    return Promise.resolve();
+  }
   if (chartJsLoadPromise) return chartJsLoadPromise;
   chartJsLoadPromise = new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
     s.async = true;
-    s.onload = () => resolve();
+    s.onload = () => {
+      applyChartDefaults();
+      resolve();
+    };
     s.onerror = () => reject(new Error('Falha ao carregar gráficos'));
     document.head.appendChild(s);
   });
@@ -5309,7 +5321,8 @@ btnReviewLLM?.addEventListener('click', async () => {
     btnReviewLLM.textContent = '✨ Revisar com IA';
   }
 });
-loginForm?.addEventListener('submit', handleLogin);
+if (loginForm) loginForm.addEventListener('submit', handleLogin);
+window.__celeiroHandleLogin = handleLogin;
 btnLogout?.addEventListener('click', handleLogout);
 filterArea?.addEventListener('change', () => {
   const val = (filterArea.value || '').trim();
