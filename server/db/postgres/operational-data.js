@@ -1,6 +1,7 @@
 /**
  * Dados operacionais em PostgreSQL: voluntários, check-ins, candidaturas (gestão).
  */
+import { randomUUID } from 'crypto';
 import { getPostgresPool } from './init.js';
 import { escalaDataToYMD, getDayRangeBrasilia } from '../../lib/brasilia.js';
 import { pgFindUserById, pgFindUsersByEmail } from './repos.js';
@@ -63,6 +64,38 @@ export async function pgListVoluntarios(igrejaId) {
 export async function pgListVoluntarioEmails(igrejaId) {
   const list = await pgListVoluntarios(igrejaId);
   return list.map((v) => (v.email || '').toLowerCase().trim()).filter(Boolean);
+}
+
+/** Garante email na lista de voluntários (cadastro, check-in, registro de conta). */
+export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igrejaId }) {
+  const em = (email || '').toString().trim().toLowerCase();
+  if (!em || !em.includes('@') || !igrejaId) return null;
+  const pool = getPostgresPool();
+  const { rows } = await pool.query(
+    'SELECT id, nome, dados FROM voluntarios WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
+    [igrejaId, em],
+  );
+  const nomeStr = (nome || '').toString().trim();
+  const minStr = (ministerio || '').toString().trim();
+  if (rows[0]) {
+    const dados = { ...(rows[0].dados || {}) };
+    if (nomeStr) dados.nome = nomeStr;
+    if (minStr) dados.ministerio = minStr;
+    await pool.query(
+      `UPDATE voluntarios SET dados = $3::jsonb, nome = COALESCE(NULLIF($4, ''), nome)
+       WHERE id = $1 AND igreja_id = $2`,
+      [rows[0].id, igrejaId, JSON.stringify(dados), nomeStr],
+    );
+    return rows[0].id;
+  }
+  const id = randomUUID();
+  const dados = { nome: nomeStr || em, ministerio: minStr || '' };
+  await pool.query(
+    `INSERT INTO voluntarios (id, igreja_id, email, nome, dados, ativo, fonte)
+     VALUES ($1, $2, $3, $4, $5::jsonb, TRUE, 'cadastro')`,
+    [id, igrejaId, em, nomeStr || em, JSON.stringify(dados)],
+  );
+  return id;
 }
 
 function mapCheckinRow(row) {

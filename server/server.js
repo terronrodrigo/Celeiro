@@ -77,7 +77,7 @@ import {
   checkinFechadoMensagem,
 } from './lib/escala-checkin-rules.js';
 import {
-  pgListVoluntarios, pgListVoluntarioEmails, buildVoluntariosResumo,
+  pgListVoluntarios, pgListVoluntarioEmails, buildVoluntariosResumo, pgEnsureVoluntarioInList,
   pgListCheckins, pgListCandidaturasByEscala, pgFindCandidaturaById,
   pgUpdateCandidaturaStatus, pgBulkUpdateCandidaturaStatus, pgCandidaturaStatsByEmails,
 } from './db/postgres/operational-data.js';
@@ -623,6 +623,9 @@ async function ensureVoluntarioInList({ email, nome, ministerio, igrejaId }) {
   const em = (email || '').toString().trim().toLowerCase();
   if (!em || !em.includes('@')) return null;
   if (!igrejaId) return null;
+  if (isPostgres()) {
+    return pgEnsureVoluntarioInList({ email: em, nome, ministerio, igrejaId });
+  }
   const setFields = {};
   const nomeStr = (nome || '').toString().trim();
   if (nomeStr) setFields.nome = nomeStr;
@@ -2915,14 +2918,63 @@ app.post('/api/auth/register', async (req, res) => {
     if (!email || !nome || !senha) {
       return res.status(400).json({ error: 'Email, nome e senha são obrigatórios.' });
     }
-    
-    const existe = await User.findOne({ email: email.toLowerCase(), igrejaId: igrejaDoc._id });
+    const emailVal = String(email).trim().toLowerCase();
+    const nomeVal = String(nome).trim();
+    if (!emailVal.includes('@')) return res.status(400).json({ error: 'Email inválido.' });
+    if (senha.length < 6) return res.status(400).json({ error: 'Senha deve ter no mínimo 6 caracteres.' });
+
+    if (isPostgres()) {
+      const existe = await pgFindUserByEmailInIgreja(igrejaDoc._id, emailVal);
+      if (existe) {
+        return res.status(409).json({ error: 'Email já registrado nesta igreja.' });
+      }
+      const user = await pgCreateUser({
+        email: emailVal,
+        nome: nomeVal,
+        senha,
+        role: 'voluntario',
+        igrejaId: igrejaDoc._id,
+        ministerioIds: [],
+        mustChangePassword: false,
+      });
+      try {
+        await ensureVoluntarioInList({ email: user.email, nome: user.nome, igrejaId: igrejaDoc._id });
+      } catch (_) {}
+      invalidateCache();
+      const userRow = await pgFindUserById(user._id);
+      const { token, expiresAt } = await createAuthTokenForUser(userRow);
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      const isMasterAdmin = MASTER_ADMIN_EMAIL && emailVal === MASTER_ADMIN_EMAIL;
+      return res.status(201).json({
+        token,
+        user: {
+          ...user,
+          role: 'voluntario',
+          ministerioId: null,
+          ministerioNome: null,
+          ministerioIds: [],
+          ministerioNomes: [],
+          fotoUrl: user.fotoUrl || null,
+          mustChangePassword: false,
+          isMasterAdmin,
+          igrejaId: String(igrejaDoc._id),
+          igrejaNome: igrejaDoc.nome,
+          igrejaSlug: igrejaDoc.slug,
+          isGlobalAdmin: false,
+        },
+        expiresAt,
+      });
+    }
+
+    if (!isMongo()) return sendError(res, 503, 'Cadastro indisponível.');
+
+    const existe = await User.findOne({ email: emailVal, igrejaId: igrejaDoc._id });
     if (existe) {
       return res.status(409).json({ error: 'Email já registrado nesta igreja.' });
     }
-    
+
     const user = await createUserWithLegacyIndexSelfHeal({
-      email: email.toLowerCase(), nome, senha, role: 'voluntario', igrejaId: igrejaDoc._id,
+      email: emailVal, nome: nomeVal, senha, role: 'voluntario', igrejaId: igrejaDoc._id,
     });
     try { await ensureVoluntarioInList({ email: user.email, nome: user.nome, igrejaId: igrejaDoc._id }); } catch (_) {}
     try { await vincularCheckinsAoUsuario(user._id, user.email); } catch (_) {}
