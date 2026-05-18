@@ -4272,7 +4272,7 @@ function renderEscalasCriar() {
       <td class="escala-actions-cell" data-label="">
         <div class="escala-actions-wrap">
           <button class="btn btn-sm btn-ghost" data-escala-edit="${escapeAttr(String(e._id))}">Editar</button>
-          <button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(String(e._id))}">${ativo ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
+          <button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(String(e._id))}">${ativoFlag ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
           <button class="btn btn-sm btn-ghost" data-escala-delete="${escapeAttr(String(e._id))}">Excluir</button>
         </div>
       </td>
