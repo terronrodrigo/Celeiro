@@ -59,6 +59,7 @@ import {
   pgListCandidaturasByEscalaIds,
   pgDeleteEscala, pgGetEscalaInscricaoStatus, pgSetEscalaInscricaoStatus,
   pgCountAprovadosByMinisterio, pgAutoLinkEscalasOrfas, pgFindEscalaByEventoCheckin,
+  pgListAcompanhamentoEscala, pgBackfillCheckinCandidaturas,
 } from './db/postgres/escalas-checkin.js';
 import {
   pgListEventosFormulario, pgFindEventoFormularioById, pgCreateEventoFormulario,
@@ -5036,6 +5037,78 @@ app.post('/api/candidaturas', candidaturaPublicLimiter, async (req, res) => {
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
+// GET /api/escalas/:id/acompanhamento — escalados × presentes × faltaram
+// Admin: vê todos. Líder: só do(s) ministério(s) dele.
+// Estrutura: { escala, totals: { aprovados, presentes, faltaram, pendentes }, itens: [...] }
+app.get('/api/escalas/:id/acompanhamento', requireAuth, resolveTenant, async (req, res) => {
+  try {
+    const isAdmin = req.userRole === 'admin';
+    const isLider = req.userRole === 'lider';
+    if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
+    const escalaId = req.params.id;
+    if (!escalaId || !isValidEntityId(escalaId)) return sendError(res, 400, 'ID inválido.');
+
+    if (!isPostgres()) {
+      return sendError(res, 503, 'Acompanhamento disponível apenas em PostgreSQL.');
+    }
+
+    const escala = await pgFindEscalaById(escalaId, req.tenantIgrejaId);
+    if (!escala) return sendError(res, 404, 'Escala não encontrada.');
+    let itens = await pgListAcompanhamentoEscala(req.tenantIgrejaId, escalaId) || [];
+
+    if (isLider) {
+      const nomesPg = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
+      itens = filterCandidaturasForLider(itens, nomesPg);
+    }
+
+    // Decide se evento já encerrou (para distinguir "faltou" de "pendente").
+    const evento = escala.eventoCheckinId
+      ? await pgFindEventoCheckinById(escala.eventoCheckinId, req.tenantIgrejaId).catch(() => null)
+      : null;
+    const fim = evento?.fimCheckin ? new Date(evento.fimCheckin).getTime() : null;
+    const agora = Date.now();
+    const eventoEncerrado = fim ? agora > fim : false;
+
+    let aprovados = 0; let presentes = 0; let faltaram = 0; let pendentes = 0;
+    const enriched = itens.map((it) => {
+      const aprovado = it.status === 'aprovado';
+      let presenca = 'pendente';
+      if (it.compareceu) {
+        presenca = 'presente';
+        if (aprovado) presentes += 1;
+      } else if (aprovado && eventoEncerrado) {
+        presenca = 'faltou';
+        faltaram += 1;
+      } else if (aprovado) {
+        presenca = 'aguardando';
+        pendentes += 1;
+      }
+      if (aprovado) aprovados += 1;
+      return { ...it, presenca };
+    });
+
+    return res.json({
+      escala: {
+        _id: escala._id,
+        nome: escala.nome,
+        data: escala.data,
+        eventoCheckinId: escala.eventoCheckinId || null,
+        capacidades: escala.capacidades || {},
+        ativo: escala.ativo,
+      },
+      evento: evento ? {
+        _id: evento._id,
+        label: evento.label,
+        inicioCheckin: evento.inicioCheckin,
+        fimCheckin: evento.fimCheckin,
+        encerrado: eventoEncerrado,
+      } : null,
+      totals: { aprovados, presentes, faltaram, pendentes },
+      itens: enriched,
+    });
+  } catch (err) { console.error(err); sendError(res, 500, err.message || 'Erro ao montar acompanhamento.'); }
+});
+
 // GET /api/escalas/:id/candidaturas — lista candidaturas de uma escala (com stats de histórico)
 // Admin: vê todos. Líder: só candidaturas do(s) ministério(s) que lidera
 app.get('/api/escalas/:id/candidaturas', requireAuth, resolveTenant, async (req, res) => {
@@ -5403,8 +5476,10 @@ async function start() {
       try {
         const n = await pgAutoLinkEscalasOrfas();
         if (n > 0) console.log(`✅ Auto-link escala↔evento_checkin: ${n} escala(s) vinculada(s).`);
+        const m = await pgBackfillCheckinCandidaturas();
+        if (m > 0) console.log(`✅ Backfill check-in↔candidatura: ${m} check-in(s) vinculado(s).`);
       } catch (err) {
-        console.error('Auto-link escala↔evento_checkin falhou:', err.message || err);
+        console.error('Migração escala↔checkin↔candidatura falhou:', err.message || err);
       }
     });
   }

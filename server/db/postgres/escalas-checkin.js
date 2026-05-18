@@ -470,18 +470,114 @@ export async function pgCreateCheckin({
   );
   if (existing.length) return { duplicate: true, id: existing[0].id };
 
+  // Tenta vincular automaticamente a uma candidatura aprovada do mesmo email
+  // para uma escala que aponta para este evento_checkin (Fase 2 da integração).
+  let candidaturaId = null;
+  try {
+    const { rows: cands } = await getPostgresPool().query(
+      `SELECT c.id
+       FROM candidaturas c
+       JOIN escalas e ON e.id = c.escala_id
+       WHERE c.igreja_id = $1
+         AND e.dados->>'eventoCheckinId' = $2
+         AND LOWER(c.dados->>'email') = $3
+         AND (c.dados->>'status') = 'aprovado'
+       ORDER BY c.created_at DESC
+       LIMIT 1`,
+      [igrejaId, eventoId, em],
+    );
+    candidaturaId = cands[0]?.id || null;
+  } catch (err) {
+    // Coluna candidatura_id pode não existir antes da migração rodar; segue sem vínculo.
+    candidaturaId = null;
+  }
+
   const id = randomUUID();
   const now = Date.now();
   await getPostgresPool().query(
-    `INSERT INTO checkins (id, igreja_id, evento_id, email, nome, ministerio, batizado, data_checkin, timestamp_ms)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    `INSERT INTO checkins (id, igreja_id, evento_id, email, nome, ministerio, batizado, data_checkin, timestamp_ms, candidatura_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       id, igrejaId, eventoId, em, nome || '', ministerio || '',
       batizado == null ? null : (batizado ? 'sim' : 'nao'),
-      dataCheckin, now,
+      dataCheckin, now, candidaturaId,
     ],
   );
-  return { id, created: true };
+  return { id, created: true, candidaturaId };
+}
+
+/**
+ * Retorna lista de candidaturas aprovadas de uma escala com status de presença:
+ *  { _id, nome, email, ministerio, status, compareceu (bool), checkinId, checkinTimestamp }
+ * "compareceu" é true se houver check-in com candidatura_id correspondente,
+ * OU (fallback) se o evento_checkin vinculado à escala tiver check-in do mesmo email.
+ */
+export async function pgListAcompanhamentoEscala(igrejaId, escalaId) {
+  const escala = await pgFindEscalaById(escalaId, igrejaId);
+  if (!escala) return null;
+  const evtId = escala.eventoCheckinId || null;
+  const { rows: cands } = await getPostgresPool().query(
+    `SELECT id, dados, created_at FROM candidaturas
+     WHERE igreja_id = $1 AND escala_id = $2
+     ORDER BY created_at ASC`,
+    [igrejaId, escalaId],
+  );
+  // Map check-ins por candidatura_id e por email (fallback)
+  const byCandId = new Map();
+  const byEmail = new Map();
+  if (evtId) {
+    const { rows: checks } = await getPostgresPool().query(
+      `SELECT id, email, candidatura_id, timestamp_ms, data_checkin
+       FROM checkins WHERE igreja_id = $1 AND evento_id = $2`,
+      [igrejaId, evtId],
+    );
+    for (const c of checks) {
+      if (c.candidatura_id) byCandId.set(c.candidatura_id, c);
+      if (c.email) byEmail.set(String(c.email).toLowerCase(), c);
+    }
+  }
+  return cands.map((row) => {
+    const d = row.dados || {};
+    const email = String(d.email || '').toLowerCase();
+    const hit = byCandId.get(row.id) || byEmail.get(email) || null;
+    return {
+      _id: row.id,
+      nome: d.nome || '',
+      email: d.email || '',
+      ministerio: d.ministerio || '',
+      status: d.status || 'pendente',
+      inscritoEm: row.created_at,
+      compareceu: !!hit,
+      checkinId: hit?.id || null,
+      checkinTimestamp: hit?.timestamp_ms || (hit?.data_checkin ? new Date(hit.data_checkin).getTime() : null),
+    };
+  });
+}
+
+/**
+ * Backfill manual: vincula check-ins existentes a candidaturas aprovadas pela
+ * heurística (igreja, evento_checkin associado à escala, mesmo email, aprovado).
+ * Idempotente. Retorna nº de check-ins atualizados.
+ */
+export async function pgBackfillCheckinCandidaturas(igrejaId = null) {
+  const params = [];
+  let where = 'ch.candidatura_id IS NULL';
+  if (igrejaId) {
+    params.push(igrejaId);
+    where += ` AND ch.igreja_id = $${params.length}`;
+  }
+  const sql = `
+    UPDATE checkins ch SET candidatura_id = c.id
+    FROM candidaturas c, escalas e
+    WHERE ${where}
+      AND e.id = c.escala_id
+      AND e.igreja_id = ch.igreja_id
+      AND e.dados->>'eventoCheckinId' = ch.evento_id
+      AND LOWER(c.dados->>'email') = LOWER(ch.email)
+      AND c.dados->>'status' = 'aprovado'
+  `;
+  const { rowCount } = await getPostgresPool().query(sql, params);
+  return rowCount || 0;
 }
 
 export function getEventDateStringFromPg(evento) {

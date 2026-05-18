@@ -213,6 +213,8 @@ export async function initPostgres(connectionString) {
   await pool.query('SELECT 1');
   await pool.query(SCHEMA_SQL);
   await pool.query(`
+    ALTER TABLE checkins ADD COLUMN IF NOT EXISTS candidatura_id TEXT REFERENCES candidaturas(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS checkins_candidatura_idx ON checkins (candidatura_id) WHERE candidatura_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS checkins_igreja_evento_idx ON checkins (igreja_id, evento_id);
     CREATE INDEX IF NOT EXISTS checkins_igreja_email_idx ON checkins (igreja_id, LOWER(email));
     CREATE INDEX IF NOT EXISTS checkins_timestamp_idx ON checkins (igreja_id, timestamp_ms DESC);
