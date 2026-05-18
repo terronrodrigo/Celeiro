@@ -58,6 +58,7 @@ import {
   pgCreateCandidatura, pgFindCandidaturaDuplicada, pgFindEventoCheckinPorData,
   pgListCandidaturasByEscalaIds,
   pgDeleteEscala, pgGetEscalaInscricaoStatus, pgSetEscalaInscricaoStatus,
+  pgCountAprovadosByMinisterio, pgAutoLinkEscalasOrfas, pgFindEscalaByEventoCheckin,
 } from './db/postgres/escalas-checkin.js';
 import {
   pgListEventosFormulario, pgFindEventoFormularioById, pgCreateEventoFormulario,
@@ -4575,19 +4576,49 @@ app.get('/api/escalas/export-csv', requireAuth, resolveTenant, requireAdmin, asy
 });
 
 // POST /api/escalas — cria escala (admin only)
+// Por padrão também cria o evento de check-in correspondente e os vincula
+// (Fase 1 da integração escala↔checkin). Para desligar: passe `criarEventoCheckin: false`.
 app.post('/api/escalas', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const { nome, data, descricao, ativo } = req.body || {};
+    const {
+      nome, data, descricao, ativo,
+      capacidades,
+      criarEventoCheckin,
+      horarioInicio,
+      horarioFim,
+    } = req.body || {};
     if (!nome || !String(nome).trim()) return sendError(res, 400, 'Nome é obrigatório.');
+    const queroCriarEvento = criarEventoCheckin !== false; // default = true
     if (isPostgres()) {
-      const escala = await pgCreateEscala({
+      let escala = await pgCreateEscala({
         igrejaId: req.tenantIgrejaId,
         nome: String(nome).trim(),
         data: data || null,
         descricao: descricao || '',
         ativo: typeof ativo === 'boolean' ? ativo : true,
         criadoPor: req.userId,
+        capacidades: capacidades || {},
       });
+      if (queroCriarEvento && escala?.data) {
+        const ymd = String(data).slice(0, 10);
+        // Tenta reusar um evento já existente na mesma data; se não houver, cria um novo.
+        let evento = await pgFindEventoCheckinPorData(req.tenantIgrejaId, ymd);
+        if (!evento) {
+          evento = await pgCreateEventoCheckin({
+            igrejaId: req.tenantIgrejaId,
+            dataYmd: ymd,
+            label: String(nome).trim(),
+            ativo: true,
+            horarioInicio: horarioInicio || '',
+            horarioFim: horarioFim || '',
+            criadoPor: req.userId,
+            autoGerado: true,
+          });
+        }
+        if (evento?._id) {
+          escala = await pgUpdateEscala(escala._id, req.tenantIgrejaId, { eventoCheckinId: evento._id });
+        }
+      }
       return res.status(201).json(escala);
     }
     const escala = await Escala.create({
@@ -4605,10 +4636,10 @@ app.post('/api/escalas', requireAuth, resolveTenant, requireAdmin, async (req, r
 // PUT /api/escalas/:id — atualiza escala (admin only)
 app.put('/api/escalas/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const { nome, data, descricao, ativo } = req.body || {};
+    const { nome, data, descricao, ativo, capacidades, eventoCheckinId } = req.body || {};
     if (isPostgres()) {
       const escala = await pgUpdateEscala(req.params.id, req.tenantIgrejaId, {
-        nome, data, descricao, ativo,
+        nome, data, descricao, ativo, capacidades, eventoCheckinId,
       });
       if (!escala) return sendError(res, 404, 'Escala não encontrada.');
       return res.json(escala);
@@ -5139,6 +5170,18 @@ app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, 
           return sendError(res, 403, 'Acesso negado. Esta candidatura não é do seu ministério.');
         }
       }
+      // Checagem de capacidade na aprovação (Fase 1 — opcional por ministério).
+      if (status === 'aprovado' && candidaturaPg.status !== 'aprovado') {
+        const escala = await pgFindEscalaById(candidaturaPg.escalaId, req.tenantIgrejaId);
+        const limite = Number(escala?.capacidades?.[candidaturaPg.ministerio] || 0);
+        if (limite > 0) {
+          const contagem = await pgCountAprovadosByMinisterio(req.tenantIgrejaId, candidaturaPg.escalaId);
+          const atuais = contagem[candidaturaPg.ministerio] || 0;
+          if (atuais >= limite) {
+            return sendError(res, 409, `Capacidade do ministério "${candidaturaPg.ministerio}" atingida (${atuais}/${limite}).`);
+          }
+        }
+      }
       const updatedPg = await pgUpdateCandidaturaStatus(req.params.id, req.tenantIgrejaId, status, { aprovadoPor: req.userId });
       invalidateCache();
       return res.json(updatedPg);
@@ -5354,6 +5397,16 @@ async function start() {
   } else if (isPostgres()) {
     console.log('ℹ️ Modo PostgreSQL: ministérios, escalas, check-in e cultos recorrentes ativos.');
     startRecurringCultosScheduler();
+    // Migração idempotente: vincula escalas existentes ao evento_checkin
+    // correspondente na mesma data (Fase 1 da integração escala↔checkin).
+    setImmediate(async () => {
+      try {
+        const n = await pgAutoLinkEscalasOrfas();
+        if (n > 0) console.log(`✅ Auto-link escala↔evento_checkin: ${n} escala(s) vinculada(s).`);
+      } catch (err) {
+        console.error('Auto-link escala↔evento_checkin falhou:', err.message || err);
+      }
+    });
   }
 
   app.listen(PORT, '0.0.0.0', () => {

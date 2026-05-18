@@ -23,6 +23,10 @@ function mapEscalaRow(row) {
     criadoPor: d.criadoPor || null,
     cultoRecorrenteId: d.cultoRecorrenteId || null,
     autoGerada: !!d.autoGerada,
+    // Ligação com o evento de check-in correspondente (Fase 1 do redesign).
+    eventoCheckinId: d.eventoCheckinId || null,
+    // { "Welcome": 8, "Streaming": 4 }; valores ausentes ou 0 = sem limite.
+    capacidades: d.capacidades && typeof d.capacidades === 'object' ? d.capacidades : {},
     createdAt: row.created_at,
     updatedAt: d.updatedAt || row.created_at,
   };
@@ -134,9 +138,23 @@ export async function pgFindEscalaById(id, igrejaId) {
   return mapEscalaRow(rows[0]);
 }
 
+function sanitizeCapacidades(input) {
+  if (!input || typeof input !== 'object') return {};
+  const out = {};
+  for (const [k, v] of Object.entries(input)) {
+    const key = String(k).trim();
+    const n = Number(v);
+    if (key && Number.isFinite(n) && n > 0 && n < 10000) {
+      out[key] = Math.floor(n);
+    }
+  }
+  return out;
+}
+
 export async function pgCreateEscala({
   igrejaId, nome, data, descricao = '', ativo = true, criadoPor = null,
   cultoRecorrenteId = null, autoGerada = false,
+  eventoCheckinId = null, capacidades = null,
 }) {
   const id = randomUUID();
   const dataIso = data ? (data instanceof Date ? data.toISOString() : parseDateOnlyToUTC(data)?.toISOString()) : null;
@@ -148,6 +166,8 @@ export async function pgCreateEscala({
     criadoPor,
     cultoRecorrenteId,
     autoGerada,
+    eventoCheckinId: eventoCheckinId || null,
+    capacidades: sanitizeCapacidades(capacidades),
     updatedAt: new Date().toISOString(),
   };
   await getPostgresPool().query(
@@ -170,6 +190,12 @@ export async function pgUpdateEscala(id, igrejaId, patch) {
     criadoPor: current.criadoPor,
     cultoRecorrenteId: current.cultoRecorrenteId,
     autoGerada: current.autoGerada,
+    eventoCheckinId: patch.eventoCheckinId !== undefined
+      ? (patch.eventoCheckinId || null)
+      : (current.eventoCheckinId || null),
+    capacidades: patch.capacidades !== undefined
+      ? sanitizeCapacidades(patch.capacidades)
+      : (current.capacidades || {}),
     updatedAt: new Date().toISOString(),
   };
   await getPostgresPool().query(
@@ -177,6 +203,23 @@ export async function pgUpdateEscala(id, igrejaId, patch) {
     [id, igrejaId, JSON.stringify(dados)],
   );
   return pgFindEscalaById(id, igrejaId);
+}
+
+/** Conta candidaturas por ministério (status aprovado) para checagem de capacidade. */
+export async function pgCountAprovadosByMinisterio(igrejaId, escalaId) {
+  const { rows } = await getPostgresPool().query(
+    `SELECT (dados->>'ministerio') AS ministerio, COUNT(*)::int AS n
+     FROM candidaturas
+     WHERE igreja_id = $1 AND escala_id = $2 AND (dados->>'status') = 'aprovado'
+     GROUP BY (dados->>'ministerio')`,
+    [igrejaId, escalaId],
+  );
+  const out = {};
+  for (const r of rows) {
+    const k = (r.ministerio || '').trim();
+    if (k) out[k] = r.n;
+  }
+  return out;
 }
 
 export async function pgDeleteEscala(id, igrejaId) {
@@ -330,6 +373,68 @@ export async function pgDeleteEventoCheckin(id, igrejaId) {
     [id, igrejaId],
   );
   return rowCount > 0;
+}
+
+/**
+ * Vincula uma escala ao evento de check-in correspondente.
+ * Se `eventoCheckinId` for null, busca um evento na mesma data da escala.
+ */
+export async function pgLinkEscalaToEvento(escalaId, igrejaId, eventoCheckinId = null) {
+  const escala = await pgFindEscalaById(escalaId, igrejaId);
+  if (!escala) return null;
+  let evtId = eventoCheckinId;
+  if (!evtId) {
+    const ymd = escalaDataToYMD(escala.data);
+    if (!ymd) return escala;
+    const evt = await pgFindEventoCheckinPorData(igrejaId, ymd);
+    evtId = evt?._id || null;
+  }
+  if (!evtId) return escala;
+  return pgUpdateEscala(escalaId, igrejaId, { eventoCheckinId: evtId });
+}
+
+/**
+ * Migração: para cada escala sem `eventoCheckinId`, se existir UM único
+ * evento_checkin ativo na mesma data, vincula automaticamente.
+ * Idempotente e seguro de rodar em todo boot.
+ */
+export async function pgAutoLinkEscalasOrfas(igrejaId = null) {
+  const params = [];
+  let where = "(dados->>'eventoCheckinId') IS NULL";
+  if (igrejaId) {
+    params.push(igrejaId);
+    where += ` AND igreja_id = $${params.length}`;
+  }
+  const { rows } = await getPostgresPool().query(
+    `SELECT id, igreja_id, dados FROM escalas WHERE ${where}`,
+    params,
+  );
+  let vinculadas = 0;
+  for (const row of rows) {
+    const ymd = escalaDataToYMD(row.dados?.data);
+    if (!ymd) continue;
+    const { rows: evts } = await getPostgresPool().query(
+      "SELECT id FROM eventos_checkin WHERE igreja_id = $1 AND data = $2::date AND ativo = TRUE",
+      [row.igreja_id, ymd],
+    );
+    if (evts.length === 1) {
+      await pgUpdateEscala(row.id, row.igreja_id, { eventoCheckinId: evts[0].id });
+      vinculadas += 1;
+    }
+  }
+  return vinculadas;
+}
+
+/** Busca a escala vinculada a um evento de check-in (se houver). */
+export async function pgFindEscalaByEventoCheckin(igrejaId, eventoCheckinId) {
+  if (!eventoCheckinId) return null;
+  const { rows } = await getPostgresPool().query(
+    `SELECT id, igreja_id, dados, created_at FROM escalas
+     WHERE igreja_id = $1 AND dados->>'eventoCheckinId' = $2
+     LIMIT 1`,
+    [igrejaId, eventoCheckinId],
+  );
+  return mapEscalaRow(rows[0]);
 }
 
 export async function pgAutoCloseEscalasVencidas(igrejaId) {

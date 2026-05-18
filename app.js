@@ -4162,7 +4162,17 @@ function renderEscalasCriar() {
 
   document.getElementById('btnNovaEscala')?.addEventListener('click', () => {
     const m = document.getElementById('modalNovaEscala');
-    if (m) { document.getElementById('escalaNovoNome').value = ''; document.getElementById('escalaNovaData').value = ''; document.getElementById('escalaNovaDescricao').value = ''; document.getElementById('escalaNovoAtivo').checked = true; m.classList.add('open'); m.setAttribute('aria-hidden', 'false'); }
+    if (m) {
+      document.getElementById('escalaNovoNome').value = '';
+      document.getElementById('escalaNovaData').value = '';
+      document.getElementById('escalaNovaDescricao').value = '';
+      document.getElementById('escalaNovoAtivo').checked = true;
+      const chk = document.getElementById('escalaNovoCriarCheckin'); if (chk) chk.checked = true;
+      const hi = document.getElementById('escalaNovoHorarioInicio'); if (hi) hi.value = '';
+      const hf = document.getElementById('escalaNovoHorarioFim'); if (hf) hf.value = '';
+      const cap = document.getElementById('escalaNovoCapacidades'); if (cap) cap.value = '';
+      m.classList.add('open'); m.setAttribute('aria-hidden', 'false');
+    }
   });
   container.querySelectorAll('[data-escala-link]').forEach(btn => {
     if (btn.hasAttribute('data-escala-link-ministerio')) return;
@@ -4899,20 +4909,54 @@ function openModalEditarEscala(id) {
   document.getElementById('editarEscalaData').value = escala.data ? new Date(escala.data).toISOString().slice(0, 10) : '';
   document.getElementById('editarEscalaDescricao').value = escala.descricao || '';
   document.getElementById('editarEscalaAtivo').checked = escala.ativo !== false;
+  const capEl = document.getElementById('editarEscalaCapacidades');
+  if (capEl) capEl.value = capacidadesToTextarea(escala.capacidades);
   m.classList.add('open');
   m.setAttribute('aria-hidden', 'false');
 }
 
 // ─── Form handlers: nova e editar escala ─────────────────────────────────────
+// Aceita formato "Min: 8" por linha; valores inválidos/zerados são ignorados.
+function parseCapacidadesTextarea(text) {
+  const out = {};
+  if (!text) return out;
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = line.match(/^\s*([^:]+?)\s*:\s*(\d+)\s*$/);
+    if (!m) continue;
+    const min = m[1].trim();
+    const n = parseInt(m[2], 10);
+    if (min && Number.isFinite(n) && n > 0) out[min] = n;
+  }
+  return out;
+}
+function capacidadesToTextarea(cap) {
+  if (!cap || typeof cap !== 'object') return '';
+  return Object.entries(cap)
+    .filter(([k, v]) => k && Number(v) > 0)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join('\n');
+}
+
 document.getElementById('formNovaEscala')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const nome = document.getElementById('escalaNovoNome')?.value?.trim();
   const data = document.getElementById('escalaNovaData')?.value || '';
   const descricao = document.getElementById('escalaNovaDescricao')?.value?.trim() || '';
   const ativo = document.getElementById('escalaNovoAtivo')?.checked !== false;
+  const criarEventoCheckin = document.getElementById('escalaNovoCriarCheckin')?.checked !== false;
+  const horarioInicio = document.getElementById('escalaNovoHorarioInicio')?.value || '';
+  const horarioFim = document.getElementById('escalaNovoHorarioFim')?.value || '';
+  const capacidades = parseCapacidadesTextarea(document.getElementById('escalaNovoCapacidades')?.value);
   if (!nome) return;
   try {
-    const r = await authFetch(`${API_BASE}/api/escalas`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome, data: data || undefined, descricao, ativo }) });
+    const r = await authFetch(`${API_BASE}/api/escalas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nome, data: data || undefined, descricao, ativo,
+        criarEventoCheckin, horarioInicio, horarioFim, capacidades,
+      }),
+    });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
     document.getElementById('modalNovaEscala')?.classList.remove('open');
     fetchEscalasCriar();
@@ -4927,8 +4971,13 @@ document.getElementById('formEditarEscala')?.addEventListener('submit', async (e
   const data = document.getElementById('editarEscalaData')?.value || '';
   const descricao = document.getElementById('editarEscalaDescricao')?.value?.trim() || '';
   const ativo = document.getElementById('editarEscalaAtivo')?.checked !== false;
+  const capacidades = parseCapacidadesTextarea(document.getElementById('editarEscalaCapacidades')?.value);
   try {
-    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome, data: data || null, descricao, ativo }) });
+    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nome, data: data || null, descricao, ativo, capacidades }),
+    });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
     document.getElementById('modalEditarEscala')?.classList.remove('open');
     fetchEscalasCriar();
