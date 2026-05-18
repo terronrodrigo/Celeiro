@@ -667,6 +667,15 @@ body {
   min-width: 640px;
 }
 
+.data-table th.num-cell {
+  text-align: right;
+}
+
+.data-table td.num-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .data-table th,
 .data-table td {
   padding: 16px;
@@ -1930,6 +1939,147 @@ body {
     background: var(--bg-card);
     box-shadow: 4px 0 8px rgba(0, 0, 0, 0.15);
   }
+}
+
+/* ── Visão consolidada (domingo) — layout de controles e estado vazio ───────── */
+.visao-consolidada-card {
+  margin-bottom: 16px;
+}
+.visao-consolidada-header {
+  margin-bottom: 16px;
+}
+.visao-consolidada-title {
+  font-size: 1.05rem;
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+.visao-consolidada-desc {
+  margin: 0;
+  font-size: 0.9em;
+  line-height: 1.45;
+}
+.visao-consolidada-controls {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  padding: 14px 0 4px;
+  border-top: 1px solid var(--border-color);
+}
+@media (min-width: 768px) {
+  .visao-consolidada-controls {
+    grid-template-columns: minmax(220px, 280px) 1fr;
+    gap: 20px 24px;
+    align-items: start;
+  }
+}
+.visao-consolidada-date label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.visao-consolidada-date-input {
+  width: 100%;
+  max-width: 280px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+.visao-consolidada-field-hint {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  max-width: 360px;
+}
+.visao-consolidada-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+@media (min-width: 768px) {
+  .visao-consolidada-actions {
+    align-items: flex-start;
+    padding-top: 22px;
+  }
+}
+.visao-consolidada-actions-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.visao-consolidada-placeholder {
+  margin-top: 16px;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  padding: 20px 18px;
+}
+.visao-consolidada-placeholder-inner {
+  max-width: 520px;
+  margin: 0 auto;
+  text-align: center;
+}
+.visao-consolidada-placeholder-title {
+  margin: 0 0 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+.visao-consolidada-placeholder-text {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.visao-consolidada-pre {
+  display: block;
+  margin-top: 16px;
+  white-space: pre-wrap;
+  font-size: 0.85em;
+  line-height: 1.45;
+  background: var(--bg-muted, #f4f4f5);
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--border-color);
+}
+.visao-consolidada-pre--loading {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.escala-candidatos-intro {
+  margin: 0 0 16px;
+  line-height: 1.45;
+}
+.escala-empty-state {
+  max-width: 420px;
+  margin: 0 auto;
+  text-align: center;
+  padding: 8px 12px;
+}
+.escala-empty-state-title {
+  margin: 0 0 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.escala-empty-state-text {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.escala-table-empty-cell {
+  text-align: center;
+  vertical-align: middle;
+  padding: 28px 16px !important;
+  background: var(--bg-secondary);
 }
 
 /* ── Escala: filtros da análise (desktop e mobile) ───────────────────────────── */

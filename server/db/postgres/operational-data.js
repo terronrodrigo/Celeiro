@@ -4,7 +4,8 @@
 import { randomUUID } from 'crypto';
 import { getPostgresPool } from './init.js';
 import { escalaDataToYMD, getDayRangeBrasilia } from '../../lib/brasilia.js';
-import { pgFindUserById, pgFindUsersByEmail } from './repos.js';
+import { pgFindUserById, pgFindUsersByEmail, normBatizadoPerfil } from './repos.js';
+import { splitVoluntarioMinisterios } from '../../lib/ministerio-match.js';
 
 // Re-export para que outros módulos (server.js) usem o pool sem importar init.js direto.
 export { getPostgresPool };
@@ -20,6 +21,8 @@ function toCsvString(v) {
 
 function mapVoluntarioFromRow(row) {
   const d = row.dados || {};
+  const ministerios = splitVoluntarioMinisterios({ ministerios: d.ministerios, ministerio: d.ministerio });
+  const ministerio = ministerios.length ? ministerios.join(', ') : '';
   return {
     _id: row.id,
     email: row.email,
@@ -28,11 +31,96 @@ function mapVoluntarioFromRow(row) {
     disponibilidade: toCsvString(d.disponibilidade),
     estado: d.estado || '',
     cidade: d.cidade || '',
-    ministerio: d.ministerio || '',
+    ministerio,
+    ministerios,
     telefone: d.telefone || d.whatsapp || '',
+    batizado: normBatizadoPerfil(d.batizado),
     ativo: row.ativo !== false,
     fonte: row.fonte || 'postgres',
   };
+}
+
+/** Anexa contagens de candidaturas (escala) e check-ins por email (1 query cada). */
+export async function pgAttachParticipacaoStats(igrejaId, voluntarios) {
+  if (!voluntarios?.length) return voluntarios || [];
+  const emails = [...new Set(voluntarios.map((v) => String(v.email || '').toLowerCase().trim()).filter(Boolean))];
+  if (!emails.length) return voluntarios;
+  const pool = getPostgresPool();
+  const [{ rows: candRows }, { rows: ckRows }] = await Promise.all([
+    pool.query(
+      `SELECT LOWER(dados->>'email') AS em,
+         COUNT(*)::int AS vezes_escala_inscricao,
+         COUNT(*) FILTER (WHERE dados->>'status' = 'aprovado')::int AS vezes_escala_aprovado
+       FROM candidaturas
+       WHERE igreja_id = $1 AND LOWER(dados->>'email') = ANY($2::text[])
+       GROUP BY 1`,
+      [igrejaId, emails],
+    ),
+    pool.query(
+      `SELECT LOWER(email) AS em, COUNT(*)::int AS vezes_checkin
+       FROM checkins
+       WHERE igreja_id = $1 AND LOWER(email) = ANY($2::text[])
+       GROUP BY 1`,
+      [igrejaId, emails],
+    ),
+  ]);
+  const candMap = new Map(candRows.map((r) => [r.em, r]));
+  const ckMap = new Map(ckRows.map((r) => [r.em, r.vezes_checkin]));
+  return voluntarios.map((v) => {
+    const em = String(v.email || '').toLowerCase().trim();
+    const c = candMap.get(em);
+    return {
+      ...v,
+      vezesEscalaAprovado: c?.vezes_escala_aprovado ?? 0,
+      vezesEscalaInscricao: c?.vezes_escala_inscricao ?? 0,
+      vezesCheckin: ckMap.get(em) ?? 0,
+    };
+  });
+}
+
+/** Indica se falta complemento pós-check-in (uma vez) e quais campos. */
+export function computePerfilCheckinGap(dados) {
+  const d = dados || {};
+  if (d.perfilCheckinCompletoAt || d.perfilCheckinSkip === true) {
+    return { needsComplement: false, missing: [] };
+  }
+  const missing = [];
+  const tel = `${d.telefone || ''} ${d.whatsapp || ''}`.trim();
+  if (!tel) missing.push('telefone');
+  if (!(d.cidade || '').toString().trim()) missing.push('cidade');
+  if (!(d.estado || '').toString().trim()) missing.push('estado');
+  return { needsComplement: missing.length > 0, missing };
+}
+
+/** Atualiza JSON `dados` do voluntário com complemento único ou skip. */
+export async function pgApplyCheckinComplemento(igrejaId, emailLower, { telefone, whatsapp, cidade, estado, skip } = {}) {
+  const pool = getPostgresPool();
+  const em = String(emailLower || '').toLowerCase().trim();
+  const { rows } = await pool.query(
+    'SELECT id, dados FROM voluntarios WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
+    [igrejaId, em],
+  );
+  if (!rows[0]) return { ok: false, error: 'not_found' };
+  const dados = { ...(rows[0].dados || {}) };
+  if (skip) {
+    dados.perfilCheckinSkip = true;
+    dados.perfilCheckinSkipAt = new Date().toISOString();
+  } else {
+    if (telefone != null && String(telefone).trim()) dados.telefone = String(telefone).trim();
+    if (whatsapp != null && String(whatsapp).trim()) dados.whatsapp = String(whatsapp).trim();
+    if (cidade != null && String(cidade).trim()) dados.cidade = String(cidade).trim();
+    if (estado != null && String(estado).trim()) {
+      dados.estado = String(estado).trim().toUpperCase().slice(0, 2);
+    }
+    dados.perfilCheckinCompletoAt = new Date().toISOString();
+    delete dados.perfilCheckinSkip;
+    delete dados.perfilCheckinSkipAt;
+  }
+  await pool.query(
+    'UPDATE voluntarios SET dados = $3::jsonb, updated_at = NOW() WHERE id = $1 AND igreja_id = $2',
+    [rows[0].id, igrejaId, JSON.stringify(dados)],
+  );
+  return { ok: true };
 }
 
 export async function pgListVoluntarios(igrejaId) {
@@ -65,6 +153,7 @@ export async function pgListVoluntarios(igrejaId) {
       estado: '',
       cidade: '',
       ministerio: '',
+      batizado: null,
       ativo: true,
       fonte: 'user',
     });
@@ -84,7 +173,7 @@ export async function pgListVoluntarioEmails(igrejaId) {
  * fonte: 'cadastro' (default), 'checkin', 'planilha', etc. — registra como veio.
  * Se já existe, atualiza nome/ministerio (não sobrescreve fonte para preservar histórico).
  */
-export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igrejaId, fonte = 'cadastro' }) {
+export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igrejaId, fonte = 'cadastro', telefone, batizado } = {}) {
   const em = (email || '').toString().trim().toLowerCase();
   if (!em || !em.includes('@') || !igrejaId) return null;
   const pool = getPostgresPool();
@@ -94,10 +183,27 @@ export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igreja
   );
   const nomeStr = (nome || '').toString().trim();
   const minStr = (ministerio || '').toString().trim();
+  const telStr = (telefone || '').toString().trim();
+  const batMerge = batizado === true || batizado === false ? batizado : null;
   if (rows[0]) {
     const dados = { ...(rows[0].dados || {}) };
     if (nomeStr) dados.nome = nomeStr;
-    if (minStr) dados.ministerio = minStr;
+    if (minStr) {
+      const set = new Set(splitVoluntarioMinisterios({ ministerios: dados.ministerios, ministerio: dados.ministerio }));
+      set.add(minStr);
+      const arr = [...set];
+      dados.ministerios = arr;
+      dados.ministerio = arr.join(', ');
+    }
+    if (telStr && !String(dados.telefone || dados.whatsapp || '').trim()) {
+      dados.telefone = telStr;
+    }
+    if (batMerge !== null) {
+      const prev = normBatizadoPerfil(dados.batizado);
+      if (prev !== true && prev !== false) {
+        dados.batizado = batMerge;
+      }
+    }
     await pool.query(
       `UPDATE voluntarios SET dados = $3::jsonb, nome = COALESCE(NULLIF($4, ''), nome)
        WHERE id = $1 AND igreja_id = $2`,
@@ -106,7 +212,10 @@ export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igreja
     return rows[0].id;
   }
   const id = randomUUID();
-  const dados = { nome: nomeStr || em, ministerio: minStr || '' };
+  const mins0 = minStr ? [minStr] : [];
+  const dados = { nome: nomeStr || em, ministerios: mins0, ministerio: mins0.join(', ') };
+  if (telStr) dados.telefone = telStr;
+  if (batMerge !== null) dados.batizado = batMerge;
   await pool.query(
     `INSERT INTO voluntarios (id, igreja_id, email, nome, dados, ativo, fonte)
      VALUES ($1, $2, $3, $4, $5::jsonb, TRUE, $6)`,
@@ -373,19 +482,22 @@ function splitMultiValue(v) {
 }
 
 export function buildVoluntariosResumo(list) {
-  const areasCount = {};
+  const ministeriosCount = {};
   const dispCount = {};
   (list || []).forEach((v) => {
-    splitMultiValue(v.areas).forEach((a) => {
-      areasCount[a] = (areasCount[a] || 0) + 1;
-    });
+    const mins = splitVoluntarioMinisterios(v);
+    if (mins.length) {
+      mins.forEach((m) => {
+        ministeriosCount[m] = (ministeriosCount[m] || 0) + 1;
+      });
+    }
     splitMultiValue(v.disponibilidade).forEach((d) => {
       dispCount[d] = (dispCount[d] || 0) + 1;
     });
   });
   return {
     total: (list || []).length,
-    areas: Object.entries(areasCount).sort((a, b) => b[1] - a[1]),
+    ministerios: Object.entries(ministeriosCount).sort((a, b) => b[1] - a[1]),
     disponibilidade: Object.entries(dispCount).sort((a, b) => b[1] - a[1]),
     estados: [],
     cidades: [],

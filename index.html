@@ -176,9 +176,9 @@
             <div class="filters-card">
               <div class="filters-left">
                 <div class="form-group compact">
-                  <label for="filterArea">Área</label>
-                  <select id="filterArea">
-                    <option value="">Todas as áreas</option>
+                  <label for="filterMinisterio">Ministério</label>
+                  <select id="filterMinisterio">
+                    <option value="">Todos os ministérios</option>
                   </select>
                 </div>
                 <div class="form-group compact">
@@ -342,7 +342,9 @@
                       <th>Nome</th>
                       <th>Email</th>
                       <th>Cidade / Estado</th>
-                      <th>Áreas</th>
+                      <th title="Aprovações na escala (candidatura com status aprovado)" class="num-cell">Escala</th>
+                      <th title="Total de check-ins registrados" class="num-cell">Check-ins</th>
+                      <th title="Informado no perfil, check-in ou cadastro (pode haver mais de um)">Ministérios</th>
                       <th>Disponibilidade</th>
                     </tr>
                   </thead>
@@ -361,7 +363,7 @@
           <!-- Gráficos demográficos (do conjunto filtrado) -->
           <section class="charts-row">
             <div class="chart-card chart-main">
-              <div class="chart-header"><h2>Por área de atuação</h2></div>
+              <div class="chart-header"><h2>Por ministério</h2></div>
               <div class="chart-container"><canvas id="areasChart"></canvas></div>
             </div>
             <div class="chart-card chart-side">
@@ -955,7 +957,7 @@
                   <div class="form-group"><label for="perfilTempoIgreja">Tempo na igreja</label><select id="perfilTempoIgreja"><option value="">Selecione</option><option value="Menos de 1 ano">Menos de 1 ano</option><option value="1 a 3 anos">1 a 3 anos</option><option value="3 a 5 anos">3 a 5 anos</option><option value="5 a 10 anos">5 a 10 anos</option><option value="Mais de 10 anos">Mais de 10 anos</option><option value="Não frequento">Não frequento</option></select></div>
                   <div class="form-group"><label for="perfilVoluntarioIgreja">Já é voluntário na igreja?</label><select id="perfilVoluntarioIgreja"><option value="">Selecione</option><option value="Sim">Sim</option><option value="Não">Não</option></select></div>
                 </div>
-                <div class="form-group"><label for="perfilMinisterio">Ministério</label><select id="perfilMinisterio"><option value="">Selecione</option></select><input type="text" id="perfilMinisterioOutro" placeholder="Outro (especifique)" class="ministerio-outro-input" style="display:none"></div>
+                <div class="form-group"><label>Ministérios em que serve</label><p class="form-hint">Pode marcar mais de um. No check-in de cada culto você continua informando em qual ministério está servindo naquele dia.</p><div id="perfilMinisterioGroup" class="ministerio-checkbox-group" role="group" aria-label="Ministérios"></div><input type="text" id="perfilMinisterioOutro" placeholder="Outro (especifique; pode separar por vírgula)" class="ministerio-outro-input" style="display:none"></div>
                 <div class="form-group">
                   <label>Disponibilidade</label>
                   <p class="form-hint">Em quais dias da semana você está disponível?</p>
@@ -985,7 +987,10 @@
             <p class="checkin-hoje-subtitle">Confirme presença no culto de hoje.</p>
             <div id="eventosHojeList" class="checkin-hoje-eventos"></div>
             <div id="formConfirmarCheckin" class="checkin-hoje-form" style="display: none;">
-              <div class="form-group"><label for="confirmarBatizado">Já é batizado?</label><select id="confirmarBatizado"><option value="">Selecione</option><option value="sim">Sim</option><option value="nao">Não</option></select></div>
+              <div class="form-group" id="confirmarBatizadoWrap">
+                <label for="confirmarBatizado">Já é batizado?</label>
+                <select id="confirmarBatizado"><option value="">Selecione</option><option value="sim">Sim</option><option value="nao">Não</option></select>
+              </div>
               <div class="form-group"><label for="confirmarMinisterio">Ministério</label><select id="confirmarMinisterio"><option value="">Selecione</option></select></div>
               <button type="button" class="btn btn-primary" id="btnConfirmarCheckin">Confirmar presença</button>
             </div>
@@ -1488,6 +1493,28 @@
     </div>
   </div>
 
+  <!-- Modal complemento pós-check-in (telefone, cidade, UF) — uma vez por voluntário -->
+  <div id="modalComplementoCheckin" class="modal" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Quase lá — seus dados</h2>
+        <button type="button" class="modal-close" id="modalComplementoCheckinClose" aria-label="Fechar">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="auth-subtitle" style="margin-bottom:16px">Pedimos só uma vez (no primeiro check-in ou inscrição em escala): telefone ou WhatsApp, cidade e UF ajudam a manter o cadastro e os indicadores atualizados.</p>
+        <div class="form-group"><label for="complementoCheckinTelefone">Telefone</label><input type="text" id="complementoCheckinTelefone" autocomplete="tel" placeholder="Se preferir, só WhatsApp"></div>
+        <div class="form-group"><label for="complementoCheckinWhatsapp">WhatsApp</label><input type="text" id="complementoCheckinWhatsapp" autocomplete="tel" placeholder="DDD + número"></div>
+        <div class="form-group"><label for="complementoCheckinCidade">Cidade</label><input type="text" id="complementoCheckinCidade" autocomplete="address-level2"></div>
+        <div class="form-group"><label for="complementoCheckinEstado">Estado (UF)</label><select id="complementoCheckinEstado"><option value="">Selecione</option></select></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="btnComplementoCheckinPular">Agora não</button>
+        <button type="button" class="btn btn-primary" id="btnComplementoCheckinSalvar">Salvar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal Perfil do voluntário -->
   <div id="modalPerfilVoluntario" class="modal" aria-hidden="true">
     <div class="modal-backdrop"></div>
@@ -1718,6 +1745,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.0"></script>
+  <script defer src="app.js?v=1.6.4"></script>
 </body>
 </html>

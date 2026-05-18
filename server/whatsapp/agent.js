@@ -188,8 +188,9 @@ async function executeAction(action, params, token, role) {
       if (d.error) return d.error;
       const total = (d.voluntarios || []).length;
       const resumo = d.resumo || {};
-      const areas = Array.isArray(resumo.areas) ? resumo.areas.slice(0, 5).map(([k, v]) => `${k}(${v})`).join(', ') : '';
-      return `*Resumo*\nTotal: ${total} voluntários\n${areas ? 'Áreas: ' + areas : ''}`;
+      const topMin = Array.isArray(resumo.ministerios) ? resumo.ministerios : [];
+      const ministeriosTxt = topMin.length ? topMin.slice(0, 5).map(([k, v]) => `${k}(${v})`).join(', ') : '';
+      return `*Resumo*\nTotal: ${total} voluntários\n${ministeriosTxt ? 'Ministérios: ' + ministeriosTxt : ''}`;
     }
     case ACTIONS.LISTAR_VOLUNTARIOS: {
       if (role !== 'admin') return 'Acesso negado.';

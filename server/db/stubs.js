@@ -5,7 +5,7 @@
 
 export const EMPTY_VOLUNTARIOS = {
   voluntarios: [],
-  resumo: { total: 0, areas: [], disponibilidade: [], estados: [], cidades: [] },
+  resumo: { total: 0, ministerios: [], disponibilidade: [], estados: [], cidades: [] },
 };
 
 export const EMPTY_CHECKINS = {

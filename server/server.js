@@ -86,7 +86,7 @@ import {
 import { DIAS_SEMANA, formatDataPtBr } from './lib/brasilia.js';
 import { buildWaMeUrl, buildMensagemAprovacaoEscala, phoneToWaMeDigits } from './lib/whatsapp-links.js';
 import { isValidEntityId } from './lib/ids.js';
-import { filterCandidaturasForLider } from './lib/ministerio-match.js';
+import { filterCandidaturasForLider, voluntarioMatchesLiderMinisterios, normalizeVoluntarioMinisteriosPatch, splitVoluntarioMinisterios } from './lib/ministerio-match.js';
 import { enrichCandidaturasForPanel } from './lib/candidatura-enrich.js';
 import {
   isWithinCheckinWindow,
@@ -103,6 +103,7 @@ import {
   pgListCandidaturasByEmail, pgListCandidaturasForEscalas,
   pgListCheckinEmails,
   getPostgresPool,
+  pgAttachParticipacaoStats, computePerfilCheckinGap, pgApplyCheckinComplemento,
 } from './db/postgres/operational-data.js';
 import {
   pgFindConviteByToken, pgUpsertConviteLider, pgListConvitesLider,
@@ -667,6 +668,42 @@ app.get('/api/brdid/whatsapp-verification/latest', requireAuth, resolveTenant, r
 });
 
 // Funções de cache
+/** Contagem de inscrições/aprovações em escala e check-ins por email (Mongo). */
+async function mongoAttachParticipacaoStats(req, voluntarios) {
+  if (!voluntarios?.length || !isMongo()) return voluntarios || [];
+  const emails = [...new Set(voluntarios.map((v) => (v.email || '').toLowerCase().trim()).filter(Boolean))];
+  if (!emails.length) return voluntarios;
+  const baseMatch = { ...tQ(req), email: { $in: emails } };
+  const [candAgg, ckAgg] = await Promise.all([
+    Candidatura.aggregate([
+      { $match: baseMatch },
+      {
+        $group: {
+          _id: { $toLower: '$email' },
+          vezesEscalaInscricao: { $sum: 1 },
+          vezesEscalaAprovado: { $sum: { $cond: [{ $eq: ['$status', 'aprovado'] }, 1, 0] } },
+        },
+      },
+    ]),
+    Checkin.aggregate([
+      { $match: baseMatch },
+      { $group: { _id: { $toLower: '$email' }, vezesCheckin: { $sum: 1 } } },
+    ]),
+  ]);
+  const mc = new Map(candAgg.map((x) => [x._id, x]));
+  const mk = new Map(ckAgg.map((x) => [x._id, x.vezesCheckin]));
+  return voluntarios.map((v) => {
+    const em = (v.email || '').toLowerCase().trim();
+    const c = mc.get(em);
+    return {
+      ...v,
+      vezesEscalaAprovado: c?.vezesEscalaAprovado ?? 0,
+      vezesEscalaInscricao: c?.vezesEscalaInscricao ?? 0,
+      vezesCheckin: mk.get(em) ?? 0,
+    };
+  });
+}
+
 function invalidateCache() {
   cache.voluntarios = null;
   cache.voluntariosTime = 0;
@@ -677,18 +714,28 @@ function invalidateCache() {
 }
 
 /** Garante que o email esteja na lista de voluntários (mesmo com dados incompletos). Usado em registro, role voluntário e check-in. */
-async function ensureVoluntarioInList({ email, nome, ministerio, igrejaId }) {
+async function ensureVoluntarioInList({ email, nome, ministerio, igrejaId, telefone } = {}) {
   const em = (email || '').toString().trim().toLowerCase();
   if (!em || !em.includes('@')) return null;
   if (!igrejaId) return null;
+  const telStr = (telefone || '').toString().trim();
   if (isPostgres()) {
-    return pgEnsureVoluntarioInList({ email: em, nome, ministerio, igrejaId });
+    return pgEnsureVoluntarioInList({ email: em, nome, ministerio, igrejaId, telefone: telStr });
   }
   const setFields = {};
   const nomeStr = (nome || '').toString().trim();
   if (nomeStr) setFields.nome = nomeStr;
   const minStr = (ministerio || '').toString().trim();
-  if (minStr) setFields.ministerio = minStr;
+  if (minStr) {
+    const doc = await Voluntario.findOne({ email: em, igrejaId }).select('ministerio ministerios').lean();
+    const cur = splitVoluntarioMinisterios(doc || {});
+    const set = new Set(cur);
+    set.add(minStr);
+    const arr = [...set];
+    setFields.ministerio = arr.join(', ');
+    setFields.ministerios = arr;
+  }
+  if (telStr) setFields.telefone = telStr;
   const update = {
     $setOnInsert: {
       email: em, igrejaId, ativo: true, fonte: 'manual', timestamp: new Date(), timestampMs: Date.now(),
@@ -701,6 +748,17 @@ async function ensureVoluntarioInList({ email, nome, ministerio, igrejaId }) {
     { upsert: true, new: true }
   ).lean();
   return doc;
+}
+
+/** Grava batismo no perfil (Mongo) só se ainda não está definido como sim/não. */
+async function mergeVoluntarioBatizadoMongo(email, igrejaId, batizado) {
+  if (batizado !== true && batizado !== false) return;
+  const em = (email || '').toString().trim().toLowerCase();
+  if (!em || !igrejaId) return;
+  const cur = await Voluntario.findOne({ email: em, igrejaId }).select('batizado').lean();
+  if (!cur) return;
+  if (cur.batizado === true || cur.batizado === false) return;
+  await Voluntario.updateOne({ _id: cur._id }, { $set: { batizado } });
 }
 
 /** Vincula ao usuário os check-ins feitos pelo mesmo email antes de criar conta (ex.: link público). Válido para legado. */
@@ -1380,11 +1438,11 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
       return String(v).split(',').map((x) => x.trim()).filter(Boolean);
     };
     const buildResumo = (list) => {
-      const areasCount = {};
+      const ministeriosCount = {};
       const dispCount = {};
       (list || []).forEach(v => {
-        splitMulti(v.areas).forEach(a => {
-          areasCount[a] = (areasCount[a] || 0) + 1;
+        splitVoluntarioMinisterios(v).forEach(m => {
+          if (m) ministeriosCount[m] = (ministeriosCount[m] || 0) + 1;
         });
         splitMulti(v.disponibilidade).forEach(d => {
           dispCount[d] = (dispCount[d] || 0) + 1;
@@ -1392,20 +1450,21 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
       });
       return {
         total: (list || []).length,
-        areas: Object.entries(areasCount).sort((a, b) => b[1] - a[1]),
+        ministerios: Object.entries(ministeriosCount).sort((a, b) => b[1] - a[1]),
         disponibilidade: Object.entries(dispCount).sort((a, b) => b[1] - a[1]),
       };
     };
 
     const filterByMinisterio = (list) => {
       if (!isLider || ministerioNomes.length === 0) return list || [];
-      return (list || []).filter((v) => {
-        const m = (v.ministerio || '').toString().trim();
-        return ministerioNomes.some((n) => n === m);
-      });
+      return (list || []).filter((v) => voluntarioMatchesLiderMinisterios(v, ministerioNomes));
     };
 
     const tenantIdStr = String(req.tenantIgrejaId);
+    const attachParticipacaoStats = async (list) => {
+      if (isPostgres()) return pgAttachParticipacaoStats(req.tenantIgrejaId, list);
+      return mongoAttachParticipacaoStats(req, list);
+    };
     if (
       isCacheValid('voluntarios') &&
       cache.voluntariosIgrejaId != null &&
@@ -1413,25 +1472,23 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
       cache.voluntarios &&
       Array.isArray(cache.voluntarios.voluntarios)
     ) {
-      if (!isLider) return res.json(cache.voluntarios);
-      const filteredCached = filterByMinisterio(cache.voluntarios.voluntarios);
-      return res.json({
-        voluntarios: filteredCached,
-        resumo: buildResumo(filteredCached),
-      });
+      const baseList = isLider ? filterByMinisterio(cache.voluntarios.voluntarios) : cache.voluntarios.voluntarios;
+      const withStats = await attachParticipacaoStats(baseList);
+      return res.json({ voluntarios: withStats, resumo: buildResumo(withStats) });
     }
 
     if (isPostgres()) {
       let voluntariosPg = await pgListVoluntarios(req.tenantIgrejaId);
       voluntariosPg = filterByMinisterio(voluntariosPg);
       const resumoPg = buildVoluntariosResumo(voluntariosPg);
-      const payloadPg = { voluntarios: voluntariosPg, resumo: resumoPg };
+      const payloadPgCache = { voluntarios: voluntariosPg, resumo: resumoPg };
       if (!isLider) {
-        cache.voluntarios = payloadPg;
+        cache.voluntarios = payloadPgCache;
         cache.voluntariosTime = Date.now();
         cache.voluntariosIgrejaId = tenantIdStr;
       }
-      return res.json(payloadPg);
+      const withStats = await pgAttachParticipacaoStats(req.tenantIgrejaId, voluntariosPg);
+      return res.json({ voluntarios: withStats, resumo: buildResumo(withStats) });
     }
 
     if (!guardMongoData(res, EMPTY_VOLUNTARIOS, 'Banco de dados indisponível.')) return;
@@ -1495,14 +1552,19 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
     }
 
     if (voluntarios.length === 0) {
-      return res.json({ voluntarios: [], resumo: { total: 0, areas: [], disponibilidade: [] } });
+      return res.json({ voluntarios: [], resumo: { total: 0, ministerios: [], disponibilidade: [] } });
     }
 
-    const normalizedAll = voluntarios.map(v => ({
-      ...v,
-      areas: Array.isArray(v.areas) ? v.areas.join(', ') : (v.areas || ''),
-      disponibilidade: Array.isArray(v.disponibilidade) ? v.disponibilidade.join(', ') : (v.disponibilidade || ''),
-    }));
+    const normalizedAll = voluntarios.map(v => {
+      const ministerios = splitVoluntarioMinisterios(v);
+      return {
+        ...v,
+        ministerio: ministerios.length ? ministerios.join(', ') : (v.ministerio || ''),
+        ministerios,
+        areas: Array.isArray(v.areas) ? v.areas.join(', ') : (v.areas || ''),
+        disponibilidade: Array.isArray(v.disponibilidade) ? v.disponibilidade.join(', ') : (v.disponibilidade || ''),
+      };
+    });
 
     const emails = [...new Set(normalizedAll.map(v => (v.email || '').toLowerCase().trim()).filter(Boolean))];
     const usersByEmail = {};
@@ -1523,12 +1585,15 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
     cache.voluntariosTime = Date.now();
     cache.voluntariosIgrejaId = req.tenantIgrejaId;
 
-    if (!isLider) return res.json(fullData);
-
+    if (!isLider) {
+      const withStats = await mongoAttachParticipacaoStats(req, normalizedAll);
+      return res.json({ voluntarios: withStats, resumo: buildResumo(withStats) });
+    }
     const filtered = filterByMinisterio(normalizedAll);
+    const withStatsF = await mongoAttachParticipacaoStats(req, filtered);
     return res.json({
-      voluntarios: filtered,
-      resumo: buildResumo(filtered),
+      voluntarios: withStatsF,
+      resumo: buildResumo(withStatsF),
     });
   } catch (err) {
     console.error(err);
@@ -1546,6 +1611,9 @@ app.get('/api/voluntarios/emails', requireAuth, resolveTenant, requireAdminOrLid
     const tenantIdStrEmails = String(req.tenantIgrejaId);
     if (isPostgres()) {
       list = await pgListVoluntarios(req.tenantIgrejaId);
+      if (isLider && ministerioNomes.length > 0) {
+        list = list.filter((v) => voluntarioMatchesLiderMinisterios(v, ministerioNomes));
+      }
     } else if (
       !isLider &&
       isCacheValid('voluntarios') &&
@@ -1559,19 +1627,25 @@ app.get('/api/voluntarios/emails', requireAuth, resolveTenant, requireAdminOrLid
       if (!guardMongoData(res, { emails: [] })) return;
       let raw = await Voluntario.find({ ativo: true, ...tQ(req) }).lean();
       if (isLider && ministerioNomes.length > 0) {
-        raw = raw.filter((v) => {
-          const m = (v.ministerio || '').toString().trim();
-          return ministerioNomes.some((n) => n === m);
-        });
+        raw = raw.filter((v) => voluntarioMatchesLiderMinisterios(v, ministerioNomes));
       }
-      list = raw.map(v => ({
-        ...v,
-        areas: Array.isArray(v.areas) ? v.areas.join(', ') : (v.areas || ''),
-        disponibilidade: Array.isArray(v.disponibilidade) ? v.disponibilidade.join(', ') : (v.disponibilidade || ''),
-      }));
+      list = raw.map(v => {
+        const ministerios = splitVoluntarioMinisterios(v);
+        return {
+          ...v,
+          ministerio: ministerios.length ? ministerios.join(', ') : (v.ministerio || ''),
+          ministerios,
+          areas: Array.isArray(v.areas) ? v.areas.join(', ') : (v.areas || ''),
+          disponibilidade: Array.isArray(v.disponibilidade) ? v.disponibilidade.join(', ') : (v.disponibilidade || ''),
+        };
+      });
     }
-    const { areas: areasParam, disponibilidade, estado, cidade, comCheckin, q } = req.query || {};
-    const areasFilter = areasParam ? (typeof areasParam === 'string' ? areasParam.split(',').map(s => s.trim()).filter(Boolean) : []) : [];
+    const { ministerio: ministerioParam, areas: areasParam, disponibilidade, estado, cidade, comCheckin, q } = req.query || {};
+    let ministerioFiltro = (ministerioParam || '').toString().trim();
+    if (!ministerioFiltro && areasParam) {
+      const legacy = typeof areasParam === 'string' ? areasParam.split(',').map((s) => s.trim()).filter(Boolean) : [];
+      ministerioFiltro = legacy[0] || '';
+    }
     const qLower = (q && typeof q === 'string') ? q.trim().toLowerCase() : '';
     let checkinEmails = new Set();
     if (comCheckin) {
@@ -1587,12 +1661,12 @@ app.get('/api/voluntarios/emails', requireAuth, resolveTenant, requireAdminOrLid
         const nome = (v.nome || '').toLowerCase();
         const email = (v.email || '').toLowerCase();
         const cidadeStr = (v.cidade || '').toLowerCase();
-        const areasStr = (v.areas || '').toLowerCase();
-        if (!nome.includes(qLower) && !email.includes(qLower) && !cidadeStr.includes(qLower) && !areasStr.includes(qLower)) return false;
+        const ministerioStr = (v.ministerio || '').toLowerCase();
+        if (!nome.includes(qLower) && !email.includes(qLower) && !cidadeStr.includes(qLower) && !ministerioStr.includes(qLower)) return false;
       }
-      if (areasFilter.length > 0) {
-        const volAreas = (v.areas || '').split(',').map(a => a.trim()).filter(Boolean);
-        if (!areasFilter.some(fa => volAreas.includes(fa))) return false;
+      if (ministerioFiltro) {
+        const mins = splitVoluntarioMinisterios(v);
+        if (!mins.includes(ministerioFiltro)) return false;
       }
       if (disponibilidade) {
         const disp = (v.disponibilidade || '').split(',').map(d => d.trim());
@@ -2192,11 +2266,19 @@ app.post('/api/checkins/confirmar', requireAuth, resolveTenant, async (req, res)
         igrejaId: req.tenantIgrejaId, eventoId, email, nome: nome || '', ministerio: ministerio || '', batizado, userId: req.userId,
       });
       if (r.error === 'not_found') return sendError(res, 404, 'Evento não encontrado ou inativo.');
-      if (r.duplicate) return res.json({ message: 'Check-in já realizado.', checkin: { _id: r.id } });
+      if (r.duplicate) {
+        try {
+          await pgEnsureVoluntarioInList({
+            email, nome: nome || '', ministerio: ministerio || '', igrejaId: req.tenantIgrejaId, fonte: 'checkin', batizado,
+          });
+        } catch (_) {}
+        invalidateCache();
+        return res.json({ message: 'Check-in já realizado.', checkin: { _id: r.id } });
+      }
       // Sincroniza o catálogo de voluntários (paridade com Mongo): quem faz check-in vira voluntário.
       try {
         await pgEnsureVoluntarioInList({
-          email, nome: nome || '', ministerio: ministerio || '', igrejaId: req.tenantIgrejaId, fonte: 'checkin',
+          email, nome: nome || '', ministerio: ministerio || '', igrejaId: req.tenantIgrejaId, fonte: 'checkin', batizado,
         });
       } catch (_) {}
       invalidateCache();
@@ -2223,7 +2305,16 @@ app.post('/api/checkins/confirmar', requireAuth, resolveTenant, async (req, res)
     const eventDateStr = getEventDateStringSaoPaulo(evento) || new Date(evento.data).toISOString().slice(0, 10);
     const dataCheckin = getDayRangeBrasilia(eventDateStr).start;
     const existing = await Checkin.findOne({ eventoId, email: email.toLowerCase(), dataCheckin, ...tQ(req) });
-    if (existing) return res.json({ message: 'Check-in já realizado.', checkin: existing });
+    if (existing) {
+      try {
+        await ensureVoluntarioInList({
+          email: email.toLowerCase(), nome: nome || '', ministerio: ministerio || '', igrejaId: req.tenantIgrejaId,
+        });
+        await mergeVoluntarioBatizadoMongo(email, req.tenantIgrejaId, batizado);
+      } catch (_) {}
+      invalidateCache();
+      return res.json({ message: 'Check-in já realizado.', checkin: existing });
+    }
 
     const checkin = await Checkin.create({
       ...tQ(req),
@@ -2242,6 +2333,7 @@ app.post('/api/checkins/confirmar', requireAuth, resolveTenant, async (req, res)
       await ensureVoluntarioInList({
         email: email.toLowerCase(), nome: nome || '', ministerio: ministerio || '', igrejaId: req.tenantIgrejaId,
       });
+      await mergeVoluntarioBatizadoMongo(email, req.tenantIgrejaId, batizado);
     } catch (_) {}
     invalidateCache();
     res.status(201).json(checkin);
@@ -2913,8 +3005,16 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
       const body = { ...req.body };
       delete body.email;
       delete body._id;
+      normalizeVoluntarioMinisteriosPatch(body);
       if (body.areas && typeof body.areas === 'string') {
         body.areas = body.areas.split(',').map((a) => a.trim()).filter(Boolean);
+      }
+      if (body.batizado !== undefined) {
+        if (body.batizado === true || body.batizado === false) {
+          /* keep */
+        } else if (body.batizado === 'sim') body.batizado = true;
+        else if (body.batizado === 'nao' || body.batizado === 'não') body.batizado = false;
+        else delete body.batizado;
       }
       if (body.whatsapp != null) {
         const w = normalizarWhatsapp(body.whatsapp);
@@ -2953,7 +3053,15 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
     const body = { ...req.body };
     delete body.email;
     delete body._id;
+    normalizeVoluntarioMinisteriosPatch(body);
     if (body.areas && typeof body.areas === 'string') body.areas = body.areas.split(',').map(a => a.trim()).filter(Boolean);
+    if (body.batizado !== undefined) {
+      if (body.batizado === true || body.batizado === false) {
+        /* keep */
+      } else if (body.batizado === 'sim') body.batizado = true;
+      else if (body.batizado === 'nao' || body.batizado === 'não') body.batizado = false;
+      else delete body.batizado;
+    }
     if (body.whatsapp != null) {
       const w = normalizarWhatsapp(body.whatsapp);
       if (body.whatsapp !== '' && w === null) return sendError(res, 400, 'WhatsApp inválido. Informe 10 ou 11 dígitos (DDD + número).');
@@ -2978,6 +3086,142 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao salvar perfil.');
+  }
+});
+
+/** Voluntário: após check-in, ver se falta completar telefone/cidade/UF (uma vez ou após “pular”). */
+app.get('/api/me/perfil-checkin-gap', requireAuth, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  try {
+    const emailLookup = (req.userEmail || '').toLowerCase().trim();
+    if (isPostgres()) {
+      const userRow = req.userId
+        ? await pgFindUserById(req.userId)
+        : (await pgFindUsersByEmail(emailLookup)).find(
+          (u) => !req.authIgrejaIdStr || String(u.igrejaId || '') === String(req.authIgrejaIdStr || ''),
+        ) || (await pgFindUsersByEmail(emailLookup))[0];
+      const email = (req.userEmail || userRow?.email || emailLookup || '').toLowerCase().trim();
+      if (!email) return res.json({ needsComplement: false, missing: [] });
+      const igrejaId = userRow?.igrejaId || req.authIgrejaIdStr;
+      if (!igrejaId) return res.json({ needsComplement: false, missing: [] });
+      const { rows } = await getPostgresPool().query(
+        'SELECT dados FROM voluntarios WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
+        [igrejaId, email],
+      );
+      const gap = computePerfilCheckinGap(rows[0]?.dados || {});
+      return res.json({ needsComplement: gap.needsComplement, missing: gap.missing });
+    }
+    if (!isMongo()) return res.json({ needsComplement: false, missing: [] });
+    const userRow = req.userId
+      ? await User.findById(req.userId).select('email igrejaId').lean()
+      : await User.findOne({
+        email: emailLookup,
+        ...(req.authIgrejaIdStr && mongoose.Types.ObjectId.isValid(req.authIgrejaIdStr)
+          ? { igrejaId: req.authIgrejaIdStr }
+          : { igrejaId: null }),
+      }).select('email igrejaId').lean();
+    const email = (req.userEmail || userRow?.email || '').toLowerCase().trim();
+    if (!email) return res.json({ needsComplement: false, missing: [] });
+    const volFilter = { email };
+    if (userRow?.igrejaId) volFilter.igrejaId = userRow.igrejaId;
+    const vol = await Voluntario.findOne(volFilter).lean();
+    if (!vol) return res.json({ needsComplement: false, missing: [] });
+    const gap = computePerfilCheckinGap({
+      telefone: vol.telefone,
+      whatsapp: vol.whatsapp,
+      cidade: vol.cidade,
+      estado: vol.estado,
+      perfilCheckinCompletoAt: vol.perfilCheckinCompletoAt,
+      perfilCheckinSkip: vol.perfilCheckinSkip,
+    });
+    return res.json({ needsComplement: gap.needsComplement, missing: gap.missing });
+  } catch (err) {
+    console.error('me/perfil-checkin-gap', err?.message || err);
+    res.json({ needsComplement: false, missing: [] });
+  }
+});
+
+/** Voluntário: salvar complemento único ou marcar “agora não” (não repete o passo). */
+app.put('/api/me/perfil-checkin-complemento', requireAuth, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const skip = body.skip === true;
+    if (isPostgres()) {
+      const userRow = req.userId ? await pgFindUserById(req.userId) : null;
+      const email = (req.userEmail || userRow?.email || '').toLowerCase().trim();
+      if (!email) return sendError(res, 403, 'Disponível apenas para usuários com email.');
+      const igrejaId = userRow?.igrejaId || req.authIgrejaIdStr;
+      if (!igrejaId) return sendError(res, 400, 'Conta sem igreja vinculada.');
+      if (!skip) {
+        const tel = `${body.telefone || ''} ${body.whatsapp || ''}`.trim();
+        if (!tel) return sendError(res, 400, 'Informe telefone ou WhatsApp.');
+        if (!(body.cidade || '').toString().trim()) return sendError(res, 400, 'Informe a cidade.');
+        if (!(body.estado || '').toString().trim()) return sendError(res, 400, 'Informe o estado (UF).');
+      }
+      let whatsappNorm;
+      if (!skip && body.whatsapp != null && String(body.whatsapp).trim()) {
+        const w = normalizarWhatsapp(body.whatsapp);
+        if (w === null) return sendError(res, 400, 'WhatsApp inválido. Informe 10 ou 11 dígitos (DDD + número).');
+        whatsappNorm = w;
+      }
+      const r = await pgApplyCheckinComplemento(igrejaId, email, {
+        skip,
+        telefone: body.telefone,
+        whatsapp: whatsappNorm,
+        cidade: body.cidade != null ? normalizarCidade(body.cidade) : undefined,
+        estado: body.estado != null ? normalizarEstado(body.estado) : undefined,
+      });
+      if (!r.ok) {
+        return sendError(
+          res,
+          404,
+          'Seu cadastro ainda não está na lista de voluntários. Abra Perfil e salve seus dados.',
+        );
+      }
+      invalidateCache();
+      return res.json({ ok: true });
+    }
+    if (!isMongo()) return sendError(res, 503, 'Indisponível.');
+    const uRow = req.userId
+      ? await User.findById(req.userId).select('email igrejaId').lean()
+      : await User.findOne({
+        email: (req.userEmail || '').toLowerCase(),
+        ...(req.authIgrejaIdStr && mongoose.Types.ObjectId.isValid(req.authIgrejaIdStr)
+          ? { igrejaId: req.authIgrejaIdStr }
+          : { igrejaId: null }),
+      }).select('email igrejaId').lean();
+    const email = (req.userEmail || uRow?.email || '').toLowerCase().trim();
+    if (!email) return sendError(res, 403, 'Disponível apenas para usuários com email.');
+    if (!uRow?.igrejaId) return sendError(res, 400, 'Conta sem igreja vinculada.');
+    const volFilter = { email, igrejaId: uRow.igrejaId };
+    if (skip) {
+      await Voluntario.updateOne(volFilter, {
+        $set: { perfilCheckinSkip: true, perfilCheckinSkipAt: new Date() },
+      });
+    } else {
+      const tel = `${body.telefone || ''} ${body.whatsapp || ''}`.trim();
+      if (!tel) return sendError(res, 400, 'Informe telefone ou WhatsApp.');
+      if (!(body.cidade || '').toString().trim()) return sendError(res, 400, 'Informe a cidade.');
+      if (!(body.estado || '').toString().trim()) return sendError(res, 400, 'Informe o estado (UF).');
+      const set = { perfilCheckinCompletoAt: new Date() };
+      if (body.telefone != null && String(body.telefone).trim()) set.telefone = String(body.telefone).trim();
+      if (body.whatsapp != null && String(body.whatsapp).trim()) {
+        const w = normalizarWhatsapp(body.whatsapp);
+        if (w === null) return sendError(res, 400, 'WhatsApp inválido.');
+        set.whatsapp = w;
+      }
+      set.cidade = normalizarCidade(body.cidade);
+      set.estado = normalizarEstado(body.estado);
+      await Voluntario.updateOne(volFilter, {
+        $set: set,
+        $unset: { perfilCheckinSkip: 1, perfilCheckinSkipAt: 1 },
+      });
+    }
+    invalidateCache();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao salvar dados.');
   }
 });
 
@@ -4958,6 +5202,17 @@ app.post('/api/candidaturas', candidaturaPublicLimiter, async (req, res) => {
       }
       const dup = await pgFindCandidaturaDuplicada(igrejaDoc._id, escalaId, em);
       if (dup) {
+        try {
+          await pgEnsureVoluntarioInList({
+            email: em,
+            nome: (nome || '').toString().trim(),
+            ministerio: ministerioValido,
+            igrejaId: igrejaDoc._id,
+            fonte: 'cadastro',
+            telefone: (telefone || '').toString().trim(),
+          });
+        } catch (_) {}
+        invalidateCache();
         return res.status(200).json({ message: 'Você já se candidatou para esta escala.', candidatura: { _id: dup } });
       }
       const candidatura = await pgCreateCandidatura({
@@ -4968,6 +5223,17 @@ app.post('/api/candidaturas', candidaturaPublicLimiter, async (req, res) => {
         telefone: (telefone || '').toString().trim(),
         ministerio: ministerioValido,
       });
+      try {
+        await pgEnsureVoluntarioInList({
+          email: em,
+          nome: (nome || '').toString().trim(),
+          ministerio: ministerioValido,
+          igrejaId: igrejaDoc._id,
+          fonte: 'cadastro',
+          telefone: (telefone || '').toString().trim(),
+        });
+      } catch (_) {}
+      invalidateCache();
       return res.status(201).json({ message: 'Candidatura enviada!', candidatura });
     }
     const escala = await Escala.findOne({ _id: escalaId, igrejaId: igrejaDoc._id }).lean();
@@ -4984,7 +5250,8 @@ app.post('/api/candidaturas', candidaturaPublicLimiter, async (req, res) => {
     if (!ministerioValido) return sendError(res, 400, 'Ministério inválido. Use o link enviado pelo seu líder para o seu ministério.');
     const existing = await Candidatura.findOne({ escalaId, email: em, igrejaId: igrejaDoc._id });
     if (existing) {
-      try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim(), igrejaId: igrejaDoc._id }); } catch (_) {}
+      try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: (ministerio || '').toString().trim(), igrejaId: igrejaDoc._id, telefone: (telefone || '').toString().trim() }); } catch (_) {}
+      invalidateCache();
       return res.status(200).json({ message: 'Você já se candidatou para esta escala.', candidatura: existing });
     }
     const ministerioCanonico = ministerioValido;
@@ -5006,7 +5273,8 @@ app.post('/api/candidaturas', candidaturaPublicLimiter, async (req, res) => {
       ministerio: ministerioCanonico,
     });
     // Garante que o candidato apareça na lista de voluntários
-    try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: ministerioCanonico, igrejaId: igrejaDoc._id }); } catch (_) {}
+    try { await ensureVoluntarioInList({ email: em, nome: (nome || '').toString().trim(), ministerio: ministerioCanonico, igrejaId: igrejaDoc._id, telefone: (telefone || '').toString().trim() }); } catch (_) {}
+    invalidateCache();
 
     // Email de confirmação de recebimento
     const apiKey = process.env.RESEND_API_KEY;

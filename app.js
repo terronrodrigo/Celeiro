@@ -169,9 +169,11 @@ let eventosCheckin = [];
 let eventosBatismo = [];
 let eventosApresentacao = [];
 let eventoSelecionadoHoje = null;
+/** Callback após salvar/pular complemento pós-check-in (telefone/cidade/UF). */
+let perfilComplementoPendingDone = null;
 let allCheckins = []; // todos os check-ins sem filtro, para contagem histórica por pessoa
 const filters = {
-  areas: [], // múltiplas áreas (array)
+  ministerio: '',
   disponibilidade: '',
   estado: '',
   cidade: '',
@@ -226,7 +228,7 @@ if (loginForm) {
 const btnLogout = document.getElementById('btnLogoutSidebar');
 const authUserName = document.getElementById('authUserName');
 const authUserInitial = document.getElementById('authUserInitial');
-const filterArea = document.getElementById('filterArea');
+const filterMinisterio = document.getElementById('filterMinisterio');
 const filterDisp = document.getElementById('filterDisponibilidade');
 const filterEstado = document.getElementById('filterEstado');
 const filterCidade = document.getElementById('filterCidade');
@@ -278,7 +280,6 @@ const perfilEvangelico = document.getElementById('perfilEvangelico');
 const perfilIgreja = document.getElementById('perfilIgreja');
 const perfilTempoIgreja = document.getElementById('perfilTempoIgreja');
 const perfilVoluntarioIgreja = document.getElementById('perfilVoluntarioIgreja');
-const perfilMinisterio = document.getElementById('perfilMinisterio');
 const perfilDisponibilidadeGroup = document.getElementById('perfilDisponibilidadeGroup');
 const perfilHorasSemana = document.getElementById('perfilHorasSemana');
 const perfilAreas = document.getElementById('perfilAreas');
@@ -414,8 +415,11 @@ function clearUserContent() {
   selectedEmails.clear();
   currentView = '';
   ['eventos-checkin', 'cultos-recorrentes', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'].forEach(v => setViewLoading(v, false));
-  const perfilFields = [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilEstado, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilMinisterio, perfilHorasSemana, perfilAreas, perfilTestemunho];
+  const perfilFields = [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilEstado, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilHorasSemana, perfilAreas, perfilTestemunho];
   perfilFields.forEach(el => { if (el) el.value = ''; });
+  renderPerfilMinisteriosCheckboxes([]);
+  const perfilMinisterioOutro = document.getElementById('perfilMinisterioOutro');
+  if (perfilMinisterioOutro) { perfilMinisterioOutro.value = ''; perfilMinisterioOutro.style.display = 'none'; }
   if (perfilDisponibilidadeGroup) {
     perfilDisponibilidadeGroup.querySelectorAll('input[name="perfilDisponibilidadeDia"]').forEach(cb => { cb.checked = false; });
   }
@@ -864,7 +868,7 @@ const VIEW_META = {
   'eventos-checkin': { title: 'Eventos check-in', subtitle: 'Datas de culto para confirmação de presença.', role: 'admin' },
   'cultos-recorrentes': { title: 'Cultos recorrentes', subtitle: 'Escalas e check-ins gerados automaticamente por dia da semana (horário de Brasília).', role: 'admin' },
   checkin: { title: 'Check-in', subtitle: 'Registros por data e ministério.', role: 'admin' },
-  'checkin-ministerio': { title: 'Check-ins do ministério', subtitle: 'Acompanhe quem confirmou presença (voluntários) no seu ministério.', role: 'lider' },
+  'checkin-ministerio': { title: 'Check-ins do ministério', subtitle: 'Acompanhe confirmações de presença nos ministérios sob sua liderança (você pode liderar mais de um).', role: 'lider' },
   perfil: { title: 'Meu perfil', subtitle: 'Seus dados de cadastro.', role: 'voluntario' },
   'checkin-hoje': { title: 'Check-in do dia', subtitle: 'Confirme presença no culto de hoje.', role: 'voluntario' },
   'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico de presenças.', role: 'voluntario' },
@@ -2264,6 +2268,90 @@ async function excluirEventoFormulario(eventoId, tipo) {
   } catch (err) { alert(err.message || 'Erro ao excluir evento.'); }
 }
 
+/** Após check-in ou candidatura em escala (voluntário logado com o mesmo e-mail), oferece completar telefone/cidade/UF uma única vez. */
+async function maybeOfferPerfilCheckinComplemento(done) {
+  if (!authToken) {
+    if (typeof done === 'function') done();
+    return;
+  }
+  try {
+    const r = await authFetch(`${API_BASE}/api/me/perfil-checkin-gap`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.needsComplement) {
+      if (typeof done === 'function') done();
+      return;
+    }
+    perfilComplementoPendingDone = typeof done === 'function' ? done : null;
+    const tEl = document.getElementById('complementoCheckinTelefone');
+    const wEl = document.getElementById('complementoCheckinWhatsapp');
+    const cEl = document.getElementById('complementoCheckinCidade');
+    const eEl = document.getElementById('complementoCheckinEstado');
+    if (tEl) tEl.value = '';
+    if (wEl) wEl.value = '';
+    if (cEl) cEl.value = '';
+    if (eEl) eEl.value = '';
+    populateComplementoCheckinEstado();
+    const m = document.getElementById('modalComplementoCheckin');
+    if (m) {
+      m.classList.add('open');
+      m.setAttribute('aria-hidden', 'false');
+    } else if (typeof done === 'function') {
+      done();
+    }
+  } catch (e) {
+    if (e.message !== 'AUTH_REQUIRED' && typeof done === 'function') done();
+  }
+}
+
+function populateComplementoCheckinEstado() {
+  const sel = document.getElementById('complementoCheckinEstado');
+  if (!sel || sel.options.length > 1) return;
+  sel.innerHTML = '<option value="">Selecione o estado (UF)</option>' + UFS_BR.map((uf) => `<option value="${escapeAttr(uf)}">${escapeHtml(uf)}</option>`).join('');
+}
+
+function closeModalComplementoCheckinUi() {
+  const m = document.getElementById('modalComplementoCheckin');
+  if (m) {
+    m.classList.remove('open');
+    m.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function finishPerfilComplementoFlow() {
+  const fn = perfilComplementoPendingDone;
+  perfilComplementoPendingDone = null;
+  closeModalComplementoCheckinUi();
+  if (typeof fn === 'function') fn();
+}
+
+async function refreshCheckinBatizadoUi() {
+  if (!authToken) return;
+  const wrap = document.getElementById('confirmarBatizadoWrap');
+  const sel = document.getElementById('confirmarBatizado');
+  if (!wrap || !sel) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/me/perfil`);
+    const p = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      wrap.style.display = '';
+      sel.removeAttribute('required');
+      return;
+    }
+    const known = p.batizado === true || p.batizado === false;
+    if (known) {
+      wrap.style.display = 'none';
+      sel.value = '';
+      sel.removeAttribute('required');
+    } else {
+      wrap.style.display = '';
+      sel.setAttribute('required', 'required');
+    }
+  } catch (_) {
+    wrap.style.display = '';
+    sel.removeAttribute('required');
+  }
+}
+
 async function fetchEventosHoje() {
   if (!authToken) return;
   try {
@@ -2301,6 +2389,7 @@ async function fetchEventosHoje() {
         if (confirmarMinisterio && confirmarMinisterio.options.length <= 1) {
           confirmarMinisterio.innerHTML = '<option value="">Selecione</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('') + '<option value="Outro">Outro</option>';
         }
+        await refreshCheckinBatizadoUi();
       }
     }
   } catch (e) {
@@ -2314,7 +2403,17 @@ async function fetchEventosHoje() {
 async function confirmarCheckin() {
   if (!eventoSelecionadoHoje || !authToken) return;
   const ministerio = (confirmarMinisterio?.value || '').trim();
-  const batizado = (document.getElementById('confirmarBatizado')?.value || '').trim() || undefined;
+  const batizadoWrap = document.getElementById('confirmarBatizadoWrap');
+  let batizado;
+  if (batizadoWrap && batizadoWrap.style.display === 'none') {
+    batizado = undefined;
+  } else {
+    batizado = (document.getElementById('confirmarBatizado')?.value || '').trim() || undefined;
+  }
+  if (!(batizadoWrap && batizadoWrap.style.display === 'none') && !batizado) {
+    alert('Informe se você já é batizado.');
+    return;
+  }
   try {
     const r = await authFetch(`${API_BASE}/api/checkins/confirmar`, {
       method: 'POST',
@@ -2327,13 +2426,16 @@ async function confirmarCheckin() {
     const confirmarBatizadoEl = document.getElementById('confirmarBatizado');
     if (confirmarBatizadoEl) confirmarBatizadoEl.value = '';
     await fetchMeusCheckins();
-    setView('meus-checkins');
-    const msgEl = document.getElementById('checkinRecebidoMsg');
-    if (msgEl) {
-      msgEl.textContent = 'Check-in recebido!';
-      msgEl.style.display = 'block';
-      setTimeout(() => { msgEl.style.display = 'none'; }, 4000);
-    }
+    await maybeOfferPerfilCheckinComplemento(() => {
+      setView('meus-checkins');
+      const msgEl = document.getElementById('checkinRecebidoMsg');
+      if (msgEl) {
+        msgEl.textContent = 'Check-in recebido!';
+        msgEl.style.display = 'block';
+        setTimeout(() => { msgEl.style.display = 'none'; }, 4000);
+      }
+    });
+    await refreshCheckinBatizadoUi();
   } catch (e) {
     alert(e.message || 'Erro ao confirmar check-in.');
   }
@@ -2399,6 +2501,62 @@ function toggleMinisterioOutroVisibility(selectId) {
   }
 }
 
+function ministeriosListFromVolApi(v) {
+  if (!v) return [];
+  if (Array.isArray(v.ministerios) && v.ministerios.length) {
+    return [...new Set(v.ministerios.map((x) => String(x ?? '').trim()).filter(Boolean))];
+  }
+  return String(v.ministerio || '').split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+function voluntarioMinisteriosDisplay(v) {
+  const a = ministeriosListFromVolApi(v);
+  return a.length ? a.join(', ') : '';
+}
+
+function renderPerfilMinisteriosCheckboxes(selectedList) {
+  const container = document.getElementById('perfilMinisterioGroup');
+  if (!container) return;
+  const sel = new Set((selectedList || []).map((s) => String(s).trim()).filter(Boolean));
+  const padraoSet = new Set(MINISTERIOS_PADRAO);
+  const extras = [...sel].filter((s) => !padraoSet.has(s));
+  const outroVal = extras.join(', ');
+
+  let html = MINISTERIOS_PADRAO.map((m) => {
+    const checked = sel.has(m) ? ' checked' : '';
+    return `<label class="checkbox-label" style="display:block;margin-bottom:6px;"><input type="checkbox" name="perfilMinisterioCb" value="${escapeAttr(m)}"${checked}> ${escapeHtml(m)}</label>`;
+  }).join('');
+  html += `<label class="checkbox-label" style="display:block;margin-bottom:6px;"><input type="checkbox" id="perfilMinisterioOutroCb"${outroVal ? ' checked' : ''}> Outro</label>`;
+  container.innerHTML = html;
+
+  const outroInput = document.getElementById('perfilMinisterioOutro');
+  const outroCb = document.getElementById('perfilMinisterioOutroCb');
+  if (outroInput && outroCb) {
+    outroInput.value = outroVal;
+    outroInput.style.display = outroCb.checked ? '' : 'none';
+    outroCb.addEventListener('change', () => {
+      outroInput.style.display = outroCb.checked ? '' : 'none';
+      if (!outroCb.checked) outroInput.value = '';
+    });
+  }
+}
+
+function getPerfilMinisteriosFromForm() {
+  const g = document.getElementById('perfilMinisterioGroup');
+  if (!g) return [];
+  const out = [];
+  g.querySelectorAll('input[type="checkbox"][name="perfilMinisterioCb"]:checked').forEach((cb) => {
+    const val = cb.value;
+    if (val) out.push(val);
+  });
+  const outroCb = document.getElementById('perfilMinisterioOutroCb');
+  const outroIn = document.getElementById('perfilMinisterioOutro');
+  if (outroCb?.checked && outroIn) {
+    outroIn.value.split(',').map((s) => s.trim()).filter(Boolean).forEach((x) => out.push(x));
+  }
+  return [...new Set(out)];
+}
+
 function populatePerfilEstado() {
   const sel = document.getElementById('perfilEstado');
   if (!sel || sel.options.length > 1) return;
@@ -2431,8 +2589,7 @@ async function fetchPerfil() {
       if (perfilIgreja) perfilIgreja.value = perfil.igreja || '';
       if (perfilTempoIgreja) perfilTempoIgreja.value = perfil.tempoIgreja || '';
       if (perfilVoluntarioIgreja) perfilVoluntarioIgreja.value = perfil.voluntarioIgreja || '';
-      renderMinisterioSelect('perfilMinisterio', perfil.ministerio || '');
-      toggleMinisterioOutroVisibility('perfilMinisterio');
+      renderPerfilMinisteriosCheckboxes(ministeriosListFromVolApi(perfil));
       const dispVal = (perfil.disponibilidade || '').split(',').map(d => d.trim()).filter(Boolean);
       if (perfilDisponibilidadeGroup) {
         perfilDisponibilidadeGroup.querySelectorAll('input[name="perfilDisponibilidadeDia"]').forEach(cb => {
@@ -2447,7 +2604,7 @@ async function fetchPerfil() {
       if (perfilDisponibilidadeGroup) {
         perfilDisponibilidadeGroup.querySelectorAll('input[name="perfilDisponibilidadeDia"]').forEach(cb => { cb.checked = false; });
       }
-      renderMinisterioSelect('perfilMinisterio', '');
+      renderPerfilMinisteriosCheckboxes([]);
       const perfilMinisterioOutro = document.getElementById('perfilMinisterioOutro');
       if (perfilMinisterioOutro) { perfilMinisterioOutro.value = ''; perfilMinisterioOutro.style.display = 'none'; }
       if (perfilEstado) perfilEstado.value = '';
@@ -2486,7 +2643,7 @@ async function savePerfil(e) {
     igreja: perfilIgreja?.value?.trim(),
     tempoIgreja: perfilTempoIgreja?.value?.trim(),
     voluntarioIgreja: perfilVoluntarioIgreja?.value?.trim(),
-    ministerio: getMinisterioValue('perfilMinisterio') || undefined,
+    ministerios: getPerfilMinisteriosFromForm(),
     disponibilidade: perfilDisponibilidadeGroup
     ? Array.from(perfilDisponibilidadeGroup.querySelectorAll('input[name="perfilDisponibilidadeDia"]:checked')).map(cb => cb.value).join(', ')
     : '',
@@ -2562,7 +2719,7 @@ async function confirmarCheckinDesdePerfil() {
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || 'Falha ao confirmar');
     if (document.getElementById('perfilConfirmarMinisterio')) document.getElementById('perfilConfirmarMinisterio').value = '';
-    fetchPerfilExtras();
+    await maybeOfferPerfilCheckinComplemento(() => fetchPerfilExtras());
   } catch (e) {
     alert(e.message || 'Erro ao confirmar check-in.');
   }
@@ -2636,14 +2793,14 @@ function updateKpis(filteredInput) {
   const soCheckinCount = getSoCheckinList().length;
   const totalGeral = vol.length + soCheckinCount;
 
-  const areasSet = new Set();
+  const ministerioSet = new Set();
   filtered.forEach(v => {
     if (v._soCheckin) return;
-    (v.areas || '').split(',').map(a => a.trim()).filter(Boolean).forEach(a => {
-      areasSet.add(a);
+    ministeriosListFromVolApi(v).forEach((m) => {
+      if (m) ministerioSet.add(m);
     });
   });
-  const areasCount = areasSet.size;
+  const ministeriosDistintos = ministerioSet.size;
 
   const sel = selectedEmails.size;
   const elTotal = document.getElementById('kpiTotal');
@@ -2654,7 +2811,7 @@ function updateKpis(filteredInput) {
   const elSoCheckin = document.getElementById('kpiSoCheckin');
   const elTotalGeral = document.getElementById('kpiTotalGeral');
   if (elTotal) elTotal.textContent = total;
-  if (elAreas) elAreas.textContent = areasCount;
+  if (elAreas) elAreas.textContent = ministeriosDistintos;
   if (elSelected) elSelected.textContent = sel;
   if (elComCheckin) elComCheckin.textContent = comCheckinCount;
   if (elSemCheckin) elSemCheckin.textContent = semCheckinCount;
@@ -2674,7 +2831,7 @@ async function renderCharts(filteredInput) {
     return;
   }
   const filtered = filteredInput !== undefined ? filteredInput : getFilteredVoluntarios();
-  const areasData = countByMultiValueField(filtered, 'areas');
+  const ministeriosData = countByMultiValueField(filtered, 'ministerio');
   const dispData = countByMultiValueField(filtered, 'disponibilidade');
   const estadoData = countByField(filtered, 'estado');
   const cidadeData = countByField(filtered, 'cidade');
@@ -2682,7 +2839,7 @@ async function renderCharts(filteredInput) {
   const ctxAreas = document.getElementById('areasChart');
   if (ctxAreas) {
     if (areasChart) areasChart.destroy();
-    const topAreas = areasData.slice(0, 12).map(([label, value]) => ({
+    const topMin = ministeriosData.slice(0, 12).map(([label, value]) => ({
       label,
       short: truncate(label, 25),
       value,
@@ -2690,10 +2847,10 @@ async function renderCharts(filteredInput) {
     areasChart = new Chart(ctxAreas, {
       type: 'bar',
       data: {
-        labels: topAreas.map(a => a.short),
+        labels: topMin.map(a => a.short),
         datasets: [{
-          label: 'Inscrições',
-          data: topAreas.map(a => a.value),
+          label: 'Voluntários',
+          data: topMin.map(a => a.value),
           backgroundColor: 'rgba(245, 158, 11, 0.6)',
           borderColor: '#f59e0b',
           borderWidth: 1,
@@ -2707,8 +2864,8 @@ async function renderCharts(filteredInput) {
         onClick: (_, elements) => {
           const el = elements?.[0];
           if (!el) return;
-          const label = topAreas[el.index]?.label;
-          toggleFilter('area', label); // area: single toggle para gráfico; filters.areas é array
+          const label = topMin[el.index]?.label;
+          toggleFilter('ministerio', label);
         },
         scales: {
           x: { beginAtZero: true, grid: { color: 'rgba(42,42,42,0.5)' } },
@@ -2873,7 +3030,7 @@ function getSoCheckinList() {
     nome: c.nome || '—',
     cidade: '',
     estado: '',
-    areas: '',
+    ministerio: c.ministerio || '',
     disponibilidade: '',
     _soCheckin: true,
   }));
@@ -2895,18 +3052,19 @@ function getFilteredVoluntarios() {
   const vol = Array.isArray(voluntarios) ? voluntarios : [];
   return vol.filter(v => {
     if (q) {
+      const minList = ministeriosListFromVolApi(v);
+      const minBlob = minList.join(' ').toLowerCase();
       const matchText =
         (v.nome || '').toLowerCase().includes(q) ||
         (v.email || '').toLowerCase().includes(q) ||
         (v.cidade || '').toLowerCase().includes(q) ||
-        (v.areas || '').toLowerCase().includes(q);
+        minBlob.includes(q) ||
+        String(v.ministerio || '').toLowerCase().includes(q);
       if (!matchText) return false;
     }
-    if (filters.areas && filters.areas.length > 0) {
-      const volAreas = (v.areas || '').split(',').map(a => String(a).trim()).filter(Boolean);
-      const filterAreasNorm = (filters.areas || []).map(fa => String(fa).trim()).filter(Boolean);
-      const hasMatch = filterAreasNorm.length === 0 || filterAreasNorm.some(fa => volAreas.includes(fa));
-      if (!hasMatch) return false;
+    if (filters.ministerio) {
+      const mins = ministeriosListFromVolApi(v);
+      if (!mins.includes(filters.ministerio)) return false;
     }
     if (filters.disponibilidade) {
       const disp = (v.disponibilidade || '').split(',').map(d => d.trim());
@@ -2965,7 +3123,9 @@ function renderTable(list) {
       <td class="cell-with-avatar"><span class="cell-avatar">${avatarHtml(v.fotoUrl, v.nome)}</span><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(v.nome || '—')}</button>${origemBadge}</td>
       <td><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(v.email || '')}</button></td>
       <td>${escapeHtml([v.cidade, v.estado].filter(Boolean).join(' / ') || '—')}</td>
-      <td>${escapeHtml(truncate(v.areas || '—', 50))}</td>
+      <td class="num-cell" title="Inscrições na escala (todas): ${Number(v.vezesEscalaInscricao) || 0}">${Number(v.vezesEscalaAprovado) || 0}</td>
+      <td class="num-cell">${Number(v.vezesCheckin) || 0}</td>
+      <td>${escapeHtml(truncate(voluntarioMinisteriosDisplay(v) || '—', 48))}</td>
       <td>${escapeHtml(truncate(v.disponibilidade || '—', 30))}</td>
     `;
     voluntariosBody.appendChild(tr);
@@ -3074,6 +3234,7 @@ async function openPerfilVoluntario(email, options) {
       content.innerHTML = fotoBlock + (`
         ${fieldRow('Nome', v.nome)}
         ${fieldRow('Email', v.email)}
+        ${fieldRow('Ministérios (cadastro / check-in)', voluntarioMinisteriosDisplay(v) || null)}
         ${fieldRow('WhatsApp', whatsappValue)}
         ${checkinsSection}
       `.trim() || '<p>Nenhum dado cadastrado.</p>');
@@ -3092,10 +3253,11 @@ async function openPerfilVoluntario(email, options) {
         ${fieldRow('Igreja', v.igreja)}
         ${fieldRow('Tempo na igreja', v.tempoIgreja)}
         ${fieldRow('Voluntário na igreja', v.voluntarioIgreja)}
-        ${fieldRow('Ministério', v.ministerio)}
+        ${fieldRow('Ministérios (cadastro / check-in)', voluntarioMinisteriosDisplay(v) || null)}
+        ${fieldRow('Batizado (nas águas)', v.batizado === true ? 'Sim' : v.batizado === false ? 'Não' : null)}
         ${fieldRow('Disponibilidade', v.disponibilidade)}
         ${fieldRow('Horas por semana', v.horasSemana)}
-        ${fieldRow('Áreas', areasStr || null)}
+        ${areasStr.trim() ? fieldRow('Áreas de interesse (legado)', areasStr) : ''}
         ${fieldRow('Testemunho', v.testemunho || null)}
         ${checkinsSection}
       `.trim() || '<p>Nenhum dado cadastrado.</p>');
@@ -3143,7 +3305,7 @@ async function toggleSelectAll(checked) {
     const params = new URLSearchParams();
     const q = (searchInput?.value || '').trim();
     if (q) params.set('q', q);
-    if (filters.areas?.length) params.set('areas', filters.areas.join(','));
+    if (filters.ministerio) params.set('ministerio', filters.ministerio);
     if (filters.disponibilidade) params.set('disponibilidade', filters.disponibilidade);
     if (filters.estado) params.set('estado', filters.estado);
     if (filters.cidade) params.set('cidade', filters.cidade);
@@ -3224,7 +3386,7 @@ function populateSelect(selectEl, items, placeholder) {
 
 function updateFilters() {
   const vol = Array.isArray(voluntarios) ? voluntarios : [];
-  const areas = (countByMultiValueField(vol, 'areas') || []).map(([label]) => (label || '').trim()).filter(Boolean);
+  const ministerios = (countByMultiValueField(vol, 'ministerio') || []).map(([label]) => (label || '').trim()).filter(Boolean);
   const disp = (countByMultiValueField(vol, 'disponibilidade') || []).map(([label]) => label).filter(Boolean);
   const estados = countByField(vol, 'estado').map(([label]) => label);
   estados.sort((a, b) => {
@@ -3236,7 +3398,7 @@ function updateFilters() {
     return (a || '').localeCompare(b || '');
   });
   const cidades = countByField(vol, 'cidade').map(([label]) => label).sort((a, b) => (a || '').localeCompare(b || ''));
-  populateSelect(filterArea, areas, 'Todas as áreas');
+  populateSelect(filterMinisterio, ministerios, 'Todos os ministérios');
   populateSelect(filterDisp, disp, 'Todas as disponibilidades');
   populateSelect(filterEstado, estados, 'Todos os estados');
   populateSelect(filterCidade, cidades, 'Todas as cidades');
@@ -3248,11 +3410,11 @@ function updateFilterUi() {
   if (filterEstado) filterEstado.value = filters.estado || '';
   if (filterCidade) filterCidade.value = filters.cidade || '';
   if (filterComCheckin) filterComCheckin.value = filters.comCheckin || '';
-  if (filterArea) filterArea.value = (filters.areas && filters.areas[0] ? String(filters.areas[0]).trim() : '') || '';
+  if (filterMinisterio) filterMinisterio.value = filters.ministerio || '';
   if (!activeFilters) return;
   const comCheckinLabel = { com: 'Com check-in', sem: 'Sem check-in', 'so-checkin': 'Só check-in (sem cadastro)' }[filters.comCheckin] || '';
   const chips = [
-    ['areas', 'Área', (filters.areas || []).length ? (filters.areas || []).join(', ') : ''],
+    ['ministerio', 'Ministério', filters.ministerio],
     ['disponibilidade', 'Disponibilidade', filters.disponibilidade],
     ['estado', 'Estado', filters.estado],
     ['cidade', 'Cidade', filters.cidade],
@@ -3270,9 +3432,9 @@ function updateFilterUi() {
     btn.className = 'filter-chip';
     btn.textContent = `${label}: ${value} ×`;
     btn.addEventListener('click', () => {
-      if (key === 'areas') {
-        filters.areas = [];
-        if (filterArea) filterArea.value = '';
+      if (key === 'ministerio') {
+        filters.ministerio = '';
+        if (filterMinisterio) filterMinisterio.value = '';
         voluntariosPageOffset = 0;
         refreshVoluntariosView();
       } else {
@@ -3285,7 +3447,9 @@ function updateFilterUi() {
 
 function setFilter(key, value) {
   if (key === 'area' || key === 'areas') {
-    filters.areas = value ? (Array.isArray(value) ? value : [value]) : [];
+    filters.ministerio = Array.isArray(value) ? String(value[0] || '').trim() : String(value || '').trim();
+  } else if (key === 'ministerio') {
+    filters.ministerio = String(value || '').trim();
   } else {
     filters[key] = value || '';
   }
@@ -3295,23 +3459,21 @@ function setFilter(key, value) {
 
 function toggleFilter(key, value) {
   if (!value) return;
-  if (key === 'area') {
-    const arr = filters.areas || [];
-    const has = arr.includes(value);
-    setFilter(key, has ? arr.filter(a => a !== value) : [...arr, value]);
+  if (key === 'ministerio' || key === 'area') {
+    setFilter('ministerio', filters.ministerio === value ? '' : value);
   } else {
     setFilter(key, filters[key] === value ? '' : value);
   }
 }
 
 function clearFilters() {
-  filters.areas = [];
+  filters.ministerio = '';
   filters.disponibilidade = '';
   filters.estado = '';
   filters.cidade = '';
   filters.comCheckin = '';
   voluntariosPageOffset = 0;
-  if (filterArea) filterArea.value = '';
+  if (filterMinisterio) filterMinisterio.value = '';
   refreshVoluntariosView();
 }
 
@@ -4311,8 +4473,10 @@ function renderAnaliseTab() {
   const tbody = panel.querySelector('#escalasAnaliseBody');
   const selEscala = document.getElementById('analiseFilterEscala');
   const escalaSelected = selEscala && (selEscala.value || '').trim();
-  const emptyMsg = !escalaSelected ? 'Selecione uma escala para ver os candidatos.' : 'Nenhuma candidatura corresponde aos filtros.';
-  if (tbody) tbody.innerHTML = rows || `<tr><td colspan="12">${emptyMsg}</td></tr>`;
+  const emptyMsg = !escalaSelected
+    ? `<div class="escala-empty-state"><p class="escala-empty-state-title">Selecione uma escala</p><p class="escala-empty-state-text">No filtro <strong>Escala</strong> acima, escolha um culto para carregar candidaturas, totais e aprovações em lote.</p></div>`
+    : `<div class="escala-empty-state"><p class="escala-empty-state-title">Nenhuma candidatura nesta visão</p><p class="escala-empty-state-text">Tente limpar filtros ou aguarde novas inscrições. Para outro culto, troque a escala no filtro.</p></div>`;
+  if (tbody) tbody.innerHTML = rows || `<tr><td colspan="12" class="escala-table-empty-cell">${emptyMsg}</td></tr>`;
 
   const countEl = document.getElementById('escalasAnaliseCount');
   if (countEl) countEl.textContent = filtered.length;
@@ -4420,34 +4584,48 @@ function renderEscalasCriar() {
 
 function buildVisaoConsolidadaSectionHtml() {
   return `
-  <section class="filters-card" id="visaoConsolidadaWrap" style="margin-bottom:16px">
-    <div class="chart-header" style="margin-bottom:12px">
-      <h2 style="font-size:1rem;margin:0">Visão consolidada (domingo)</h2>
-      <p class="auth-subtitle" style="margin:6px 0 0;font-size:.9em">Contagem por ministério: Manhã, Almoço (2 cultos) e Tarde. No WhatsApp: <em>visão escala</em> ou <em>visão 17/05</em>.</p>
+  <section class="filters-card visao-consolidada-card" id="visaoConsolidadaWrap">
+    <div class="visao-consolidada-header">
+      <h2 class="visao-consolidada-title">Visão consolidada (domingo)</h2>
+      <p class="auth-subtitle visao-consolidada-desc">Resumo por ministério (Manhã, Almoço com 2 cultos, Tarde). No WhatsApp você pode pedir: <em>visão escala</em> ou <em>visão 17/05</em>.</p>
     </div>
-    <div class="filters-row" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
-      <div class="form-group compact">
-        <label for="visaoConsolidadaData"><strong>Data</strong></label>
-        <input type="date" id="visaoConsolidadaData">
+    <div class="visao-consolidada-controls">
+      <div class="visao-consolidada-date">
+        <label for="visaoConsolidadaData">Data de referência</label>
+        <input type="date" id="visaoConsolidadaData" class="visao-consolidada-date-input" autocomplete="off">
+        <p class="visao-consolidada-field-hint">Opcional: preencha uma data ou deixe em branco e use <strong>Próximo domingo</strong>.</p>
       </div>
-      <button type="button" class="btn btn-ghost btn-sm" id="btnVisaoProximoDomingo">Próximo domingo</button>
-      <button type="button" class="btn btn-primary btn-sm" id="btnVisaoConsolidadaGerar">Gerar relatório</button>
-      <button type="button" class="btn btn-ghost btn-sm" id="btnVisaoConsolidadaCopiar" disabled>Copiar texto</button>
+      <div class="visao-consolidada-actions">
+        <button type="button" class="btn btn-primary" id="btnVisaoConsolidadaGerar">Gerar relatório</button>
+        <div class="visao-consolidada-actions-secondary">
+          <button type="button" class="btn btn-ghost btn-sm" id="btnVisaoProximoDomingo">Próximo domingo</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="btnVisaoConsolidadaCopiar" disabled title="Disponível após gerar o relatório">Copiar texto</button>
+        </div>
+      </div>
     </div>
-    <pre id="visaoConsolidadaTexto" class="visao-consolidada-pre" style="display:none;margin-top:12px;white-space:pre-wrap;font-size:.85em;line-height:1.45;background:var(--bg-muted,#f4f4f5);padding:12px;border-radius:8px;max-height:420px;overflow:auto"></pre>
+    <div id="visaoConsolidadaPlaceholder" class="visao-consolidada-placeholder" role="status">
+      <div class="visao-consolidada-placeholder-inner">
+        <p class="visao-consolidada-placeholder-title">Relatório ainda não foi gerado</p>
+        <p class="visao-consolidada-placeholder-text">Escolha a data (ou clique em <strong>Próximo domingo</strong>) e em seguida em <strong>Gerar relatório</strong>. O texto para colar no WhatsApp aparecerá aqui embaixo.</p>
+      </div>
+    </div>
+    <pre id="visaoConsolidadaTexto" class="visao-consolidada-pre" hidden></pre>
   </section>`;
 }
 
 async function loadVisaoConsolidada(opts = {}) {
   const pre = document.getElementById('visaoConsolidadaTexto');
   const btnCopy = document.getElementById('btnVisaoConsolidadaCopiar');
+  const placeholder = document.getElementById('visaoConsolidadaPlaceholder');
   if (!pre) return;
   const params = new URLSearchParams({ formato: 'texto' });
   if (opts.proximoDomingo) params.set('proximoDomingo', '1');
   else if (opts.data) params.set('data', opts.data);
   else params.set('proximoDomingo', '1');
-  pre.style.display = 'block';
-  pre.textContent = 'Carregando…';
+  if (placeholder) placeholder.style.display = 'none';
+  pre.removeAttribute('hidden');
+  pre.classList.add('visao-consolidada-pre--loading');
+  pre.textContent = 'Gerando relatório…';
   if (btnCopy) btnCopy.disabled = true;
   try {
     const r = await authFetch(`${API_BASE}/api/escalas/visao-consolidada?${params}`);
@@ -4455,12 +4633,14 @@ async function loadVisaoConsolidada(opts = {}) {
     if (!r.ok) throw new Error(d.error || 'Falha ao gerar visão');
     pre.textContent = d.texto || 'Sem escalas para esta data.';
     pre.dataset.visaoTexto = pre.textContent;
-    if (btnCopy) btnCopy.disabled = !pre.textContent.trim();
+    pre.classList.remove('visao-consolidada-pre--loading');
+    if (btnCopy) btnCopy.disabled = !(pre.textContent || '').trim();
     const dateInput = document.getElementById('visaoConsolidadaData');
     if (dateInput && d.data) dateInput.value = d.data;
   } catch (e) {
     pre.textContent = e.message || 'Erro ao carregar.';
     pre.dataset.visaoTexto = '';
+    pre.classList.remove('visao-consolidada-pre--loading');
     if (btnCopy) btnCopy.disabled = true;
   }
 }
@@ -4490,7 +4670,7 @@ function bindVisaoConsolidadaEvents() {
 function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) {
   return `
   ${buildVisaoConsolidadaSectionHtml()}
-  <p class="auth-subtitle" style="margin-bottom:16px;margin-top:0">Selecione uma escala para ver os candidatos e analisar/aprovar.</p>
+  <p class="auth-subtitle escala-candidatos-intro">Depois, escolha uma <strong>escala</strong> abaixo para ver candidatos, aprovar em lote e exportar.</p>
   <section class="filters-row escala-analise-filters-wrap">
     <div class="filters-card escala-analise-filters">
       <div class="escala-analise-filters-inner">
@@ -4966,8 +5146,11 @@ function renderMeusCultos(itens) {
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data?.error || 'Falha ao confirmar check-in.');
-        showToast('Check-in confirmado!');
-        fetchEscalas();
+        btn.disabled = false; btn.textContent = 'Fazer check-in';
+        await maybeOfferPerfilCheckinComplemento(() => {
+          showToast('Check-in confirmado!');
+          fetchEscalas();
+        });
       } catch (err) {
         showToast(err.message || 'Erro ao confirmar.', 'error');
         btn.disabled = false; btn.textContent = 'Fazer check-in';
@@ -5364,6 +5547,13 @@ function setMinisterioSelectOptions(selectEl, list) {
   selectEl.innerHTML = '<option value="">' + placeholder + '</option>' + list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
 }
 
+function finishEscalaPublicInscricaoSuccess() {
+  const form = document.getElementById('escalaPublicForm');
+  const successWrap = document.getElementById('escalaPublicSuccessWrap');
+  if (form) form.style.display = 'none';
+  if (successWrap) successWrap.style.display = '';
+}
+
 async function loadEscalaPublic(escalaId, ministerioFromUrl) {
   const labelEl = document.getElementById('escalaPublicLabel');
   const subtitleEl = document.getElementById('escalaPublicSubtitle');
@@ -5436,6 +5626,12 @@ async function loadEscalaPublic(escalaId, ministerioFromUrl) {
     }
     if (formEl) formEl.style.display = '';
     if (concluidaWrap) concluidaWrap.style.display = 'none';
+    if (authToken && authEmail) {
+      const nomeIn = document.getElementById('escalaPublicNome');
+      const emailIn = document.getElementById('escalaPublicEmail');
+      if (emailIn && !emailIn.value.trim()) emailIn.value = authEmail;
+      if (nomeIn && !nomeIn.value.trim() && authUser) nomeIn.value = authUser;
+    }
   } catch (e) {
     console.error('loadEscalaPublic:', e);
     if (subtitleEl) subtitleEl.textContent = 'Erro ao carregar dados da escala. Verifique a conexão e tente novamente.';
@@ -5479,10 +5675,17 @@ async function loadEscalaPublic(escalaId, ministerioFromUrl) {
       });
       const data = await r.json();
       if (!r.ok && r.status !== 200) throw new Error(data.error || 'Erro ao enviar candidatura.');
-      const form = document.getElementById('escalaPublicForm');
-      const successWrap = document.getElementById('escalaPublicSuccessWrap');
-      if (form) form.style.display = 'none';
-      if (successWrap) successWrap.style.display = '';
+      const logged = (authEmail || '').toString().trim().toLowerCase();
+      const sub = (email || '').toString().trim().toLowerCase();
+      const afterSuccess = () => {
+        finishEscalaPublicInscricaoSuccess();
+        if (btn) btn.disabled = false;
+      };
+      if (authToken && logged && sub && logged === sub) {
+        await maybeOfferPerfilCheckinComplemento(afterSuccess);
+      } else {
+        afterSuccess();
+      }
     } catch (err) {
       if (errorEl) errorEl.textContent = err.message || 'Erro ao enviar candidatura.';
       if (btn) btn.disabled = false;
@@ -5942,9 +6145,9 @@ if (loginForm) {
 }
 window.__celeiroHandleLogin = handleLogin;
 btnLogout?.addEventListener('click', handleLogout);
-filterArea?.addEventListener('change', () => {
-  const val = (filterArea.value || '').trim();
-  setFilter('areas', val ? [val] : []);
+filterMinisterio?.addEventListener('change', () => {
+  const val = (filterMinisterio.value || '').trim();
+  setFilter('ministerio', val);
 });
 filterDisp?.addEventListener('change', () => setFilter('disponibilidade', filterDisp.value));
 filterEstado?.addEventListener('change', () => setFilter('estado', filterEstado.value));
@@ -6126,6 +6329,62 @@ document.getElementById('formEditarEvento')?.addEventListener('submit', async (e
 
 document.getElementById('modalPerfilVoluntarioClose')?.addEventListener('click', closeModalPerfilVoluntario);
 document.getElementById('modalPerfilVoluntario')?.querySelector('.modal-backdrop')?.addEventListener('click', closeModalPerfilVoluntario);
+
+function dismissComplementoCheckinModalAndContinue() {
+  const fn = perfilComplementoPendingDone;
+  perfilComplementoPendingDone = null;
+  closeModalComplementoCheckinUi();
+  if (typeof fn === 'function') fn();
+}
+
+document.getElementById('modalComplementoCheckinClose')?.addEventListener('click', dismissComplementoCheckinModalAndContinue);
+document.getElementById('modalComplementoCheckin')?.querySelector('.modal-backdrop')?.addEventListener('click', dismissComplementoCheckinModalAndContinue);
+
+document.getElementById('btnComplementoCheckinPular')?.addEventListener('click', async () => {
+  try {
+    const r = await authFetch(`${API_BASE}/api/me/perfil-checkin-complemento`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skip: true }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha ao salvar preferência.');
+    finishPerfilComplementoFlow();
+  } catch (e) {
+    if (e.message !== 'AUTH_REQUIRED') alert(e.message || 'Erro.');
+  }
+});
+
+document.getElementById('btnComplementoCheckinSalvar')?.addEventListener('click', async () => {
+  const telefone = (document.getElementById('complementoCheckinTelefone')?.value || '').trim();
+  const whatsapp = (document.getElementById('complementoCheckinWhatsapp')?.value || '').trim();
+  const cidade = (document.getElementById('complementoCheckinCidade')?.value || '').trim();
+  const estado = (document.getElementById('complementoCheckinEstado')?.value || '').trim();
+  if (!telefone && !whatsapp) {
+    alert('Informe telefone ou WhatsApp.');
+    return;
+  }
+  if (!cidade || !estado) {
+    alert('Informe cidade e UF.');
+    return;
+  }
+  try {
+    const r = await authFetch(`${API_BASE}/api/me/perfil-checkin-complemento`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        telefone: telefone || undefined,
+        whatsapp: whatsapp || undefined,
+        cidade,
+        estado,
+      }),
+    });
+    const errData = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(errData.error || 'Falha ao salvar.');
+    finishPerfilComplementoFlow();
+  } catch (e) {
+    if (e.message !== 'AUTH_REQUIRED') alert(e.message || 'Erro ao salvar.');
+  }
+});
 
 formNovoEvento?.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -6774,7 +7033,6 @@ document.getElementById('btnVerCodigoWhatsApp')?.addEventListener('click', async
 });
 
 document.getElementById('cadastroMinisterio')?.addEventListener('change', () => toggleMinisterioOutroVisibility('cadastroMinisterio'));
-document.getElementById('perfilMinisterio')?.addEventListener('change', () => toggleMinisterioOutroVisibility('perfilMinisterio'));
 perfilWhatsapp?.addEventListener('blur', function () {
   const v = this.value?.trim();
   if (!v) return;

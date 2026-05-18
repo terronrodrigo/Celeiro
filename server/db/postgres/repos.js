@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 import { getPostgresPool } from './init.js';
+import { splitVoluntarioMinisterios } from '../../lib/ministerio-match.js';
 
 function mapUserRow(row) {
   if (!row) return null;
@@ -174,6 +175,15 @@ export async function pgUpdateUserPassword(userId, senhaPlain) {
   return pgFindUserById(userId);
 }
 
+/** Normaliza batismo salvo no perfil (boolean ou legado sim/nao). */
+export function normBatizadoPerfil(raw) {
+  if (raw === true || raw === false) return raw;
+  const s = String(raw ?? '').trim().toLowerCase();
+  if (s === 'sim' || s === 's') return true;
+  if (s === 'nao' || s === 'não' || s === 'n') return false;
+  return null;
+}
+
 export async function pgFindVoluntarioByEmail(igrejaId, emailLower) {
   const { rows } = await getPostgresPool().query(
     'SELECT id, email, nome, dados, ativo, fonte FROM voluntarios WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
@@ -183,6 +193,8 @@ export async function pgFindVoluntarioByEmail(igrejaId, emailLower) {
   if (!r) return null;
   const d = r.dados || {};
   const areas = Array.isArray(d.areas) ? d.areas : (d.areas ? String(d.areas).split(',').map((x) => x.trim()).filter(Boolean) : []);
+  const ministerios = splitVoluntarioMinisterios({ ministerios: d.ministerios, ministerio: d.ministerio });
+  const ministerio = ministerios.length ? ministerios.join(', ') : (d.ministerio || '');
   return {
     _id: r.id,
     email: r.email,
@@ -196,14 +208,29 @@ export async function pgFindVoluntarioByEmail(igrejaId, emailLower) {
     igreja: d.igreja,
     tempoIgreja: d.tempoIgreja,
     voluntarioIgreja: d.voluntarioIgreja,
-    ministerio: d.ministerio,
+    ministerio,
+    ministerios,
     disponibilidade: d.disponibilidade,
     horasSemana: d.horasSemana,
     areas,
     testemunho: d.testemunho,
+    batizado: normBatizadoPerfil(d.batizado),
     ativo: r.ativo !== false,
     fonte: r.fonte,
   };
+}
+
+function resolveMinisteriosForDados(baseDados, patch) {
+  if (Object.prototype.hasOwnProperty.call(patch, 'ministerios') && Array.isArray(patch.ministerios)) {
+    const arr = [...new Set(patch.ministerios.map((x) => String(x ?? '').trim()).filter(Boolean))];
+    return { ministerios: arr, ministerio: arr.join(', ') };
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'ministerio')) {
+    const arr = [...new Set(String(patch.ministerio || '').split(',').map((s) => s.trim()).filter(Boolean))];
+    return { ministerios: arr, ministerio: arr.join(', ') };
+  }
+  const keep = splitVoluntarioMinisterios({ ministerios: baseDados.ministerios, ministerio: baseDados.ministerio });
+  return { ministerios: keep, ministerio: keep.join(', ') };
 }
 
 export async function pgUpsertVoluntarioPerfil(igrejaId, emailLower, patch) {
@@ -214,30 +241,49 @@ export async function pgUpsertVoluntarioPerfil(igrejaId, emailLower, patch) {
   } else if (typeof merged.areas === 'string') {
     merged.areas = merged.areas.split(',').map((a) => a.trim()).filter(Boolean);
   }
-  const dados = {
-    nome: merged.nome || '',
-    nascimento: merged.nascimento,
-    whatsapp: merged.whatsapp,
-    pais: merged.pais,
-    estado: merged.estado,
-    cidade: merged.cidade,
-    evangelico: merged.evangelico,
-    igreja: merged.igreja,
-    tempoIgreja: merged.tempoIgreja,
-    voluntarioIgreja: merged.voluntarioIgreja,
-    ministerio: merged.ministerio,
-    disponibilidade: merged.disponibilidade,
-    horasSemana: merged.horasSemana,
-    areas: merged.areas || [],
-    testemunho: merged.testemunho,
+  const buildCore = (base) => {
+    const { ministerios, ministerio } = resolveMinisteriosForDados(base, patch);
+    return {
+      ...base,
+      nome: merged.nome || '',
+      nascimento: merged.nascimento,
+      whatsapp: merged.whatsapp,
+      pais: merged.pais,
+      estado: merged.estado,
+      cidade: merged.cidade,
+      evangelico: merged.evangelico,
+      igreja: merged.igreja,
+      tempoIgreja: merged.tempoIgreja,
+      voluntarioIgreja: merged.voluntarioIgreja,
+      ministerios,
+      ministerio,
+      disponibilidade: merged.disponibilidade,
+      horasSemana: merged.horasSemana,
+      areas: merged.areas || [],
+      testemunho: merged.testemunho,
+    };
   };
   if (current?._id) {
+    const { rows: dr } = await getPostgresPool().query(
+      'SELECT dados FROM voluntarios WHERE id = $1 AND igreja_id = $2',
+      [current._id, igrejaId],
+    );
+    const dados = buildCore({ ...(dr[0]?.dados || {}) });
+    const batNorm = normBatizadoPerfil(merged.batizado);
+    if (batNorm === true || batNorm === false) {
+      dados.batizado = batNorm;
+    }
     await getPostgresPool().query(
       `UPDATE voluntarios SET nome = $3, dados = $4::jsonb, updated_at = NOW()
        WHERE id = $1 AND igreja_id = $2`,
       [current._id, igrejaId, dados.nome || emailLower, JSON.stringify(dados)],
     );
     return pgFindVoluntarioByEmail(igrejaId, emailLower);
+  }
+  const dados = buildCore({});
+  const batNorm = normBatizadoPerfil(merged.batizado);
+  if (batNorm === true || batNorm === false) {
+    dados.batizado = batNorm;
   }
   const id = randomUUID();
   await getPostgresPool().query(
