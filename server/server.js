@@ -59,7 +59,7 @@ import {
   pgListCandidaturasByEscalaIds,
   pgDeleteEscala, pgGetEscalaInscricaoStatus, pgSetEscalaInscricaoStatus,
   pgCountAprovadosByMinisterio, pgAutoLinkEscalasOrfas, pgFindEscalaByEventoCheckin,
-  pgListAcompanhamentoEscala, pgBackfillCheckinCandidaturas,
+  pgListAcompanhamentoEscala, pgBackfillCheckinCandidaturas, pgAutoMarcarFaltas,
   pgListMinhasCandidaturasParaEscalas, pgFindEventosCheckinByIds, pgListMeusCheckins,
 } from './db/postgres/escalas-checkin.js';
 import {
@@ -5258,6 +5258,51 @@ app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, 
       }
       const updatedPg = await pgUpdateCandidaturaStatus(req.params.id, req.tenantIgrejaId, status, { aprovadoPor: req.userId });
       invalidateCache();
+      // Email de confirmação ao aprovar (Fase 5: agora com deep-link de check-in).
+      if (status === 'aprovado' && !candidaturaPg.emailEnviado && candidaturaPg.email) {
+        const apiKey = (process.env.RESEND_API_KEY || '').trim();
+        if (apiKey) {
+          try {
+            const escala = await pgFindEscalaById(candidaturaPg.escalaId, req.tenantIgrejaId);
+            const slug = req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG;
+            const base = (process.env.APP_URL || '').replace(/\/$/, '')
+              || `${req.protocol}://${req.get('host')}`;
+            const appBase = base || 'https://voluntariosceleirosp.com';
+            const checkinUrl = escala?.eventoCheckinId
+              ? `${appBase}?checkin=${encodeURIComponent(escala.eventoCheckinId)}&igreja=${encodeURIComponent(slug)}`
+              : appBase;
+            const resend = new Resend(apiKey);
+            const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+            const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
+            const nomeDisplay = (candidaturaPg.nome || '').trim() || 'voluntário(a)';
+            const escalaNome = escala?.nome || 'Escala';
+            await resend.emails.send({
+              from, to: candidaturaPg.email, reply_to: replyTo,
+              subject: `Participação confirmada — ${escalaNome}`,
+              html: `<!DOCTYPE html><html lang="pt-BR"><body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0"><tr><td align="center">
+  <table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+    <tr><td style="background:#1a1a2e;padding:32px 40px;text-align:center">
+      <h1 style="margin:0;font-size:22px;color:#fff">Equipe de Voluntários</h1>
+    </td></tr>
+    <tr><td style="padding:40px">
+      <p style="font-size:16px;color:#374151">Olá, <strong>${nomeDisplay}</strong>!</p>
+      <p style="font-size:16px;color:#374151">Sua participação foi <strong>confirmada</strong> na escala <strong>${escalaNome}</strong> (ministério: ${candidaturaPg.ministerio || '—'}).</p>
+      <p style="font-size:15px;color:#374151">No dia do culto, você pode confirmar presença direto pelo link:</p>
+      <p style="margin:24px 0;text-align:center">
+        <a href="${checkinUrl}" style="display:inline-block;background:#f59e0b;color:#1a1a2e;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700">Fazer check-in</a>
+      </p>
+      <p style="font-size:14px;color:#6b7280">Se preferir, abra a plataforma e vá em "Escalas" para acompanhar.</p>
+    </td></tr>
+  </table>
+</td></tr></table></body></html>`,
+            });
+            await pgUpdateCandidaturaStatus(req.params.id, req.tenantIgrejaId, status, { aprovadoPor: req.userId, emailEnviado: true });
+          } catch (mailErr) {
+            console.warn('Falha ao enviar email de aprovação (PG):', mailErr?.message || mailErr);
+          }
+        }
+      }
       return res.json(updatedPg);
     }
 
@@ -5346,6 +5391,78 @@ app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, 
 
     res.json(updated);
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
+});
+
+// GET /api/dashboard/escala-em-destaque — widget do resumo (Fase 5)
+// Devolve a "escala em destaque" para admin/líder:
+//   - se houver escala futura com check-in aberto agora → mostra ela
+//   - senão, próxima escala futura
+//   - senão, última escala encerrada
+// Em todos os casos: { escala, totals, situacao: 'em-aberto'|'futura'|'passada' }
+app.get('/api/dashboard/escala-em-destaque', requireAuth, resolveTenant, async (req, res) => {
+  try {
+    if (!isPostgres()) return res.json({ escala: null, totals: null, situacao: null });
+    const isAdmin = req.userRole === 'admin';
+    const isLider = req.userRole === 'lider';
+    if (!isAdmin && !isLider) return res.json({ escala: null, totals: null, situacao: null });
+
+    const escalas = await pgListEscalas(req.tenantIgrejaId, {
+      ativoOnly: false,
+      futureOnly: false,
+      nextPerCultoOnly: false,
+      limit: 50,
+    });
+    if (!escalas.length) return res.json({ escala: null, totals: null, situacao: null });
+
+    const agora = Date.now();
+    const evtIds = [...new Set(escalas.map((e) => e.eventoCheckinId).filter(Boolean))];
+    const evtById = await pgFindEventosCheckinByIds(req.tenantIgrejaId, evtIds);
+
+    // Ordena: 1º com check-in aberto agora (data hoje + janela), 2º próximas futuras, 3º últimas passadas
+    const comJanela = escalas
+      .map((e) => {
+        const evt = e.eventoCheckinId ? evtById.get(e.eventoCheckinId) : null;
+        const inicio = evt?.inicioCheckin ? new Date(evt.inicioCheckin).getTime() : null;
+        const fim = evt?.fimCheckin ? new Date(evt.fimCheckin).getTime() : null;
+        const aberto = !!(evt && evt.ativo && (!inicio || agora >= inicio) && (!fim || agora <= fim));
+        const futura = e.data && new Date(e.data).getTime() >= agora - 12 * 3600 * 1000;
+        return { escala: e, evt, aberto, futura, ts: e.data ? new Date(e.data).getTime() : 0 };
+      });
+    let alvo = comJanela.find((x) => x.aberto)
+      || comJanela.filter((x) => x.futura).sort((a, b) => a.ts - b.ts)[0]
+      || comJanela.filter((x) => !x.futura).sort((a, b) => b.ts - a.ts)[0]
+      || null;
+    if (!alvo) return res.json({ escala: null, totals: null, situacao: null });
+
+    const itens = await pgListAcompanhamentoEscala(req.tenantIgrejaId, alvo.escala._id) || [];
+    let aprovados = 0; let presentes = 0; let faltaram = 0; let pendentes = 0;
+    const fim = alvo.evt?.fimCheckin ? new Date(alvo.evt.fimCheckin).getTime() : null;
+    const encerrado = fim ? agora > fim : false;
+    for (const it of itens) {
+      if (it.status === 'aprovado') {
+        aprovados += 1;
+        if (it.compareceu) presentes += 1;
+        else if (encerrado) faltaram += 1;
+        else pendentes += 1;
+      }
+    }
+    const situacao = alvo.aberto ? 'em-aberto' : (alvo.futura ? 'futura' : 'passada');
+    return res.json({
+      escala: {
+        _id: alvo.escala._id,
+        nome: alvo.escala.nome,
+        data: alvo.escala.data,
+        eventoCheckinId: alvo.escala.eventoCheckinId,
+      },
+      evento: alvo.evt ? {
+        _id: alvo.evt._id,
+        inicioCheckin: alvo.evt.inicioCheckin,
+        fimCheckin: alvo.evt.fimCheckin,
+      } : null,
+      totals: { aprovados, presentes, faltaram, pendentes },
+      situacao,
+    });
+  } catch (err) { console.error(err); sendError(res, 500, err.message || 'Erro no widget.'); }
 });
 
 // GET /api/me/cultos — visão unificada do voluntário (Fase 3 da integração)
@@ -5586,10 +5703,22 @@ async function start() {
         if (n > 0) console.log(`✅ Auto-link escala↔evento_checkin: ${n} escala(s) vinculada(s).`);
         const m = await pgBackfillCheckinCandidaturas();
         if (m > 0) console.log(`✅ Backfill check-in↔candidatura: ${m} check-in(s) vinculado(s).`);
+        const f = await pgAutoMarcarFaltas();
+        if (f > 0) console.log(`✅ Auto-marca falta: ${f} candidatura(s) marcadas após fim_checkin.`);
       } catch (err) {
         console.error('Migração escala↔checkin↔candidatura falhou:', err.message || err);
       }
     });
+    // Roda auto-marca-faltas a cada 30 min (evento encerrado sem check-in = falta).
+    const AUTO_FALTA_MS = Number(process.env.AUTO_FALTA_INTERVAL_MS) || 30 * 60 * 1000;
+    setInterval(async () => {
+      try {
+        const f = await pgAutoMarcarFaltas();
+        if (f > 0) console.log(`⏱️  pgAutoMarcarFaltas: ${f} candidatura(s) marcadas como falta.`);
+      } catch (err) {
+        console.error('pgAutoMarcarFaltas falhou:', err.message || err);
+      }
+    }, AUTO_FALTA_MS).unref?.();
   }
 
   app.listen(PORT, '0.0.0.0', () => {

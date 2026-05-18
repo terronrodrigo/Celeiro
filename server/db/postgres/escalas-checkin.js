@@ -604,6 +604,39 @@ export async function pgListMeusCheckins(igrejaId, email, eventoIds) {
 }
 
 /**
+ * Marca como `falta` candidaturas aprovadas cujo evento de check-in vinculado
+ * já encerrou (fim_checkin < agora) e que não têm check-in registrado.
+ * Idempotente; retorna nº de candidaturas atualizadas.
+ */
+export async function pgAutoMarcarFaltas(igrejaId = null) {
+  const params = [];
+  let where = "(c.dados->>'status') = 'aprovado'";
+  if (igrejaId) {
+    params.push(igrejaId);
+    where += ` AND c.igreja_id = $${params.length}`;
+  }
+  const sql = `
+    UPDATE candidaturas c
+    SET dados = jsonb_set(c.dados, '{status}', '"falta"', true)
+    FROM escalas e, eventos_checkin ec
+    WHERE ${where}
+      AND e.id = c.escala_id
+      AND e.igreja_id = c.igreja_id
+      AND ec.id = (e.dados->>'eventoCheckinId')
+      AND ec.fim_checkin IS NOT NULL
+      AND ec.fim_checkin < NOW()
+      AND NOT EXISTS (
+        SELECT 1 FROM checkins ch
+        WHERE ch.igreja_id = c.igreja_id
+          AND ch.evento_id = ec.id
+          AND LOWER(ch.email) = LOWER(c.dados->>'email')
+      )
+  `;
+  const { rowCount } = await getPostgresPool().query(sql, params);
+  return rowCount || 0;
+}
+
+/**
  * Backfill manual: vincula check-ins existentes a candidaturas aprovadas pela
  * heurística (igreja, evento_checkin associado à escala, mesmo email, aprovado).
  * Idempotente. Retorna nº de check-ins atualizados.

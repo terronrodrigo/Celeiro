@@ -195,7 +195,7 @@ export async function pgFindCandidaturaById(id, igrejaId) {
   return mapCandidaturaFull(rows[0]);
 }
 
-export async function pgUpdateCandidaturaStatus(id, igrejaId, status, { aprovadoPor = null } = {}) {
+export async function pgUpdateCandidaturaStatus(id, igrejaId, status, { aprovadoPor = null, emailEnviado } = {}) {
   const cur = await pgFindCandidaturaById(id, igrejaId);
   if (!cur) return null;
   const dados = {
@@ -204,7 +204,7 @@ export async function pgUpdateCandidaturaStatus(id, igrejaId, status, { aprovado
     telefone: cur.telefone,
     ministerio: cur.ministerio,
     status,
-    emailEnviado: cur.emailEnviado,
+    emailEnviado: emailEnviado !== undefined ? !!emailEnviado : cur.emailEnviado,
     createdAt: cur.createdAt,
     aprovadoPor: status === 'aprovado' ? aprovadoPor : cur.aprovadoPor,
     aprovadoEm: status === 'aprovado' ? new Date().toISOString() : cur.aprovadoEm,

@@ -937,6 +937,12 @@ function setView(view, options) {
     if ((view === 'resumo' || view === 'voluntarios') && Array.isArray(voluntarios) && voluntarios.length > 0) {
       updateFilters();
     }
+    if (view === 'resumo' && (isAdmin || isLider || authRole === 'lider')) {
+      fetchEscalaEmDestaque();
+    } else {
+      const w = document.getElementById('escalaDestaqueWidget');
+      if (w) w.innerHTML = '';
+    }
   }
   if (view === 'checkin' && isAdmin) {
     setViewLoading('checkin', true);
@@ -3795,6 +3801,54 @@ function renderAcompanhamentoEscala(data) {
       </div>
     </div>
   `;
+}
+
+/** Widget no resumo (Fase 5) — chama /api/dashboard/escala-em-destaque */
+async function fetchEscalaEmDestaque() {
+  const wrap = document.getElementById('escalaDestaqueWidget');
+  if (!wrap || !authToken) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/dashboard/escala-em-destaque`);
+    if (!r.ok) { wrap.innerHTML = ''; return; }
+    const data = await r.json().catch(() => ({}));
+    if (!data?.escala) { wrap.innerHTML = ''; return; }
+    const totals = data.totals || { aprovados: 0, presentes: 0, faltaram: 0, pendentes: 0 };
+    const dataLabel = formatEscalaDateOnly(data.escala.data || '');
+    const sitMap = {
+      'em-aberto': ['#dcfce7', '#166534', 'Check-in aberto agora'],
+      'futura':    ['#fef3c7', '#92400e', 'Próxima escala'],
+      'passada':   ['#f1f5f9', '#475569', 'Última escala'],
+    };
+    const [bg, fg, label] = sitMap[data.situacao] || sitMap.futura;
+    const taxa = totals.aprovados > 0 ? Math.round((totals.presentes / totals.aprovados) * 100) : 0;
+    const tile = (l, v, c) => `
+      <div style="background:#fff;border:1px solid var(--border-color);border-radius:8px;padding:10px 14px;flex:1 1 110px;min-width:110px">
+        <div style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">${l}</div>
+        <div style="font-size:1.35rem;font-weight:700;color:${c}">${v}</div>
+      </div>`;
+    wrap.innerHTML = `
+      <div class="filters-card" style="border-left:4px solid ${fg};cursor:pointer" id="escalaDestaqueClick" title="Abrir esta escala">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+          <div>
+            <span style="display:inline-block;background:${bg};color:${fg};border:1px solid ${fg};padding:2px 8px;border-radius:6px;font-size:.78rem;font-weight:600">${label}</span>
+            <h3 style="font-size:1.05rem;margin:8px 0 2px">${escapeHtml(data.escala.nome || '—')}</h3>
+            <div style="color:var(--text-muted);font-size:.88rem">${escapeHtml(dataLabel)}</div>
+          </div>
+          <div style="color:var(--text-muted);font-size:.85rem">Taxa de presença: <strong style="color:#166534">${taxa}%</strong></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${tile('Aprovados', totals.aprovados, '#1a1a2e')}
+          ${tile('Presentes', totals.presentes, '#166534')}
+          ${tile('Faltaram', totals.faltaram, '#991b1b')}
+          ${tile('Aguardando', totals.pendentes, '#3730a3')}
+        </div>
+      </div>`;
+    document.getElementById('escalaDestaqueClick')?.addEventListener('click', () => {
+      setView('escalas', { escalaId: data.escala._id });
+    });
+  } catch (_) {
+    wrap.innerHTML = '';
+  }
 }
 
 /** Mantido para compatibilidade (bulk approve etc) */
