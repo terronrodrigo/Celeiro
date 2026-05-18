@@ -934,11 +934,12 @@ function setView(view, options) {
     else if (view === 'checkin-ministerio') runWithTimeout('checkin-ministerio', () => fetchCheckinsMinisterio());
     else if (view === 'escalas-criar') runWithTimeout('escalas-criar', () => fetchEscalasCriar());
     else if (view === 'escalas') runWithTimeout('escalas', () => fetchEscalas());
-    if ((view === 'resumo' || view === 'voluntarios') && Array.isArray(voluntarios) && voluntarios.length > 0) {
+    if (view === 'voluntarios' && Array.isArray(voluntarios) && voluntarios.length > 0) {
       updateFilters();
     }
     if (view === 'resumo' && (isAdmin || isLider || authRole === 'lider')) {
       fetchEscalaEmDestaque();
+      fetchResumoGlobal();
     } else {
       const w = document.getElementById('escalaDestaqueWidget');
       if (w) w.innerHTML = '';
@@ -2956,9 +2957,12 @@ function renderTable(list) {
     const tr = document.createElement('tr');
     const email = (v.email || '').toLowerCase();
     const checked = selectedEmails.has(email);
+    const origemBadge = v.fonte === 'checkin'
+      ? '<span title="Adicionado automaticamente após check-in" style="margin-left:6px;font-size:.7rem;background:#e0e7ff;color:#3730a3;border:1px solid #a5b4fc;padding:1px 6px;border-radius:6px;font-weight:600">via check-in</span>'
+      : '';
     tr.innerHTML = `
       <td class="col-check"><input type="checkbox" class="row-check" data-email="${escapeAttr(email)}" ${checked ? 'checked' : ''}></td>
-      <td class="cell-with-avatar"><span class="cell-avatar">${avatarHtml(v.fotoUrl, v.nome)}</span><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(v.nome || '—')}</button></td>
+      <td class="cell-with-avatar"><span class="cell-avatar">${avatarHtml(v.fotoUrl, v.nome)}</span><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(v.nome || '—')}</button>${origemBadge}</td>
       <td><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(v.email || '')}</button></td>
       <td>${escapeHtml([v.cidade, v.estado].filter(Boolean).join(' / ') || '—')}</td>
       <td>${escapeHtml(truncate(v.areas || '—', 50))}</td>
@@ -3801,6 +3805,94 @@ function renderAcompanhamentoEscala(data) {
       </div>
     </div>
   `;
+}
+
+/** Resumo executivo da plataforma: cards globais + série 7d + top ministérios. */
+async function fetchResumoGlobal() {
+  if (!authToken) return;
+  const isAdmin = authRole === 'admin';
+  const isLider = authRole === 'lider' || (authMinisterioNomes && authMinisterioNomes.length);
+  if (!isAdmin && !isLider) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/dashboard/resumo`);
+    if (!r.ok) return;
+    const data = await r.json();
+    renderResumoGlobal(data);
+  } catch (_) {}
+}
+
+function renderResumoGlobal(data) {
+  const p = data?.pessoas || { voluntarios: 0, soCheckin: 0, total: 0 };
+  const c = data?.checkins || { ontem: 0, semana: 0, mes: 0, serie7d: [] };
+  const pm = data?.presencaMedia || { taxa: null, baseEscalas: 0 };
+  const top = Array.isArray(data?.topMinisterios) ? data.topMinisterios : [];
+  const f = data?.formularios || { membros: 0, consolidacao: 0, batismo: 0, apresentacao: 0 };
+
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setTxt('resumoPessoasTotal', p.total);
+  setTxt('resumoPessoasVoluntarios', p.voluntarios);
+  setTxt('resumoPessoasSoCheckin', p.soCheckin);
+  setTxt('resumoCkOntem', c.ontem);
+  setTxt('resumoCkSemana', c.semana);
+  setTxt('resumoCkMes', c.mes);
+  setTxt('resumoPresencaTaxa', pm.taxa != null ? `${pm.taxa}%` : '—');
+  setTxt('resumoPresencaBase', pm.baseEscalas || 0);
+  const fTotal = (f.membros || 0) + (f.consolidacao || 0) + (f.batismo || 0) + (f.apresentacao || 0);
+  setTxt('resumoFormTotal', fTotal);
+  setTxt('resumoFormMembros', f.membros || 0);
+  setTxt('resumoFormConsolidacao', f.consolidacao || 0);
+  setTxt('resumoFormBatismo', f.batismo || 0);
+  setTxt('resumoFormApresentacao', f.apresentacao || 0);
+
+  // Top ministérios — barras simples sem Chart.js
+  const tBox = document.getElementById('resumoTopMinisteriosBox');
+  if (tBox) {
+    if (!top.length) {
+      tBox.innerHTML = '<p class="auth-subtitle" style="margin:0">Sem check-ins este mês ainda.</p>';
+    } else {
+      const max = Math.max(...top.map((t) => t.total)) || 1;
+      tBox.innerHTML = top.map((t) => {
+        const pct = Math.round((t.total / max) * 100);
+        return `
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:.88rem;color:var(--text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.nome)}</div>
+              <div style="height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${pct}%;background:#f59e0b"></div>
+              </div>
+            </div>
+            <div style="font-weight:700;color:#1a1a2e;min-width:36px;text-align:right">${t.total}</div>
+          </div>`;
+      }).join('');
+    }
+  }
+
+  // Série 7d — chart simples de barras (lazy load do Chart.js)
+  renderResumoCheckins7d(c.serie7d || []);
+}
+
+let _resumoCkChart = null;
+async function renderResumoCheckins7d(serie) {
+  try { await ensureChartJs(); } catch (_) { return; }
+  const canvas = document.getElementById('resumoCheckins7dChart');
+  if (!canvas) return;
+  const labels = serie.map((p) => {
+    const d = new Date(p.ymd + 'T12:00:00');
+    return d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' });
+  });
+  const values = serie.map((p) => Number(p.total) || 0);
+  if (_resumoCkChart) { try { _resumoCkChart.destroy(); } catch (_) {} _resumoCkChart = null; }
+  // eslint-disable-next-line no-undef
+  _resumoCkChart = new Chart(canvas.getContext('2d'), {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'Check-ins', data: values, backgroundColor: '#f59e0b' }] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+    },
+  });
 }
 
 /** Widget no resumo (Fase 5) — chama /api/dashboard/escala-em-destaque */

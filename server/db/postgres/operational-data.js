@@ -6,6 +6,9 @@ import { getPostgresPool } from './init.js';
 import { escalaDataToYMD, getDayRangeBrasilia } from '../../lib/brasilia.js';
 import { pgFindUserById, pgFindUsersByEmail } from './repos.js';
 
+// Re-export para que outros módulos (server.js) usem o pool sem importar init.js direto.
+export { getPostgresPool };
+
 /** Normaliza campos multivalorados para string CSV.
  * Aceita array (perfil novo) ou string (legado/CSV) e devolve sempre string,
  * para o resto do código poder fazer .split(',') sem quebrar. */
@@ -76,7 +79,12 @@ export async function pgListVoluntarioEmails(igrejaId) {
 }
 
 /** Garante email na lista de voluntários (cadastro, check-in, registro de conta). */
-export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igrejaId }) {
+/**
+ * Garante que o email esteja em `voluntarios` para a igreja.
+ * fonte: 'cadastro' (default), 'checkin', 'planilha', etc. — registra como veio.
+ * Se já existe, atualiza nome/ministerio (não sobrescreve fonte para preservar histórico).
+ */
+export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igrejaId, fonte = 'cadastro' }) {
   const em = (email || '').toString().trim().toLowerCase();
   if (!em || !em.includes('@') || !igrejaId) return null;
   const pool = getPostgresPool();
@@ -101,10 +109,47 @@ export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igreja
   const dados = { nome: nomeStr || em, ministerio: minStr || '' };
   await pool.query(
     `INSERT INTO voluntarios (id, igreja_id, email, nome, dados, ativo, fonte)
-     VALUES ($1, $2, $3, $4, $5::jsonb, TRUE, 'cadastro')`,
-    [id, igrejaId, em, nomeStr || em, JSON.stringify(dados)],
+     VALUES ($1, $2, $3, $4, $5::jsonb, TRUE, $6)`,
+    [id, igrejaId, em, nomeStr || em, JSON.stringify(dados), fonte],
   );
   return id;
+}
+
+/**
+ * Backfill: cria entrada em `voluntarios` para todos os emails de `checkins`
+ * que ainda não estão na lista. Idempotente; retorna nº de novas linhas.
+ * Marca a fonte como 'checkin' pra distinguir na UI.
+ */
+export async function pgBackfillVoluntariosFromCheckins(igrejaId = null) {
+  const params = [];
+  let where = '';
+  if (igrejaId) {
+    params.push(igrejaId);
+    where = ` AND ch.igreja_id = $${params.length}`;
+  }
+  // Pega último nome/ministério não-vazio por email distinto.
+  const { rows } = await getPostgresPool().query(
+    `SELECT DISTINCT ON (LOWER(ch.email))
+       ch.igreja_id, LOWER(ch.email) AS email,
+       COALESCE(NULLIF(ch.nome, ''), '') AS nome,
+       COALESCE(NULLIF(ch.ministerio, ''), '') AS ministerio
+     FROM checkins ch
+     LEFT JOIN voluntarios v
+       ON v.igreja_id = ch.igreja_id AND LOWER(v.email) = LOWER(ch.email)
+     WHERE v.id IS NULL
+       AND ch.email IS NOT NULL
+       AND ch.email <> ''${where}
+     ORDER BY LOWER(ch.email), ch.timestamp_ms DESC NULLS LAST`,
+    params,
+  );
+  let criados = 0;
+  for (const r of rows) {
+    const id = await pgEnsureVoluntarioInList({
+      email: r.email, nome: r.nome, ministerio: r.ministerio, igrejaId: r.igreja_id, fonte: 'checkin',
+    });
+    if (id) criados += 1;
+  }
+  return criados;
 }
 
 function mapCheckinRow(row) {

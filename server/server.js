@@ -97,10 +97,12 @@ import {
 } from './lib/escala-checkin-rules.js';
 import {
   pgListVoluntarios, pgListVoluntarioEmails, buildVoluntariosResumo, pgEnsureVoluntarioInList,
+  pgBackfillVoluntariosFromCheckins,
   pgListCheckins, pgListCandidaturasByEscala, pgFindCandidaturaById,
   pgUpdateCandidaturaStatus, pgBulkUpdateCandidaturaStatus, pgCandidaturaStatsByEmails,
   pgListCandidaturasByEmail, pgListCandidaturasForEscalas,
   pgListCheckinEmails,
+  getPostgresPool,
 } from './db/postgres/operational-data.js';
 import {
   pgFindConviteByToken, pgUpsertConviteLider, pgListConvitesLider,
@@ -2191,6 +2193,13 @@ app.post('/api/checkins/confirmar', requireAuth, resolveTenant, async (req, res)
       });
       if (r.error === 'not_found') return sendError(res, 404, 'Evento não encontrado ou inativo.');
       if (r.duplicate) return res.json({ message: 'Check-in já realizado.', checkin: { _id: r.id } });
+      // Sincroniza o catálogo de voluntários (paridade com Mongo): quem faz check-in vira voluntário.
+      try {
+        await pgEnsureVoluntarioInList({
+          email, nome: nome || '', ministerio: ministerio || '', igrejaId: req.tenantIgrejaId, fonte: 'checkin',
+        });
+      } catch (_) {}
+      invalidateCache();
       return res.status(201).json({ message: 'Check-in realizado!', checkin: { _id: r.id } });
     }
     if (!guardMongoData(res, EMPTY_ARRAY)) return;
@@ -2311,6 +2320,12 @@ app.post('/api/checkin-public', async (req, res) => {
       });
       if (r.error === 'not_found') return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
       if (r.duplicate) return res.status(200).json({ message: 'Check-in já realizado.', checkin: { _id: r.id } });
+      try {
+        await pgEnsureVoluntarioInList({
+          email: em, nome: (nome || '').trim(), ministerio: (ministerio || '').trim(), igrejaId: igrejaDoc._id, fonte: 'checkin',
+        });
+      } catch (_) {}
+      invalidateCache();
       return res.status(201).json({ message: 'Check-in realizado!', checkin: { _id: r.id } });
     }
     if (!isMongo()) return sendError(res, 503, 'Check-in público indisponível até migração dos dados do MongoDB.');
@@ -5399,6 +5414,171 @@ app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, 
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
+// GET /api/dashboard/resumo — visão executiva da plataforma (admin/líder)
+// Agrega indicadores globais para a tela Resumo: pessoas, check-ins recentes,
+// presença média, top ministérios do mês e contadores de formulários.
+// Resposta:
+// {
+//   pessoas: { voluntarios, soCheckin, total },
+//   checkins: { ontem, semana, mes, serie7d: [{ymd, total}] },
+//   presencaMedia: { taxa, baseEscalas },
+//   topMinisterios: [{ nome, total }],
+//   formularios: { membros, consolidacao, batismo, apresentacao }
+// }
+app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) => {
+  try {
+    if (!isPostgres()) {
+      return res.json({
+        pessoas: { voluntarios: 0, soCheckin: 0, total: 0 },
+        checkins: { ontem: 0, semana: 0, mes: 0, serie7d: [] },
+        presencaMedia: { taxa: null, baseEscalas: 0 },
+        topMinisterios: [],
+        formularios: { membros: 0, consolidacao: 0, batismo: 0, apresentacao: 0 },
+      });
+    }
+    const isAdmin = req.userRole === 'admin';
+    const isLider = req.userRole === 'lider';
+    if (!isAdmin && !isLider) return sendError(res, 403, 'Acesso negado.');
+
+    const pool = getPostgresPool();
+    const ig = req.tenantIgrejaId;
+
+    // 1) Pessoas: voluntários cadastrados + emails de check-in fora do catálogo
+    const [{ rows: vRows }, { rows: scRows }] = await Promise.all([
+      pool.query('SELECT COUNT(*)::int AS n FROM voluntarios WHERE igreja_id = $1 AND ativo = TRUE', [ig]),
+      pool.query(
+        `SELECT COUNT(*)::int AS n FROM (
+           SELECT DISTINCT LOWER(ch.email) AS em
+           FROM checkins ch
+           WHERE ch.igreja_id = $1 AND ch.email IS NOT NULL AND ch.email <> ''
+             AND NOT EXISTS (
+               SELECT 1 FROM voluntarios v
+               WHERE v.igreja_id = ch.igreja_id AND LOWER(v.email) = LOWER(ch.email)
+             )
+         ) t`,
+        [ig],
+      ),
+    ]);
+    const voluntariosN = vRows[0]?.n || 0;
+    const soCheckinN = scRows[0]?.n || 0;
+
+    // 2) Check-ins: ontem, semana, mês, série dos últimos 7 dias (Brasília)
+    const { rows: ckAggRows } = await pool.query(
+      `WITH d AS (
+         SELECT (timestamp_ms / 1000) AS ts_sec FROM checkins
+         WHERE igreja_id = $1 AND timestamp_ms IS NOT NULL
+       )
+       SELECT
+         COUNT(*) FILTER (WHERE to_timestamp(ts_sec) AT TIME ZONE 'America/Sao_Paulo' >= (date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - INTERVAL '1 day')
+                          AND to_timestamp(ts_sec) AT TIME ZONE 'America/Sao_Paulo' <  date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo')) AS ontem,
+         COUNT(*) FILTER (WHERE to_timestamp(ts_sec) AT TIME ZONE 'America/Sao_Paulo' >= (date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - INTERVAL '7 days')) AS semana,
+         COUNT(*) FILTER (WHERE to_timestamp(ts_sec) AT TIME ZONE 'America/Sao_Paulo' >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')) AS mes
+       FROM d`,
+      [ig],
+    );
+    const ckOntem = Number(ckAggRows[0]?.ontem || 0);
+    const ckSemana = Number(ckAggRows[0]?.semana || 0);
+    const ckMes = Number(ckAggRows[0]?.mes || 0);
+
+    const { rows: serieRows } = await pool.query(
+      `WITH dias AS (
+         SELECT generate_series(
+           (date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo') - INTERVAL '6 days')::date,
+           date_trunc('day', now() AT TIME ZONE 'America/Sao_Paulo')::date,
+           '1 day'
+         )::date AS ymd
+       )
+       SELECT to_char(d.ymd, 'YYYY-MM-DD') AS ymd,
+              COALESCE(COUNT(c.id), 0)::int AS total
+       FROM dias d
+       LEFT JOIN checkins c
+         ON c.igreja_id = $1
+        AND c.timestamp_ms IS NOT NULL
+        AND (to_timestamp(c.timestamp_ms / 1000) AT TIME ZONE 'America/Sao_Paulo')::date = d.ymd
+       GROUP BY d.ymd
+       ORDER BY d.ymd ASC`,
+      [ig],
+    );
+    const serie7d = serieRows.map((r) => ({ ymd: r.ymd, total: r.total }));
+
+    // 3) Presença média (últimas 4 escalas encerradas com evento_checkin vinculado)
+    const { rows: presencaRows } = await pool.query(
+      `WITH ult AS (
+         SELECT e.id AS escala_id, ec.id AS evento_id, ec.fim_checkin
+         FROM escalas e
+         JOIN eventos_checkin ec ON ec.id = (e.dados->>'eventoCheckinId')
+         WHERE e.igreja_id = $1 AND ec.fim_checkin IS NOT NULL AND ec.fim_checkin < NOW()
+         ORDER BY ec.fim_checkin DESC
+         LIMIT 4
+       ), agg AS (
+         SELECT u.escala_id, u.evento_id,
+           (SELECT COUNT(*) FROM candidaturas c WHERE c.escala_id = u.escala_id AND c.igreja_id = $1 AND c.dados->>'status' = 'aprovado') AS aprov,
+           (SELECT COUNT(*) FROM candidaturas c
+             JOIN checkins ck ON ck.igreja_id = c.igreja_id
+              AND ck.evento_id = u.evento_id
+              AND LOWER(ck.email) = LOWER(c.dados->>'email')
+            WHERE c.escala_id = u.escala_id AND c.igreja_id = $1 AND c.dados->>'status' = 'aprovado') AS pres
+         FROM ult u
+       )
+       SELECT
+         COALESCE(SUM(aprov), 0)::int AS aprov,
+         COALESCE(SUM(pres), 0)::int AS pres,
+         COUNT(*)::int AS base
+       FROM agg`,
+      [ig],
+    );
+    const presAprov = Number(presencaRows[0]?.aprov || 0);
+    const presPres = Number(presencaRows[0]?.pres || 0);
+    const presBase = Number(presencaRows[0]?.base || 0);
+    const taxa = presAprov > 0 ? Math.round((presPres / presAprov) * 100) : null;
+
+    // 4) Top ministérios do mês (por check-ins)
+    const { rows: topRows } = await pool.query(
+      `SELECT COALESCE(NULLIF(ministerio, ''), '—') AS nome, COUNT(*)::int AS total
+       FROM checkins
+       WHERE igreja_id = $1
+         AND timestamp_ms IS NOT NULL
+         AND (to_timestamp(timestamp_ms / 1000) AT TIME ZONE 'America/Sao_Paulo') >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')
+       GROUP BY nome
+       ORDER BY total DESC
+       LIMIT 5`,
+      [ig],
+    );
+    const topMinisterios = topRows.map((r) => ({ nome: r.nome, total: r.total }));
+
+    // 5) Formulários: contagem do mês
+    const monthFilter = `AND created_at >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') AT TIME ZONE 'America/Sao_Paulo'`;
+    const [m1, m2, m3, m4] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS n FROM formulario_membro WHERE igreja_id = $1 ${monthFilter}`, [ig]),
+      pool.query(`SELECT COUNT(*)::int AS n FROM formulario_consolidacao WHERE igreja_id = $1 ${monthFilter}`, [ig]),
+      pool.query(`SELECT COUNT(*)::int AS n FROM formulario_batismo WHERE igreja_id = $1 ${monthFilter}`, [ig]),
+      pool.query(`SELECT COUNT(*)::int AS n FROM formulario_apresentacao WHERE igreja_id = $1 ${monthFilter}`, [ig]),
+    ]);
+
+    return res.json({
+      pessoas: {
+        voluntarios: voluntariosN,
+        soCheckin: soCheckinN,
+        total: voluntariosN + soCheckinN,
+      },
+      checkins: {
+        ontem: ckOntem,
+        semana: ckSemana,
+        mes: ckMes,
+        serie7d,
+      },
+      presencaMedia: { taxa, baseEscalas: presBase },
+      topMinisterios,
+      formularios: {
+        membros: m1.rows[0]?.n || 0,
+        consolidacao: m2.rows[0]?.n || 0,
+        batismo: m3.rows[0]?.n || 0,
+        apresentacao: m4.rows[0]?.n || 0,
+      },
+    });
+  } catch (err) { console.error(err); sendError(res, 500, err.message || 'Erro ao montar resumo.'); }
+});
+
 // GET /api/dashboard/escala-em-destaque — widget do resumo (Fase 5)
 // Devolve a "escala em destaque" para admin/líder:
 //   - se houver escala futura com check-in aberto agora → mostra ela
@@ -5711,6 +5891,8 @@ async function start() {
         if (m > 0) console.log(`✅ Backfill check-in↔candidatura: ${m} check-in(s) vinculado(s).`);
         const f = await pgAutoMarcarFaltas();
         if (f > 0) console.log(`✅ Auto-marca falta: ${f} candidatura(s) marcadas após fim_checkin.`);
+        const v = await pgBackfillVoluntariosFromCheckins();
+        if (v > 0) console.log(`✅ Backfill voluntarios←checkins: ${v} pessoa(s) adicionada(s) ao catálogo.`);
       } catch (err) {
         console.error('Migração escala↔checkin↔candidatura falhou:', err.message || err);
       }
