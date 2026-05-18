@@ -1371,14 +1371,20 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
     const isLider = req.userRole === 'lider';
     const ministerioNomes = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
 
+    // Aceita string CSV ou array (perfil novo grava arrays no JSONB do voluntário).
+    const splitMulti = (v) => {
+      if (Array.isArray(v)) return v.map((x) => String(x ?? '').trim()).filter(Boolean);
+      if (v == null) return [];
+      return String(v).split(',').map((x) => x.trim()).filter(Boolean);
+    };
     const buildResumo = (list) => {
       const areasCount = {};
       const dispCount = {};
       (list || []).forEach(v => {
-        (v.areas || '').split(',').map(a => a.trim()).filter(Boolean).forEach(a => {
+        splitMulti(v.areas).forEach(a => {
           areasCount[a] = (areasCount[a] || 0) + 1;
         });
-        (v.disponibilidade || '').split(',').map(d => d.trim()).filter(Boolean).forEach(d => {
+        splitMulti(v.disponibilidade).forEach(d => {
           dispCount[d] = (dispCount[d] || 0) + 1;
         });
       });

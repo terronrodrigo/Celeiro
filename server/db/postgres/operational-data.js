@@ -6,14 +6,23 @@ import { getPostgresPool } from './init.js';
 import { escalaDataToYMD, getDayRangeBrasilia } from '../../lib/brasilia.js';
 import { pgFindUserById, pgFindUsersByEmail } from './repos.js';
 
+/** Normaliza campos multivalorados para string CSV.
+ * Aceita array (perfil novo) ou string (legado/CSV) e devolve sempre string,
+ * para o resto do código poder fazer .split(',') sem quebrar. */
+function toCsvString(v) {
+  if (Array.isArray(v)) return v.map((x) => String(x ?? '').trim()).filter(Boolean).join(', ');
+  if (v == null) return '';
+  return String(v);
+}
+
 function mapVoluntarioFromRow(row) {
   const d = row.dados || {};
   return {
     _id: row.id,
     email: row.email,
     nome: d.nome || row.nome || '',
-    areas: d.areas || '',
-    disponibilidade: d.disponibilidade || '',
+    areas: toCsvString(d.areas),
+    disponibilidade: toCsvString(d.disponibilidade),
     estado: d.estado || '',
     cidade: d.cidade || '',
     ministerio: d.ministerio || '',
@@ -311,14 +320,21 @@ export async function pgListCheckinEmails(igrejaId) {
   return rows.map((r) => r.em).filter(Boolean);
 }
 
+/** Aceita string CSV ou array; devolve array de strings trimadas e não vazias. */
+function splitMultiValue(v) {
+  if (Array.isArray(v)) return v.map((x) => String(x ?? '').trim()).filter(Boolean);
+  if (v == null) return [];
+  return String(v).split(',').map((x) => x.trim()).filter(Boolean);
+}
+
 export function buildVoluntariosResumo(list) {
   const areasCount = {};
   const dispCount = {};
   (list || []).forEach((v) => {
-    (v.areas || '').split(',').map((a) => a.trim()).filter(Boolean).forEach((a) => {
+    splitMultiValue(v.areas).forEach((a) => {
       areasCount[a] = (areasCount[a] || 0) + 1;
     });
-    (v.disponibilidade || '').split(',').map((d) => d.trim()).filter(Boolean).forEach((d) => {
+    splitMultiValue(v.disponibilidade).forEach((d) => {
       dispCount[d] = (dispCount[d] || 0) + 1;
     });
   });
