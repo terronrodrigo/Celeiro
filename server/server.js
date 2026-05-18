@@ -60,6 +60,7 @@ import {
   pgDeleteEscala, pgGetEscalaInscricaoStatus, pgSetEscalaInscricaoStatus,
   pgCountAprovadosByMinisterio, pgAutoLinkEscalasOrfas, pgFindEscalaByEventoCheckin,
   pgListAcompanhamentoEscala, pgBackfillCheckinCandidaturas,
+  pgListMinhasCandidaturasParaEscalas, pgFindEventosCheckinByIds, pgListMeusCheckins,
 } from './db/postgres/escalas-checkin.js';
 import {
   pgListEventosFormulario, pgFindEventoFormularioById, pgCreateEventoFormulario,
@@ -5345,6 +5346,113 @@ app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, 
 
     res.json(updated);
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
+});
+
+// GET /api/me/cultos — visão unificada do voluntário (Fase 3 da integração)
+// Retorna a próxima escala de cada culto recorrente + standalone com status:
+//  - aberta-nao-inscrita (sem candidatura)
+//  - pendente            (candidatura status=pendente)
+//  - aprovada            (aprovada, evento ainda não abriu)
+//  - checkin-aberto      (aprovada + evento dentro da janela de check-in)
+//  - presente            (já fez check-in)
+//  - faltou              (aprovada, evento encerrado, sem check-in)
+//  - recusada            (status=desistencia ou falta)
+app.get('/api/me/cultos', requireAuth, resolveTenant, async (req, res) => {
+  try {
+    const email = String(req.userEmail || '').trim().toLowerCase();
+    if (!isPostgres()) {
+      // Fallback simples para Mongo: usa /minhas-candidaturas como base e devolve
+      // estrutura semelhante; UI nova foca em Postgres.
+      if (!isMongo() || !email) return res.json({ itens: [] });
+      const cands = await Candidatura.find({ email, ...tQ(req) }).sort({ createdAt: -1 }).lean();
+      const escalaIds = [...new Set(cands.map((c) => String(c.escalaId)))];
+      const escalas = await Escala.find({ _id: { $in: escalaIds }, ...tQ(req) }).lean();
+      const escalaMap = new Map(escalas.map((e) => [String(e._id), e]));
+      const itens = cands.map((c) => ({
+        escalaId: String(c.escalaId),
+        escalaNome: escalaMap.get(String(c.escalaId))?.nome || '',
+        escalaData: escalaMap.get(String(c.escalaId))?.data || null,
+        ministerio: c.ministerio || '',
+        candidaturaId: String(c._id),
+        candidaturaStatus: c.status || 'pendente',
+        eventoCheckinId: null,
+        eventoCheckinAberto: false,
+        eventoCheckinEncerrado: false,
+        compareceu: false,
+        situacao: c.status === 'aprovado' ? 'aprovada' : (c.status === 'pendente' ? 'pendente' : 'recusada'),
+      }));
+      return res.json({ itens });
+    }
+
+    // PostgreSQL: lista próximas escalas (1 por culto recorrente), e cruza com:
+    //  - candidatura do usuário (se houver)
+    //  - evento_checkin vinculado
+    //  - check-in já feito no evento
+    const escalasAll = await pgListEscalas(req.tenantIgrejaId, {
+      ativoOnly: true,
+      futureOnly: true,
+      nextPerCultoOnly: true,
+      limit: 200,
+    });
+    const escalaIds = escalasAll.map((e) => String(e._id));
+    if (!escalaIds.length) return res.json({ itens: [] });
+
+    const candByEscalaId = await pgListMinhasCandidaturasParaEscalas(req.tenantIgrejaId, email, escalaIds);
+
+    const evtIds = [...new Set(escalasAll.map((e) => e.eventoCheckinId).filter(Boolean))];
+    const evtById = await pgFindEventosCheckinByIds(req.tenantIgrejaId, evtIds);
+    const checkinByEvtId = await pgListMeusCheckins(req.tenantIgrejaId, email, evtIds);
+
+    const agora = Date.now();
+    const itens = escalasAll.map((escala) => {
+      const cand = candByEscalaId.get(String(escala._id)) || null;
+      const evt = escala.eventoCheckinId ? evtById.get(escala.eventoCheckinId) || null : null;
+      const checkin = evt ? (checkinByEvtId.get(String(evt._id)) || null) : null;
+
+      const inicio = evt?.inicioCheckin ? new Date(evt.inicioCheckin).getTime() : null;
+      const fim = evt?.fimCheckin ? new Date(evt.fimCheckin).getTime() : null;
+      const aberto = !!(evt && evt.ativo && (!inicio || agora >= inicio) && (!fim || agora <= fim));
+      const encerrado = !!(fim && agora > fim);
+
+      let situacao;
+      if (!cand) {
+        situacao = 'aberta-nao-inscrita';
+      } else if (checkin) {
+        situacao = 'presente';
+      } else if (cand.status === 'desistencia' || cand.status === 'falta') {
+        situacao = 'recusada';
+      } else if (cand.status === 'pendente') {
+        situacao = 'pendente';
+      } else if (cand.status === 'aprovado' && encerrado) {
+        situacao = 'faltou';
+      } else if (cand.status === 'aprovado' && aberto) {
+        situacao = 'checkin-aberto';
+      } else {
+        situacao = 'aprovada';
+      }
+
+      return {
+        escalaId: String(escala._id),
+        escalaNome: escala.nome || '',
+        escalaData: escala.data,
+        capacidades: escala.capacidades || {},
+        candidaturaId: cand?._id || null,
+        candidaturaStatus: cand?.status || null,
+        ministerio: cand?.ministerio || null,
+        eventoCheckinId: evt?._id || null,
+        eventoLabel: evt?.label || null,
+        eventoInicio: evt?.inicioCheckin || null,
+        eventoFim: evt?.fimCheckin || null,
+        eventoCheckinAberto: aberto,
+        eventoCheckinEncerrado: encerrado,
+        compareceu: !!checkin,
+        checkinId: checkin?.id || null,
+        situacao,
+      };
+    });
+
+    res.json({ itens });
+  } catch (err) { console.error(err); sendError(res, 500, err.message || 'Erro ao montar cultos do voluntário.'); }
 });
 
 // GET /api/minhas-candidaturas — candidaturas do usuário logado

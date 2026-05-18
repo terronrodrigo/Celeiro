@@ -555,6 +555,55 @@ export async function pgListAcompanhamentoEscala(igrejaId, escalaId) {
 }
 
 /**
+ * Lista candidaturas do email para um conjunto de escalas.
+ * Retorna Map<escalaId, { _id, status, ministerio, createdAt }>.
+ */
+export async function pgListMinhasCandidaturasParaEscalas(igrejaId, email, escalaIds) {
+  if (!email || !escalaIds?.length) return new Map();
+  const { rows } = await getPostgresPool().query(
+    `SELECT id, escala_id, dados, created_at FROM candidaturas
+     WHERE igreja_id = $1 AND escala_id = ANY($2::text[])
+       AND LOWER(dados->>'email') = $3`,
+    [igrejaId, escalaIds, String(email).toLowerCase()],
+  );
+  return new Map(rows.map((r) => [String(r.escala_id), {
+    _id: r.id,
+    status: r.dados?.status || 'pendente',
+    ministerio: r.dados?.ministerio || '',
+    createdAt: r.created_at,
+  }]));
+}
+
+/** Carrega eventos_checkin pelos ids em lote. */
+export async function pgFindEventosCheckinByIds(igrejaId, ids) {
+  if (!ids?.length) return new Map();
+  const { rows } = await getPostgresPool().query(
+    `SELECT id, data, label, ativo, inicio_checkin, fim_checkin
+     FROM eventos_checkin WHERE igreja_id = $1 AND id = ANY($2::text[])`,
+    [igrejaId, ids],
+  );
+  return new Map(rows.map((r) => [String(r.id), {
+    _id: r.id,
+    data: r.data,
+    label: r.label,
+    ativo: r.ativo,
+    inicioCheckin: r.inicio_checkin,
+    fimCheckin: r.fim_checkin,
+  }]));
+}
+
+/** Check-ins do email para conjunto de eventos. */
+export async function pgListMeusCheckins(igrejaId, email, eventoIds) {
+  if (!email || !eventoIds?.length) return new Map();
+  const { rows } = await getPostgresPool().query(
+    `SELECT id, evento_id, timestamp_ms FROM checkins
+     WHERE igreja_id = $1 AND evento_id = ANY($2::text[]) AND LOWER(email) = $3`,
+    [igrejaId, eventoIds, String(email).toLowerCase()],
+  );
+  return new Map(rows.map((r) => [String(r.evento_id), { id: r.id, timestampMs: r.timestamp_ms }]));
+}
+
+/**
  * Backfill manual: vincula check-ins existentes a candidaturas aprovadas pela
  * heurística (igreja, evento_checkin associado à escala, mesmo email, aprovado).
  * Idempotente. Retorna nº de check-ins atualizados.

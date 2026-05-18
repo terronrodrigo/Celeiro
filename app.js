@@ -3605,29 +3605,22 @@ async function fetchEscalasCriar() {
   }
 }
 
-/** Escala (candidatos): admin/lider carrega só escalas; voluntário carrega minhas-candidaturas */
+/** Escala (candidatos): admin/lider carrega só escalas; voluntário carrega visão unificada de cultos */
 async function fetchEscalas() {
   if (!authToken) { updateAuthUi(); return; }
   const container = document.getElementById('escalasContent');
   const isVol = String(authRole || '').toLowerCase() === 'voluntario';
   if (isVol) {
-    if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando suas escalas…</p></div>';
+    if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando seus cultos…</p></div>';
     try {
-      const [rCand, rOpen] = await Promise.all([
-        authFetch(`${API_BASE}/api/minhas-candidaturas`),
-        authFetch(`${API_BASE}/api/escalas?light=1`),
-      ]);
-      if (!rCand.ok) throw new Error('Falha');
-      const myCands = await rCand.json();
-      let openEscalas = [];
-      if (rOpen && rOpen.ok) {
-        openEscalas = await rOpen.json();
-        openEscalas = Array.isArray(openEscalas) ? openEscalas : [];
-      }
-      renderEscalasVoluntario(myCands, openEscalas);
+      const r = await authFetch(`${API_BASE}/api/me/cultos`);
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+      const payload = await r.json().catch(() => ({}));
+      renderMeusCultos(Array.isArray(payload?.itens) ? payload.itens : []);
     } catch (e) {
       if (e.message === 'AUTH_REQUIRED') return;
-      if (container) container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Erro ao carregar. Tente novamente.</p></div>';
+      if (container) container.innerHTML = `<div class="filters-card"><p class="auth-subtitle">${escapeHtml(e.message || 'Erro ao carregar')}. <button id="btnRetryMeusCultos" class="btn btn-ghost btn-sm">Tentar novamente</button></p></div>`;
+      document.getElementById('btnRetryMeusCultos')?.addEventListener('click', () => fetchEscalas());
     }
     return;
   }
@@ -4630,90 +4623,116 @@ function renderEscalasCandidatosLider() {
   });
 }
 
-function renderEscalasVoluntario(list, openEscalas) {
+// ─── Voluntário: visão unificada de "Meus cultos" (Fase 3) ─────────────────
+function renderMeusCultos(itens) {
   const container = document.getElementById('escalasContent');
   if (!container) return;
-  const myCands = Array.isArray(list) ? list : [];
-  const openList = sortEscalasByDataAsc(Array.isArray(openEscalas) ? openEscalas : []);
-
-  const renderCtaEscalaAberta = () => {
-    if (!openList.length) return '';
-    return openList.map((openEscala) => {
-    const openEscalaId = openEscala?._id ? String(openEscala._id) : '';
-    const candOpen = openEscalaId ? myCands.find((c) => String(c.escalaId) === openEscalaId) : null;
-    const hasCand = !!candOpen;
-    const status = candOpen ? statusEscalaBadge(candOpen.status) : '';
-    const btnDisabled = hasCand ? 'disabled' : '';
-    const btnLabel = hasCand ? 'Já se candidatou' : 'Me candidatar';
-    return `
-      <div class="filters-card" style="margin-bottom:16px">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-          <div>
-            <h3 style="font-size:1.05rem;margin-bottom:4px">Escala aberta: ${escapeHtml(openEscala.nome || '—')}</h3>
-            <div style="color:var(--text-muted);font-size:.9em;margin-bottom:8px">
-              Data: ${escapeHtml(formatEscalaDateOnly(openEscala.data || ''))}
-            </div>
-            ${status ? `<div style="margin-top:4px">${status}</div>` : ''}
-          </div>
-          <button type="button" class="btn btn-primary btn-sm btn-me-candidatar-escala" data-escala-id="${escapeAttr(openEscalaId)}" ${btnDisabled}>
-            ${escapeHtml(btnLabel)}
-          </button>
-        </div>
-        ${hasCand ? `<div style="margin-top:8px;color:var(--text-muted);font-size:.88em">Seu status atual pode ser conferido na lista abaixo.</div>` : ''}
-      </div>`;
-    }).join('');
-  };
-
-  const bindCtaButtons = () => {
-    container.querySelectorAll('.btn-me-candidatar-escala, #btnMeCandidatarEscalaAberta').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const escalaId = btn.getAttribute('data-escala-id') || (openList[0] && String(openList[0]._id));
-        if (!escalaId || btn.disabled) return;
-        showEscalaPublicOverlay();
-        loadEscalaPublic(escalaId, '');
-      });
-    });
-  };
-
-  if (myCands.length === 0) {
-    if (openList.length) {
-      container.innerHTML = `
-        ${renderCtaEscalaAberta()}
-        <div class="filters-card">
-          <p class="auth-subtitle">Você ainda não se candidatou para nenhuma escala. Use o botão acima para se inscrever.</p>
-        </div>
-      `;
-      bindCtaButtons();
-      return;
-    }
-    container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Você ainda não se candidatou para nenhuma escala. Quando existir uma escala aberta para o próximo culto, você verá o botão para se candidatar aqui.</p></div>';
+  const list = Array.isArray(itens) ? itens : [];
+  if (!list.length) {
+    container.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Nenhum culto disponível no momento. Aguarde a liderança abrir uma nova escala.</p></div>';
     return;
   }
 
-  const rows = myCands.map(c => {
-    const data = formatEscalaDateOnly(c.escalaData);
-    return `<tr>
-      <td data-label="Escala">${escapeHtml(c.escalaNome || '—')}</td>
-      <td data-label="Data">${data}</td>
-      <td data-label="Ministério">${escapeHtml(c.ministerio || '—')}</td>
-      <td data-label="Status">${statusEscalaBadge(c.status)}</td>
-    </tr>`;
-  }).join('');
+  // 3 grupos: ação agora (check-in aberto), próximos (aprovada/pendente/aberta), histórico (presente/faltou/recusada e passados)
+  const acaoAgora = [];
+  const proximos = [];
+  const passados = [];
+  for (const it of list) {
+    if (it.situacao === 'checkin-aberto') acaoAgora.push(it);
+    else if (['presente', 'faltou', 'recusada'].includes(it.situacao)) passados.push(it);
+    else proximos.push(it);
+  }
+
+  const renderCard = (it) => {
+    const data = formatEscalaDateOnly(it.escalaData);
+    const ministerio = it.ministerio ? escapeHtml(it.ministerio) : '';
+    let badge = '';
+    let cta = '';
+    switch (it.situacao) {
+      case 'checkin-aberto':
+        badge = '<span class="status-badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac;font-weight:600">Check-in aberto agora</span>';
+        cta = `<button type="button" class="btn btn-primary btn-meu-checkin" data-evento-id="${escapeAttr(it.eventoCheckinId || '')}" data-ministerio="${escapeAttr(it.ministerio || '')}">Fazer check-in</button>`;
+        break;
+      case 'aprovada':
+        badge = '<span class="status-badge" style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d">Aprovado — aguardando o dia</span>';
+        cta = '<span style="color:var(--text-muted);font-size:.88em">O botão de check-in aparece quando abrir.</span>';
+        break;
+      case 'pendente':
+        badge = '<span class="status-badge" style="background:#e0e7ff;color:#3730a3;border:1px solid #a5b4fc">Aguardando aprovação</span>';
+        cta = '<span style="color:var(--text-muted);font-size:.88em">A liderança vai revisar sua inscrição.</span>';
+        break;
+      case 'aberta-nao-inscrita':
+        badge = '<span class="status-badge" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1">Aberta para inscrição</span>';
+        cta = `<button type="button" class="btn btn-primary btn-me-inscrever" data-escala-id="${escapeAttr(it.escalaId)}">Me inscrever</button>`;
+        break;
+      case 'presente':
+        badge = '<span class="status-badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">Presente</span>';
+        cta = '<span style="color:var(--text-muted);font-size:.88em">Obrigado por servir!</span>';
+        break;
+      case 'faltou':
+        badge = '<span class="status-badge" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5">Faltou</span>';
+        cta = '';
+        break;
+      case 'recusada':
+        badge = '<span class="status-badge" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1">Não participou</span>';
+        cta = '';
+        break;
+      default:
+        badge = `<span class="status-badge">${escapeHtml(it.situacao || '—')}</span>`;
+    }
+    return `
+      <div class="filters-card" style="margin-bottom:12px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div style="flex:1 1 240px;min-width:0">
+            <h3 style="font-size:1.05rem;margin-bottom:4px">${escapeHtml(it.escalaNome || '—')}</h3>
+            <div style="color:var(--text-muted);font-size:.92em;margin-bottom:6px">${escapeHtml(data)}${ministerio ? ` · ${ministerio}` : ''}</div>
+            <div>${badge}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">${cta}</div>
+        </div>
+      </div>`;
+  };
+
+  const section = (titulo, arr) => arr.length
+    ? `<div style="margin-bottom:20px"><h2 style="font-size:1.15rem;margin-bottom:10px;color:var(--text-color)">${escapeHtml(titulo)}</h2>${arr.map(renderCard).join('')}</div>`
+    : '';
 
   container.innerHTML = `
-    ${renderCtaEscalaAberta()}
-    <div class="table-card">
-      <div class="chart-header"><h2>Minhas escalas</h2></div>
-      <div class="table-wrapper">
-        <table class="data-table escala-table">
-          <thead><tr><th>Escala</th><th>Data</th><th>Ministério</th><th>Status</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>
-    </div>
+    ${section('Faça check-in agora', acaoAgora)}
+    ${section('Próximos cultos', proximos)}
+    ${section('Histórico', passados)}
   `;
 
-  bindCtaButtons();
+  container.querySelectorAll('.btn-me-inscrever').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const escalaId = btn.getAttribute('data-escala-id');
+      if (!escalaId) return;
+      showEscalaPublicOverlay();
+      loadEscalaPublic(escalaId, '');
+    });
+  });
+  container.querySelectorAll('.btn-meu-checkin').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const eventoId = btn.getAttribute('data-evento-id');
+      const ministerio = btn.getAttribute('data-ministerio') || '';
+      if (!eventoId) return;
+      btn.disabled = true; btn.textContent = 'Confirmando…';
+      try {
+        const r = await authFetch(`${API_BASE}/api/checkins/confirmar`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eventoId, ministerio }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data?.error || 'Falha ao confirmar check-in.');
+        showToast('Check-in confirmado!');
+        fetchEscalas();
+      } catch (err) {
+        showToast(err.message || 'Erro ao confirmar.', 'error');
+        btn.disabled = false; btn.textContent = 'Fazer check-in';
+      }
+    });
+  });
 }
 
 let candidaturasEscalaList = [];
