@@ -281,6 +281,14 @@ async function loadAuthTokenData(token) {
 
 // Segurança: headers HTTP (Helmet) e rate limiting em rotas sensíveis
 app.use(helmet({ contentSecurityPolicy: false })); // CSP desativado para não quebrar recursos estáticos/APIs
+
+// Request id middleware: propaga x-request-id ou gera um curto, usado em logs e respostas 5xx.
+app.use((req, res, next) => {
+  const incoming = req.headers['x-request-id'];
+  req._requestId = (incoming && String(incoming).slice(0, 36)) || crypto.randomBytes(4).toString('hex');
+  res.setHeader('x-request-id', req._requestId);
+  next();
+});
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
   max: 30,
@@ -754,11 +762,19 @@ function formatDatePtBr(ms) {
 
 function sendError(res, status, message, details) {
   const isProd = process.env.NODE_ENV === 'production';
+  const requestId = res?.req?._requestId || crypto.randomBytes(4).toString('hex');
   const safeMessage = isProd && status >= 500
-    ? 'Erro interno. Tente novamente ou contate o suporte.'
+    ? `Erro interno. Tente novamente ou contate o suporte. (id ${requestId})`
     : message;
-  const payload = { error: safeMessage };
+  if (status >= 500) {
+    try {
+      const route = res?.req ? `${res.req.method} ${res.req.originalUrl || res.req.url}` : 'unknown';
+      console.error(`[err ${requestId}] ${status} ${route}: ${message}`);
+    } catch (_) {}
+  }
+  const payload = { error: safeMessage, requestId };
   if (details && !isProd) payload.details = details;
+  res.setHeader('x-request-id', requestId);
   return res.status(status).json(payload);
 }
 
@@ -1978,21 +1994,27 @@ app.post('/api/cultos-recorrentes/sync', requireAuth, resolveTenant, requireAdmi
   }
 });
 
-// Eventos de check-in: admin vê TODOS (ativos e inativos); voluntário vê só ativos. /hoje filtra ativo.
+// Eventos de check-in:
+// - admin: todos (ativos + inativos), smart sort (próxima futura primeiro, depois histórico desc)
+// - líder/voluntário: somente eventos ativos e apenas a *próxima* ocorrência futura de cada culto
+//   recorrente (eventos avulsos sem cultoRecorrenteId também aparecem se forem futuros).
 app.get('/api/eventos-checkin', requireAuth, resolveTenant, async (req, res) => {
   try {
+    const role = String(req.userRole || '').toLowerCase();
+    const isAdmin = role === 'admin';
+    const dataYmd = req.query.data ? String(req.query.data).slice(0, 10) : null;
     if (isPostgres()) {
-      const isAdmin = String(req.userRole || '').toLowerCase() === 'admin';
       const eventos = await pgListEventosCheckin(req.tenantIgrejaId, {
         ativoOnly: !isAdmin,
-        dataYmd: req.query.data || null,
+        dataYmd,
+        // Para líder/voluntário (sem filtro de data específica), aplicar próxima por culto.
+        nextPerCultoOnly: !isAdmin && !dataYmd,
       });
       return res.json(eventos);
     }
     if (!guardMongoData(res, EMPTY_ARRAY)) return;
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const { data } = req.query;
-    const isAdmin = String(req.userRole || '').toLowerCase() === 'admin';
     const query = { ...tQ(req) };
     if (!isAdmin) query.ativo = true;
     if (data) {
@@ -2002,7 +2024,7 @@ app.get('/api/eventos-checkin', requireAuth, resolveTenant, async (req, res) => 
     const eventos = await EventoCheckin.find(query).sort({ data: -1 }).lean();
     res.json(eventos);
   } catch (err) {
-    console.error(err);
+    console.error('eventos-checkin list:', err?.message || err);
     sendError(res, 500, err.message || 'Erro ao listar eventos.');
   }
 });
@@ -4229,9 +4251,12 @@ app.get('/api/escalas/visao-consolidada', requireAuth, resolveTenant, async (req
   }
 });
 
-// GET /api/escalas — lista escalas (admin e líder: todas, inclusive antigas/inativas para histórico)
+// GET /api/escalas — lista escalas
+// - admin: histórico completo (futuras asc, depois passadas desc), limite ESCALAS_LIST_LIMIT
+// - líder: apenas a próxima ocorrência futura de cada culto recorrente (mais avulsos futuros)
+// - voluntário: idem líder (já filtrado também por candidaturaAberta)
 // ?light=1 — retorna escalas sem aggregation (rápido); frontend pode carregar contagens depois
-const ESCALAS_LIST_LIMIT = 80;
+const ESCALAS_LIST_LIMIT = 200;
 app.get('/api/escalas', requireAuth, resolveTenant, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
@@ -4241,6 +4266,7 @@ app.get('/api/escalas', requireAuth, resolveTenant, async (req, res) => {
       const escalas = await pgListEscalas(req.tenantIgrejaId, {
         ativoOnly: false,
         limit: ESCALAS_LIST_LIMIT,
+        nextPerCultoOnly: !isAdmin,
       });
       if (!escalas.length) return res.json([]);
       let enriched = await enrichEscalasCandidatura(req.tenantIgrejaId, escalas);
@@ -4264,6 +4290,31 @@ app.get('/api/escalas', requireAuth, resolveTenant, async (req, res) => {
       escalas = escalas.filter((e) => {
         const ymd = escalaDataToYMD(e.data);
         return ymd && ymd > hoje && e.ativo !== false;
+      });
+    }
+    // Smart sort para admin (futuras asc, depois passadas desc); líder/voluntário recebe lista futura asc.
+    escalas.sort((a, b) => {
+      const da = escalaDataToYMD(a.data) || '';
+      const db = escalaDataToYMD(b.data) || '';
+      const aFut = !!da && da >= hoje;
+      const bFut = !!db && db >= hoje;
+      if (aFut && !bFut) return -1;
+      if (!aFut && bFut) return 1;
+      if (!da && !db) return 0;
+      if (!da) return 1;
+      if (!db) return -1;
+      if (aFut && bFut) return da.localeCompare(db);
+      return db.localeCompare(da);
+    });
+    // Líder/voluntário: 1 escala futura por cultoRecorrenteId
+    if (!isAdmin) {
+      const seen = new Set();
+      escalas = escalas.filter((e) => {
+        const cid = e.cultoRecorrenteId ? String(e.cultoRecorrenteId) : null;
+        if (!cid) return true;
+        if (seen.has(cid)) return false;
+        seen.add(cid);
+        return true;
       });
     }
     const ids = escalas.map(e => e._id);

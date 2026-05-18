@@ -72,6 +72,28 @@ function sortEscalasByDataAsc(list) {
   });
 }
 
+/**
+ * Smart sort: datas futuras (asc, mais próxima primeiro), depois datas passadas (desc, mais recente primeiro).
+ * Itens sem data vão para o final. Usado em listagens de escalas e eventos de check-in para admin/líder.
+ */
+function sortByDataSmart(list, dataKey = 'data') {
+  const todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const arr = Array.isArray(list) ? [...list] : [];
+  return arr.sort((a, b) => {
+    const da = escalaDataToYMD(a?.[dataKey]) || '';
+    const db = escalaDataToYMD(b?.[dataKey]) || '';
+    const aFut = !!da && da >= todayYmd;
+    const bFut = !!db && db >= todayYmd;
+    if (aFut && !bFut) return -1;
+    if (!aFut && bFut) return 1;
+    if (!da && !db) return 0;
+    if (!da) return 1;
+    if (!db) return -1;
+    if (aFut && bFut) return da.localeCompare(db);
+    return db.localeCompare(da);
+  });
+}
+
 const UFS_BR = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
 
 /** Debounce: executa fn após delay ms sem novas chamadas */
@@ -640,12 +662,42 @@ function showLoading(show) {
   if (errorEl) errorEl.style.display = 'none';
 }
 
-function showError(msg) {
+/**
+ * Função a ser re-executada pelo botão "Tentar novamente".
+ * showError("...", () => fetchX()) registra a callback; quando vazio, cai no fallback fetchAllData.
+ */
+let lastErrorRetryFn = null;
+
+function showError(msg, retryFn) {
+  if (typeof retryFn === 'function') lastErrorRetryFn = retryFn;
   if (loadingEl) loadingEl.style.display = 'none';
   if (contentEl) contentEl.style.display = 'none';
   if (errorEl) {
     errorEl.style.display = 'flex';
     if (errorMsgEl) errorMsgEl.textContent = msg || 'Erro ao carregar dados.';
+  }
+}
+
+/** Mostra erro como toast (sem esconder a tela). Usar em fluxos não-críticos onde o usuário pode continuar. */
+function showErrorToast(msg) {
+  showToast?.(msg || 'Erro ao carregar dados.', 'error');
+}
+
+/**
+ * Wrapper para extrair mensagem de erro útil de um Response (inclui requestId quando o servidor envia).
+ * Sempre tenta o JSON; se não conseguir, devolve fallback genérico.
+ */
+async function extractErrorMessage(response, fallback = 'Erro ao processar requisição.') {
+  try {
+    const errData = await response.json();
+    const base = errData?.error || errData?.message || fallback;
+    if (errData?.requestId && !String(base).includes(errData.requestId)) {
+      return `${base} (id ${errData.requestId})`;
+    }
+    return base;
+  } catch (_) {
+    const rid = response?.headers?.get?.('x-request-id');
+    return rid ? `${fallback} (id ${rid})` : fallback;
   }
 }
 
@@ -799,7 +851,7 @@ let voluntariosPageOffset = 0;
 let checkinsDisplayLimit = LIST_PAGE_SIZE;
 let checkinsMinisterioDisplayLimit = LIST_PAGE_SIZE;
 let eventosCheckinDisplayLimit = LIST_PAGE_SIZE;
-let eventosCheckinSortOrder = 'date-desc';
+let eventosCheckinSortOrder = 'smart';
 const eventosCheckinFilters = { search: '', status: '' };
 let checkinSortOrder = 'date-desc';
 let checkinMinisterioSortOrder = 'date-desc';
@@ -929,15 +981,15 @@ async function fetchVoluntarios(opts) {
     settled = true;
     if (useGlobalLoading) {
       showLoading(false);
-      showError('A conexão demorou. Tente novamente.');
+      showError('A conexão demorou. Tente novamente.', () => fetchVoluntarios(opts));
     }
   }, VIEW_LOAD_TIMEOUT_MS);
   try {
     const r = await authFetch(`${API_BASE}/api/voluntarios`);
     if (settled) return;
     if (!r.ok) {
-      const errData = await r.json().catch(() => ({}));
-      throw new Error(errData.error || `HTTP ${r.status}`);
+      const msg = await extractErrorMessage(r, `HTTP ${r.status}`);
+      throw new Error(msg);
     }
     const data = await r.json();
     voluntarios = data.voluntarios || [];
@@ -956,7 +1008,7 @@ async function fetchVoluntarios(opts) {
       return;
     }
     if (useGlobalLoading) {
-      showError(e.message || 'Verifique se o servidor está rodando em ' + API_BASE);
+      showError(e.message || 'Verifique se o servidor está rodando em ' + API_BASE, () => fetchVoluntarios(opts));
     } else {
       showToast('Erro ao carregar voluntários: ' + (e.message || 'Servidor não respondeu'), 'error');
     }
@@ -968,8 +1020,8 @@ async function fetchCheckins() {
   try {
     const r = await authFetch(`${API_BASE}/api/checkins`);
     if (!r.ok) {
-      const errData = await r.json().catch(() => ({}));
-      throw new Error(errData.error || `HTTP ${r.status}`);
+      const msg = await extractErrorMessage(r, `HTTP ${r.status}`);
+      throw new Error(msg);
     }
     const data = await r.json();
     checkins = data.checkins || [];
@@ -978,7 +1030,7 @@ async function fetchCheckins() {
     renderCheckins();
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
-    showError(e.message || 'Erro ao carregar check-ins.');
+    showError(e.message || 'Erro ao carregar check-ins.', () => fetchCheckins());
   }
 }
 
@@ -1037,13 +1089,19 @@ async function fetchMinistros() {
   if (!authToken) return;
   try {
     const r = await authFetch(`${API_BASE}/api/ministros`);
-    if (!r.ok) return;
+    if (!r.ok) {
+      const msg = await extractErrorMessage(r, `Não foi possível carregar os ministérios.`);
+      showErrorToast(msg);
+      return;
+    }
     ministrosList = await r.json();
     await fetchConvitesLider();
     if (currentView !== 'ministros') return;
     renderMinistros();
-  } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
-  finally { setViewLoading('ministros', false); }
+  } catch (e) {
+    if (e.message === 'AUTH_REQUIRED') return;
+    showErrorToast(e.message || 'Erro ao carregar ministérios.');
+  } finally { setViewLoading('ministros', false); }
 }
 
 async function fetchConvitesLider() {
@@ -1313,12 +1371,18 @@ async function fetchUsers() {
   const qs = params.toString() ? '?' + params.toString() : '';
   try {
     const r = await authFetch(`${API_BASE}/api/users${qs}`);
-    if (!r.ok) return;
+    if (!r.ok) {
+      const msg = await extractErrorMessage(r, `Não foi possível carregar os usuários.`);
+      showErrorToast(msg);
+      return;
+    }
     usersList = await r.json();
     if (currentView !== 'usuarios') return;
     renderUsers();
-  } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
-  finally { setViewLoading('usuarios', false); }
+  } catch (e) {
+    if (e.message === 'AUTH_REQUIRED') return;
+    showErrorToast(e.message || 'Erro ao carregar usuários.');
+  } finally { setViewLoading('usuarios', false); }
 }
 
 function renderUsers() {
@@ -1573,7 +1637,8 @@ function getEventoDataMs(e) {
 
 function sortEventosCheckinList(list, order) {
   const arr = Array.isArray(list) ? [...list] : [];
-  const sortKey = order || eventosCheckinSortOrder || 'date-desc';
+  const sortKey = order || eventosCheckinSortOrder || 'smart';
+  if (sortKey === 'smart') return sortByDataSmart(arr, 'data');
   return arr.sort((a, b) => {
     if (sortKey === 'date-asc') return getEventoDataMs(a) - getEventoDataMs(b);
     if (sortKey === 'label-asc') {
@@ -1687,13 +1752,19 @@ async function fetchEventosCheckin() {
   if (!authToken) return;
   try {
     const r = await authFetch(`${API_BASE}/api/eventos-checkin?_t=${Date.now()}`);
-    if (!r.ok) return;
+    if (!r.ok) {
+      const msg = await extractErrorMessage(r, `Não foi possível carregar os eventos de check-in.`);
+      showErrorToast(msg);
+      return;
+    }
     const list = await r.json();
     if (currentView !== 'eventos-checkin') return;
     eventosCheckin = list || [];
     renderEventosCheckin();
-  } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
-  finally { setViewLoading('eventos-checkin', false); }
+  } catch (e) {
+    if (e.message === 'AUTH_REQUIRED') return;
+    showErrorToast(e.message || 'Erro ao carregar eventos de check-in.');
+  } finally { setViewLoading('eventos-checkin', false); }
 }
 
 let cultosRecorrentesList = [];
@@ -1973,6 +2044,18 @@ async function fetchFormularios() {
       authFetch(`${API_BASE}/api/formularios/consolidacao?_t=${Date.now()}`),
     ]);
     if (currentView !== 'formularios') return;
+    const responses = [
+      { r: rBatismo, name: 'eventos de batismo' },
+      { r: rApres, name: 'eventos de apresentação' },
+      { r: rMembro, name: 'formulários de membros' },
+      { r: rCons, name: 'formulários de consolidação' },
+    ];
+    for (const { r, name } of responses) {
+      if (r && !r.ok && r.status >= 500) {
+        const msg = await extractErrorMessage(r, `Erro ao carregar ${name}.`);
+        showErrorToast(msg);
+      }
+    }
     eventosBatismo = rBatismo.ok ? (await rBatismo.json()) || [] : [];
     eventosApresentacao = rApres.ok ? (await rApres.json()) || [] : [];
     const membrosList = rMembro?.ok ? (await rMembro.json()) || [] : [];
@@ -2320,7 +2403,13 @@ async function fetchPerfil() {
   populatePerfilEstado();
   try {
     const r = await authFetch(`${API_BASE}/api/me/perfil`);
-    if (!r.ok) return;
+    if (!r.ok) {
+      if (r.status >= 500) {
+        const msg = await extractErrorMessage(r, 'Não foi possível carregar seu perfil.');
+        showErrorToast(msg);
+      }
+      return;
+    }
     const perfil = await r.json();
     if (currentView !== 'perfil') return;
     if (perfil) {
@@ -3504,10 +3593,10 @@ async function fetchEscalasCriar() {
       return;
     }
     const data = await r.json().catch(() => null);
-    escalasList = sortEscalasByDataDesc(Array.isArray(data) ? data : []);
+    escalasList = sortByDataSmart(Array.isArray(data) ? data : [], 'data');
     renderEscalasCriar();
     authFetch(`${API_BASE}/api/escalas`).then(r2 => r2.ok ? r2.json() : null).then(full => {
-      if (Array.isArray(full)) { escalasList = sortEscalasByDataDesc(full); renderEscalasCriar(); }
+      if (Array.isArray(full)) { escalasList = sortByDataSmart(full, 'data'); renderEscalasCriar(); }
     }).catch(() => {});
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
@@ -3554,7 +3643,7 @@ async function fetchEscalas() {
       return;
     }
     const data = await r.json().catch(() => null);
-    escalasList = sortEscalasByDataDesc(Array.isArray(data) ? data : []);
+    escalasList = sortByDataSmart(Array.isArray(data) ? data : [], 'data');
     candidaturasAll = [];
     renderEscalasCandidatos();
     if (escalasPreSelectId) {
@@ -3567,7 +3656,7 @@ async function fetchEscalas() {
     authFetch(`${API_BASE}/api/escalas`).then(r2 => r2.ok ? r2.json() : null).then(full => {
       if (Array.isArray(full)) {
         const prevEscalaId = candidaturasAnaliseFilters?.escalaId || document.getElementById('analiseFilterEscala')?.value;
-        escalasList = sortEscalasByDataDesc(full);
+        escalasList = sortByDataSmart(full, 'data');
         renderEscalasCandidatos();
         if (prevEscalaId) {
           const sel = document.getElementById('analiseFilterEscala');
@@ -5386,7 +5475,12 @@ async function handleLogout() {
 }
 
 document.getElementById('btnRefresh')?.addEventListener('click', fetchAllData);
-document.getElementById('btnRetry')?.addEventListener('click', fetchAllData);
+document.getElementById('btnRetry')?.addEventListener('click', () => {
+  if (typeof lastErrorRetryFn === 'function') {
+    try { lastErrorRetryFn(); return; } catch (_) {}
+  }
+  fetchAllData();
+});
 
 document.getElementById('btnKpiToggleMore')?.addEventListener('click', () => {
   const grid = document.getElementById('kpiGridResumo');
@@ -5582,20 +5676,20 @@ document.getElementById('eventosCheckinStatus')?.addEventListener('change', () =
   renderEventosCheckin();
 });
 document.getElementById('eventosCheckinSort')?.addEventListener('change', () => {
-  eventosCheckinSortOrder = document.getElementById('eventosCheckinSort')?.value || 'date-desc';
+  eventosCheckinSortOrder = document.getElementById('eventosCheckinSort')?.value || 'smart';
   resetEventosCheckinListPage();
   renderEventosCheckin();
 });
 document.getElementById('btnClearEventosCheckinFilters')?.addEventListener('click', () => {
   eventosCheckinFilters.search = '';
   eventosCheckinFilters.status = '';
-  eventosCheckinSortOrder = 'date-desc';
+  eventosCheckinSortOrder = 'smart';
   const searchEl = document.getElementById('eventosCheckinSearch');
   const statusEl = document.getElementById('eventosCheckinStatus');
   const sortEl = document.getElementById('eventosCheckinSort');
   if (searchEl) searchEl.value = '';
   if (statusEl) statusEl.value = '';
-  if (sortEl) sortEl.value = 'date-desc';
+  if (sortEl) sortEl.value = 'smart';
   resetEventosCheckinListPage();
   renderEventosCheckin();
 });

@@ -52,16 +52,69 @@ function mapEventoRow(row) {
   };
 }
 
-export async function pgListEscalas(igrejaId, { ativoOnly = false, limit = 80 } = {}) {
-  let sql = 'SELECT id, igreja_id, dados, created_at FROM escalas WHERE igreja_id = $1';
+/**
+ * Lista escalas com ordenação "smart" (futuras crescente, depois passadas decrescente).
+ * - ativoOnly: filtra dados.ativo != false
+ * - nextPerCultoOnly: para cada cultoRecorrenteId, retorna apenas a próxima futura;
+ *   escalas sem cultoRecorrenteId são mantidas individualmente.
+ * - futureOnly: ignora datas anteriores a hoje (Brasília).
+ */
+export async function pgListEscalas(igrejaId, {
+  ativoOnly = false, limit = 200, nextPerCultoOnly = false, futureOnly = false,
+} = {}) {
+  let sql = `SELECT id, igreja_id, dados, created_at FROM escalas WHERE igreja_id = $1`;
   const params = [igrejaId];
   if (ativoOnly) {
     sql += " AND (dados->>'ativo')::boolean IS DISTINCT FROM FALSE";
   }
-  sql += ` ORDER BY (dados->>'data')::timestamptz DESC NULLS LAST, created_at DESC LIMIT $2`;
+  if (futureOnly) {
+    // Compara como YMD em Brasília (TZ fixa no fuso do servidor): pega o início do dia hoje.
+    sql += " AND (dados->>'data')::timestamptz >= (CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo')";
+  }
+  // Smart sort: futuras (asc), depois passadas (desc).
+  sql += `
+    ORDER BY
+      CASE WHEN (dados->>'data')::date >= (CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo')::date THEN 0 ELSE 1 END,
+      CASE WHEN (dados->>'data')::date >= (CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo')::date
+           THEN (dados->>'data')::timestamptz END ASC NULLS LAST,
+      CASE WHEN (dados->>'data')::date <  (CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo')::date
+           THEN (dados->>'data')::timestamptz END DESC NULLS LAST,
+      created_at DESC`;
   params.push(limit);
+  sql += ` LIMIT $${params.length}`;
   const { rows } = await getPostgresPool().query(sql, params);
-  return rows.map(mapEscalaRow);
+  let escalas = rows.map(mapEscalaRow);
+  if (nextPerCultoOnly) {
+    escalas = filterNextPerCulto(escalas);
+  }
+  return escalas;
+}
+
+/**
+ * Mantém apenas a próxima ocorrência futura por cultoRecorrenteId.
+ * Itens sem cultoRecorrenteId são preservados (são escalas/eventos avulsos).
+ * Pressupõe que a lista já está ordenada (futuras asc primeiro).
+ * Exportada para testes; opcionalmente recebe `todayYmd` para determinismo.
+ */
+export function filterNextPerCulto(items, todayYmdArg = null) {
+  const todayYmd = todayYmdArg
+    || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const seenCultos = new Set();
+  const out = [];
+  for (const it of items) {
+    const ymd = it?.data instanceof Date ? it.data.toISOString().slice(0, 10) : (typeof it?.data === 'string' ? it.data.slice(0, 10) : null);
+    const cultoId = it?.cultoRecorrenteId ? String(it.cultoRecorrenteId) : null;
+    const isFuture = ymd && ymd >= todayYmd;
+    if (!cultoId) {
+      if (isFuture) out.push(it);
+      continue;
+    }
+    if (!isFuture) continue;
+    if (seenCultos.has(cultoId)) continue;
+    seenCultos.add(cultoId);
+    out.push(it);
+  }
+  return out;
 }
 
 export async function pgFindEscalasByIds(igrejaId, ids) {
@@ -172,7 +225,15 @@ export async function pgCountCandidaturasByEscala(igrejaId, escalaIds) {
   return new Map(rows.map((r) => [String(r.escala_id), { total: r.total, aprovados: r.aprovados }]));
 }
 
-export async function pgListEventosCheckin(igrejaId, { ativoOnly = false, dataYmd = null } = {}) {
+/**
+ * Lista eventos de check-in com smart sort (futuros asc, depois passados desc).
+ * - nextPerCultoOnly: 1 evento futuro por culto recorrente.
+ * - futureOnly: ignora datas passadas.
+ * - limit: corte de segurança (default 500).
+ */
+export async function pgListEventosCheckin(igrejaId, {
+  ativoOnly = false, dataYmd = null, nextPerCultoOnly = false, futureOnly = false, limit = 500,
+} = {}) {
   let sql = `SELECT id, igreja_id, data, label, ativo, horario_inicio, horario_fim,
     culto_recorrente_id, auto_gerado, criado_por, created_at
     FROM eventos_checkin WHERE igreja_id = $1`;
@@ -181,10 +242,23 @@ export async function pgListEventosCheckin(igrejaId, { ativoOnly = false, dataYm
   if (dataYmd) {
     params.push(dataYmd);
     sql += ` AND data = $${params.length}::date`;
+  } else if (futureOnly) {
+    sql += " AND data >= (CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo')::date";
   }
-  sql += ' ORDER BY data DESC, created_at DESC';
+  sql += `
+    ORDER BY
+      CASE WHEN data >= (CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo')::date THEN 0 ELSE 1 END,
+      CASE WHEN data >= (CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo')::date THEN data END ASC NULLS LAST,
+      CASE WHEN data <  (CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo')::date THEN data END DESC NULLS LAST,
+      created_at DESC`;
+  params.push(limit);
+  sql += ` LIMIT $${params.length}`;
   const { rows } = await getPostgresPool().query(sql, params);
-  return rows.map(mapEventoRow);
+  let eventos = rows.map(mapEventoRow);
+  if (nextPerCultoOnly) {
+    eventos = filterNextPerCulto(eventos);
+  }
+  return eventos;
 }
 
 export async function pgListEventosCheckinHoje(igrejaId) {
