@@ -3709,6 +3709,94 @@ async function fetchCandidaturasPorEscala(escalaId) {
   }
 }
 
+/** Fase 4: acompanhamento da escala (escalados × presentes × faltaram × aguardando) */
+async function fetchAcompanhamentoEscala(escalaId) {
+  if (!authToken || !(escalaId || '').trim()) return;
+  const wrap = document.getElementById('escalaAcompanhamento');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Carregando acompanhamento…</p></div>';
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(escalaId)}/acompanhamento`);
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      wrap.innerHTML = `<div class="filters-card"><p class="auth-subtitle">${escapeHtml(data.error || 'Não foi possível carregar o acompanhamento.')}</p></div>`;
+      return;
+    }
+    const data = await r.json().catch(() => ({}));
+    renderAcompanhamentoEscala(data);
+  } catch (e) {
+    if (e.message === 'AUTH_REQUIRED') return;
+    wrap.innerHTML = `<div class="filters-card"><p class="auth-subtitle">Erro: ${escapeHtml(e.message || 'rede')}.</p></div>`;
+  }
+}
+
+function renderAcompanhamentoEscala(data) {
+  const wrap = document.getElementById('escalaAcompanhamento');
+  if (!wrap) return;
+  const totals = data?.totals || { aprovados: 0, presentes: 0, faltaram: 0, pendentes: 0 };
+  const itens = Array.isArray(data?.itens) ? data.itens : [];
+  if (!itens.length) {
+    wrap.innerHTML = '<div class="filters-card"><p class="auth-subtitle">Nenhuma inscrição nesta escala ainda.</p></div>';
+    return;
+  }
+  const taxa = totals.aprovados > 0 ? Math.round((totals.presentes / totals.aprovados) * 100) : 0;
+  const encerrado = !!data?.evento?.encerrado;
+
+  // KPIs
+  const kpi = (label, v, color, hint) => `
+    <div style="background:#fff;border:1px solid var(--border-color);border-radius:10px;padding:14px 16px;min-width:120px;flex:1">
+      <div style="font-size:.78rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">${escapeHtml(label)}</div>
+      <div style="font-size:1.7rem;font-weight:700;color:${color};margin-top:4px">${v}</div>
+      ${hint ? `<div style="font-size:.78rem;color:var(--text-muted);margin-top:4px">${escapeHtml(hint)}</div>` : ''}
+    </div>`;
+
+  const presencaBadge = (p) => {
+    const m = {
+      presente: ['#dcfce7', '#166534', '#86efac', 'Presente'],
+      faltou:   ['#fee2e2', '#991b1b', '#fca5a5', 'Faltou'],
+      aguardando: ['#fef3c7', '#92400e', '#fcd34d', 'Aguardando'],
+      pendente: ['#e0e7ff', '#3730a3', '#a5b4fc', 'Pendente'],
+    };
+    const [bg, fg, bd, label] = m[p] || m.pendente;
+    return `<span class="status-badge" style="background:${bg};color:${fg};border:1px solid ${bd}">${label}</span>`;
+  };
+
+  const rows = itens.map((it) => {
+    const data = it.inscritoEm ? new Date(it.inscritoEm).toLocaleDateString('pt-BR') : '—';
+    const hora = it.checkinTimestamp ? new Date(it.checkinTimestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+    return `<tr>
+      <td data-label="Voluntário">${escapeHtml(it.nome || '—')}<br><small style="color:var(--text-muted)">${escapeHtml(it.email || '')}</small></td>
+      <td data-label="Ministério">${escapeHtml(it.ministerio || '—')}</td>
+      <td data-label="Inscrito em">${escapeHtml(data)}</td>
+      <td data-label="Presença">${presencaBadge(it.presenca)}${hora ? ` <small style="color:var(--text-muted)">${escapeHtml(hora)}</small>` : ''}</td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div class="filters-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        <h2 style="font-size:1.1rem;margin:0">Acompanhamento</h2>
+        <div style="color:var(--text-muted);font-size:.88em">${encerrado ? 'Evento encerrado' : 'Evento ainda não encerrado'}</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        ${kpi('Aprovados', totals.aprovados, '#1a1a2e', '')}
+        ${kpi('Presentes', totals.presentes, '#166534', `Taxa ${taxa}%`)}
+        ${kpi('Faltaram', totals.faltaram, '#991b1b', '')}
+        ${kpi('Aguardando', totals.pendentes, '#3730a3', '')}
+      </div>
+    </div>
+    <div class="table-card" style="margin-top:12px">
+      <div class="chart-header"><h2>Detalhe por voluntário <span class="list-count">(${itens.length})</span></h2></div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead><tr><th>Voluntário</th><th>Ministério</th><th>Inscrito em</th><th>Presença</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
 /** Mantido para compatibilidade (bulk approve etc) */
 async function fetchCandidaturasAll() {
   const escalaId = candidaturasAnaliseFilters?.escalaId || document.getElementById('analiseFilterEscala')?.value;
@@ -4275,6 +4363,7 @@ function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) 
       </div>
     </div>
   </section>
+  <div id="escalaAcompanhamento" style="margin-bottom:16px"></div>
   <div class="filters-card" id="escalaMinisterioTogglesWrap" style="display:none;margin: 0 0 12px;">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div class="chart-header" style="margin:0">
@@ -4323,8 +4412,14 @@ function bindAnalisePanelEvents(container) {
   document.getElementById('analiseFilterEscala')?.addEventListener('change', () => {
     const escalaId = document.getElementById('analiseFilterEscala')?.value;
     candidaturasAnaliseFilters = { ...candidaturasAnaliseFilters, escalaId };
-    if (escalaId) fetchCandidaturasPorEscala(escalaId);
-    else { candidaturasAll = []; renderAnaliseTab(); }
+    if (escalaId) {
+      fetchCandidaturasPorEscala(escalaId);
+      fetchAcompanhamentoEscala(escalaId);
+    } else {
+      candidaturasAll = []; renderAnaliseTab();
+      const ac = document.getElementById('escalaAcompanhamento');
+      if (ac) ac.innerHTML = '';
+    }
   });
   document.getElementById('btnAnaliseApply')?.addEventListener('click', applyAnaliseFilters);
   document.getElementById('btnAnaliseClear')?.addEventListener('click', () => {
