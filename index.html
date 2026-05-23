@@ -170,7 +170,7 @@
       </div>
 
       <div id="content" style="display: none;">
-        <!-- Filtros (apenas Voluntários — Resumo agora é visão global, sem filtros) -->
+        <!-- Voluntários: uma única view (filtros + KPIs + tabela + gráficos). Antes havia dois blocos com o mesmo data-view, o que quebrava loading/indicadores. -->
         <section class="view" data-view="voluntarios">
           <section class="filters-row">
             <div class="filters-card">
@@ -230,64 +230,7 @@
               </div>
             </div>
           </section>
-        </section>
 
-        <section class="view active" data-view="resumo">
-          <!-- Widget escala em destaque (Fase 5) -->
-          <div id="escalaDestaqueWidget" style="margin-bottom:16px"></div>
-
-          <!-- Cards globais (consumidos de /api/dashboard/resumo) -->
-          <section class="kpi-grid" id="kpiGridResumoGlobal" style="margin-bottom:16px">
-            <div class="kpi-card">
-              <div class="kpi-header"><span class="kpi-label">Pessoas na plataforma</span></div>
-              <div class="kpi-value" id="resumoPessoasTotal">—</div>
-              <div class="kpi-footer">
-                <span id="resumoPessoasVoluntarios">0</span> voluntários ·
-                <span id="resumoPessoasSoCheckin">0</span> só check-in
-              </div>
-            </div>
-            <div class="kpi-card">
-              <div class="kpi-header"><span class="kpi-label">Check-ins ontem</span></div>
-              <div class="kpi-value" id="resumoCkOntem">—</div>
-              <div class="kpi-footer">
-                Semana: <span id="resumoCkSemana">0</span> ·
-                Mês: <span id="resumoCkMes">0</span>
-              </div>
-            </div>
-            <div class="kpi-card">
-              <div class="kpi-header"><span class="kpi-label">Taxa de presença</span></div>
-              <div class="kpi-value" id="resumoPresencaTaxa">—</div>
-              <div class="kpi-footer"><span id="resumoPresencaBase">0</span> últimas escalas encerradas</div>
-            </div>
-            <div class="kpi-card">
-              <div class="kpi-header"><span class="kpi-label">Formulários (mês)</span></div>
-              <div class="kpi-value" id="resumoFormTotal">—</div>
-              <div class="kpi-footer">
-                M:<span id="resumoFormMembros">0</span>
-                · C:<span id="resumoFormConsolidacao">0</span>
-                · B:<span id="resumoFormBatismo">0</span>
-                · A:<span id="resumoFormApresentacao">0</span>
-              </div>
-            </div>
-          </section>
-
-          <!-- Série 7d + Top ministérios -->
-          <section class="charts-row">
-            <div class="chart-card chart-main">
-              <div class="chart-header"><h2>Check-ins · últimos 7 dias</h2></div>
-              <div class="chart-container">
-                <canvas id="resumoCheckins7dChart"></canvas>
-              </div>
-            </div>
-            <div class="chart-card chart-side">
-              <div class="chart-header"><h2>Top ministérios (mês)</h2></div>
-              <div class="chart-container" id="resumoTopMinisteriosBox" style="padding:8px 12px;display:flex;flex-direction:column;gap:8px"></div>
-            </div>
-          </section>
-        </section>
-
-        <!-- Voluntários: KPIs locais + lista + gráficos demográficos -->
-        <section class="view" data-view="voluntarios">
           <!-- KPIs locais da tela (operacionais) -->
           <section class="kpi-grid" id="kpiGridVoluntarios" style="margin-bottom:16px">
             <div class="kpi-card">
@@ -379,6 +322,60 @@
             <div class="chart-card chart-side">
               <div class="chart-header"><h2>Por cidade</h2></div>
               <div class="chart-container"><canvas id="cidadeChart"></canvas></div>
+            </div>
+          </section>
+        </section>
+
+        <section class="view active" data-view="resumo">
+          <!-- Widget escala em destaque (Fase 5) -->
+          <div id="escalaDestaqueWidget" style="margin-bottom:16px"></div>
+
+          <!-- Cards globais (consumidos de /api/dashboard/resumo) -->
+          <section class="kpi-grid" id="kpiGridResumoGlobal" style="margin-bottom:16px">
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Pessoas na plataforma</span></div>
+              <div class="kpi-value" id="resumoPessoasTotal">—</div>
+              <div class="kpi-footer">
+                <span id="resumoPessoasVoluntarios">0</span> voluntários ·
+                <span id="resumoPessoasSoCheckin">0</span> só check-in
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Check-ins ontem</span></div>
+              <div class="kpi-value" id="resumoCkOntem">—</div>
+              <div class="kpi-footer">
+                Semana: <span id="resumoCkSemana">0</span> ·
+                Mês: <span id="resumoCkMes">0</span>
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Taxa de presença</span></div>
+              <div class="kpi-value" id="resumoPresencaTaxa">—</div>
+              <div class="kpi-footer"><span id="resumoPresencaBase">0</span> últimas escalas encerradas</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Formulários (mês)</span></div>
+              <div class="kpi-value" id="resumoFormTotal">—</div>
+              <div class="kpi-footer">
+                M:<span id="resumoFormMembros">0</span>
+                · C:<span id="resumoFormConsolidacao">0</span>
+                · B:<span id="resumoFormBatismo">0</span>
+                · A:<span id="resumoFormApresentacao">0</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- Série 7d + Top ministérios -->
+          <section class="charts-row">
+            <div class="chart-card chart-main">
+              <div class="chart-header"><h2>Check-ins · últimos 7 dias</h2></div>
+              <div class="chart-container">
+                <canvas id="resumoCheckins7dChart"></canvas>
+              </div>
+            </div>
+            <div class="chart-card chart-side">
+              <div class="chart-header"><h2>Top ministérios (mês)</h2></div>
+              <div class="chart-container" id="resumoTopMinisteriosBox" style="padding:8px 12px;display:flex;flex-direction:column;gap:8px"></div>
             </div>
           </section>
         </section>
@@ -1745,6 +1742,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.4"></script>
+  <script defer src="app.js?v=1.6.5"></script>
 </body>
 </html>

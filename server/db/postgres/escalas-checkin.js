@@ -222,6 +222,18 @@ export async function pgCountAprovadosByMinisterio(igrejaId, escalaId) {
   return out;
 }
 
+/**
+ * Remove a escala (candidaturas e linhas de escala_inscricoes somem por ON DELETE CASCADE).
+ * Uso interno ao excluir culto recorrente e em scripts — não usar na rota admin sem confirmação.
+ */
+export async function pgHardDeleteEscala(id, igrejaId) {
+  const { rowCount } = await getPostgresPool().query(
+    'DELETE FROM escalas WHERE id = $1 AND igreja_id = $2',
+    [id, igrejaId],
+  );
+  return (rowCount || 0) > 0;
+}
+
 export async function pgDeleteEscala(id, igrejaId) {
   const { rows } = await getPostgresPool().query(
     'SELECT COUNT(*)::int AS c FROM candidaturas WHERE escala_id = $1 AND igreja_id = $2',

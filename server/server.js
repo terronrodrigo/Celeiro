@@ -2061,6 +2061,7 @@ app.delete('/api/cultos-recorrentes/:id', requireAuth, resolveTenant, requireAdm
     if (!isPostgres()) return sendError(res, 503, 'Cultos recorrentes disponível em modo PostgreSQL.');
     const ok = await pgDeleteCultoRecorrente(req.params.id, req.tenantIgrejaId);
     if (!ok) return sendError(res, 404, 'Culto não encontrado.');
+    invalidateCache();
     res.json({ ok: true });
   } catch (err) {
     console.error(err);

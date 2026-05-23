@@ -393,10 +393,15 @@ function updateAuthUi() {
   if (navVoluntario) navVoluntario.style.display = isLogged && isVoluntario ? 'flex' : 'none';
   const navAdminCheckinMin = document.getElementById('navAdminCheckinMinisterio');
   if (navAdminCheckinMin) navAdminCheckinMin.style.display = isLogged && isAdmin && hasMinisterios ? '' : 'none';
-  if (searchBox) searchBox.style.display = isLogged && isAdmin ? 'flex' : 'none';
+  // Mesma regra de setView(): busca por nome/email na view Voluntários para admin e líderes (não só admin).
+  if (searchBox) {
+    const showSearch = isLogged && (isAdmin || isLider || authRole === 'lider') && currentView === 'voluntarios';
+    searchBox.style.display = showSearch ? 'flex' : 'none';
+  }
   const btnRefresh = document.getElementById('btnRefresh');
-  const filtersSection = document.querySelector('.view[data-view="resumo voluntarios"]');
-  if (btnRefresh && filtersSection) btnRefresh.style.display = isLogged && (isAdmin || isLider || authRole === 'lider') ? '' : 'none';
+  if (btnRefresh) {
+    btnRefresh.style.display = isLogged && (isAdmin || isLider || authRole === 'lider') ? '' : 'none';
+  }
   const cadastroLinkSection = document.getElementById('cadastroLinkSection');
   if (cadastroLinkSection) cadastroLinkSection.style.display = isLogged && isAdmin ? '' : 'none';
   const brdidSection = document.getElementById('brdidVerificacaoSection');
@@ -2773,9 +2778,9 @@ function refreshVoluntariosView() {
 }
 
 function render() {
+  updateFilters();
   const filtered = getFilteredVoluntarios();
   updateKpis(filtered);
-  updateFilters();
   renderCharts(filtered);
   renderTable(filtered);
   updateSelectedCount();
@@ -2977,6 +2982,12 @@ async function renderCharts(filteredInput) {
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
+        onClick: (_, elements) => {
+          const el = elements?.[0];
+          if (!el) return;
+          const label = topCidades[el.index]?.label;
+          toggleFilter('cidade', label);
+        },
         scales: {
           x: { beginAtZero: true, grid: { color: 'rgba(42,42,42,0.5)' } },
           y: { grid: { display: false } },
@@ -3063,20 +3074,22 @@ function getFilteredVoluntarios() {
       if (!matchText) return false;
     }
     if (filters.ministerio) {
-      const mins = ministeriosListFromVolApi(v);
-      if (!mins.includes(filters.ministerio)) return false;
+      const want = String(filters.ministerio).trim();
+      const mins = ministeriosListFromVolApi(v).map((x) => String(x).trim());
+      if (!mins.includes(want)) return false;
     }
     if (filters.disponibilidade) {
       const disp = (v.disponibilidade || '').split(',').map(d => d.trim());
-      if (!disp.includes(filters.disponibilidade)) return false;
+      const want = String(filters.disponibilidade).trim();
+      if (!disp.includes(want)) return false;
     }
     if (filters.estado) {
       const estado = String(v.estado || '').trim();
-      if (estado !== filters.estado) return false;
+      if (estado !== String(filters.estado).trim()) return false;
     }
     if (filters.cidade) {
       const cidade = String(v.cidade || '').trim();
-      if (cidade !== filters.cidade) return false;
+      if (cidade !== String(filters.cidade).trim()) return false;
     }
     if (filters.comCheckin) {
       const email = (v.email || '').toLowerCase().trim();
@@ -3387,7 +3400,7 @@ function populateSelect(selectEl, items, placeholder) {
 function updateFilters() {
   const vol = Array.isArray(voluntarios) ? voluntarios : [];
   const ministerios = (countByMultiValueField(vol, 'ministerio') || []).map(([label]) => (label || '').trim()).filter(Boolean);
-  const disp = (countByMultiValueField(vol, 'disponibilidade') || []).map(([label]) => label).filter(Boolean);
+  const disp = (countByMultiValueField(vol, 'disponibilidade') || []).map(([label]) => String(label || '').trim()).filter(Boolean);
   const estados = countByField(vol, 'estado').map(([label]) => label);
   estados.sort((a, b) => {
     const aIsUF = a && a.length === 2;
@@ -3399,9 +3412,17 @@ function updateFilters() {
   });
   const cidades = countByField(vol, 'cidade').map(([label]) => label).sort((a, b) => (a || '').localeCompare(b || ''));
   populateSelect(filterMinisterio, ministerios, 'Todos os ministérios');
+  const mWant = String(filters.ministerio || '').trim();
+  if (mWant && !ministerios.some((x) => String(x).trim() === mWant)) filters.ministerio = '';
   populateSelect(filterDisp, disp, 'Todas as disponibilidades');
+  const dWant = String(filters.disponibilidade || '').trim();
+  if (dWant && !disp.some((x) => String(x).trim() === dWant)) filters.disponibilidade = '';
   populateSelect(filterEstado, estados, 'Todos os estados');
+  const eWant = String(filters.estado || '').trim();
+  if (eWant && !estados.some((x) => String(x).trim() === eWant)) filters.estado = '';
   populateSelect(filterCidade, cidades, 'Todas as cidades');
+  const cWant = String(filters.cidade || '').trim();
+  if (cWant && !cidades.some((x) => String(x).trim() === cWant)) filters.cidade = '';
   updateFilterUi();
 }
 
@@ -3473,7 +3494,7 @@ function clearFilters() {
   filters.cidade = '';
   filters.comCheckin = '';
   voluntariosPageOffset = 0;
-  if (filterMinisterio) filterMinisterio.value = '';
+  if (searchInput) searchInput.value = '';
   refreshVoluntariosView();
 }
 

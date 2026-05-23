@@ -164,12 +164,63 @@ export async function pgUpdateCultoRecorrente(id, igrejaId, patch) {
   return pgFindCultoRecorrente(id, igrejaId);
 }
 
+/**
+ * Remove o culto recorrente e tudo que foi gerado a partir dele:
+ * escalas (inclui candidaturas por CASCADE), eventos de check-in auto-gerados
+ * ligados ao culto, e registros em culto_ocorrencias (CASCADE ao culto).
+ */
 export async function pgDeleteCultoRecorrente(id, igrejaId) {
-  const { rowCount } = await getPostgresPool().query(
-    'DELETE FROM cultos_recorrentes WHERE id = $1 AND igreja_id = $2',
-    [id, igrejaId],
-  );
-  return rowCount > 0;
+  const pool = getPostgresPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: occs } = await client.query(
+      `SELECT DISTINCT escala_id, evento_checkin_id
+       FROM culto_ocorrencias WHERE culto_recorrente_id = $1 AND igreja_id = $2`,
+      [id, igrejaId],
+    );
+
+    const escalaIds = new Set();
+    const eventoIds = new Set();
+
+    occs.forEach((o) => {
+      if (o.escala_id) escalaIds.add(o.escala_id);
+      if (o.evento_checkin_id) eventoIds.add(o.evento_checkin_id);
+    });
+
+    const { rows: extraEscalas } = await client.query(
+      `SELECT id FROM escalas WHERE igreja_id = $1 AND (dados->>'cultoRecorrenteId') = $2`,
+      [igrejaId, id],
+    );
+    extraEscalas.forEach((r) => escalaIds.add(r.id));
+
+    const { rows: extraEvt } = await client.query(
+      `SELECT id FROM eventos_checkin WHERE igreja_id = $1 AND culto_recorrente_id = $2`,
+      [igrejaId, id],
+    );
+    extraEvt.forEach((r) => eventoIds.add(r.id));
+
+    for (const eid of escalaIds) {
+      await client.query('DELETE FROM escalas WHERE id = $1 AND igreja_id = $2', [eid, igrejaId]);
+    }
+    for (const evid of eventoIds) {
+      await client.query('DELETE FROM eventos_checkin WHERE id = $1 AND igreja_id = $2', [evid, igrejaId]);
+    }
+
+    const { rowCount } = await client.query(
+      'DELETE FROM cultos_recorrentes WHERE id = $1 AND igreja_id = $2',
+      [id, igrejaId],
+    );
+
+    await client.query('COMMIT');
+    return (rowCount || 0) > 0;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 async function findOcorrencia(cultoId, dataYmd) {
