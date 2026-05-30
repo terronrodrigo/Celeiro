@@ -4923,22 +4923,84 @@ app.put('/api/escalas/:id', requireAuth, resolveTenant, requireAdmin, async (req
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
-// DELETE /api/escalas/:id — exclui escala (admin only, só se sem candidaturas)
+// DELETE /api/escalas/:id — exclui escala (admin). Com inscrições: redirectToEscalaId ou forceWithoutRedirect.
 app.delete('/api/escalas/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
+    const body = req.body || {};
+    const redirectToEscalaId = (body.redirectToEscalaId || req.query.redirectTo || '').toString().trim() || null;
+    const forceWithoutRedirect = body.forceWithoutRedirect === true
+      || req.query.force === '1'
+      || req.query.force === 'true';
+
     if (isPostgres()) {
-      const r = await pgDeleteEscala(req.params.id, req.tenantIgrejaId);
-      if (!r.deleted && r.candidaturas > 0) {
-        return sendError(res, 400, `Esta escala tem ${r.candidaturas} candidatura(s). Remova-as antes de excluir.`);
+      const r = await pgDeleteEscala(req.params.id, req.tenantIgrejaId, {
+        redirectToEscalaId,
+        forceWithoutRedirect,
+      });
+      if (r.notFound) return sendError(res, 404, 'Escala não encontrada.');
+      if (r.error) return sendError(res, 400, r.error);
+      if (!r.deleted && r.needRedirect) {
+        return res.status(409).json({
+          error: `Esta escala tem ${r.candidaturas} candidatura(s). Escolha uma escala futura ativa para redirecionar ou confirme exclusão sem redirecionar.`,
+          needRedirect: true,
+          candidaturas: r.candidaturas,
+        });
       }
       if (!r.deleted) return sendError(res, 404, 'Escala não encontrada.');
-      return res.json({ ok: true });
+      invalidateCache();
+      return res.json({
+        ok: true,
+        moved: r.moved || 0,
+        redirectedTo: r.redirectedTo || null,
+      });
     }
-    const count = await Candidatura.countDocuments({ escalaId: req.params.id, ...tQ(req) });
-    if (count > 0) return sendError(res, 400, `Esta escala tem ${count} candidatura(s). Remova-as antes de excluir.`);
-    const escala = await Escala.findOneAndDelete({ _id: req.params.id, ...tQ(req) });
+
+    const escalaFilter = { _id: req.params.id, ...tQ(req) };
+    const escala = await Escala.findOne(escalaFilter).lean();
     if (!escala) return sendError(res, 404, 'Escala não encontrada.');
-    res.json({ ok: true });
+
+    const count = await Candidatura.countDocuments({ escalaId: req.params.id, ...tQ(req) });
+    if (count > 0 && !redirectToEscalaId && !forceWithoutRedirect) {
+      return res.status(409).json({
+        error: `Esta escala tem ${count} candidatura(s). Escolha uma escala futura ativa para redirecionar ou confirme exclusão sem redirecionar.`,
+        needRedirect: true,
+        candidaturas: count,
+      });
+    }
+
+    if (count > 0 && redirectToEscalaId) {
+      const target = await Escala.findOne({ _id: redirectToEscalaId, ...tQ(req) }).lean();
+      const hoje = getHojeDateString();
+      const ymd = escalaDataToYMD(target?.data);
+      if (!target) return sendError(res, 400, 'Escala de destino não encontrada.');
+      if (String(target._id) === String(req.params.id)) {
+        return sendError(res, 400, 'Escolha uma escala diferente da que será excluída.');
+      }
+      if (target.ativo === false) {
+        return sendError(res, 400, 'A escala de destino precisa estar ativa (inscrições abertas).');
+      }
+      if (!ymd || ymd < hoje) {
+        return sendError(res, 400, 'A escala de destino precisa ser futura (data de hoje ou posterior).');
+      }
+      const sources = await Candidatura.find({ escalaId: req.params.id, ...tQ(req) }).select('email').lean();
+      for (const c of sources) {
+        const em = (c.email || '').toLowerCase().trim();
+        const dup = await Candidatura.findOne({
+          escalaId: redirectToEscalaId,
+          email: em,
+          ...tQ(req),
+        }).select('_id').lean();
+        if (dup) {
+          await Candidatura.deleteOne({ _id: c._id, ...tQ(req) });
+        } else {
+          await Candidatura.updateOne({ _id: c._id, ...tQ(req) }, { escalaId: redirectToEscalaId });
+        }
+      }
+    }
+
+    await Escala.findOneAndDelete(escalaFilter);
+    invalidateCache();
+    res.json({ ok: true, redirectedTo: redirectToEscalaId || null });
   } catch (err) {
     console.error('escalas DELETE:', err?.message || err);
     sendError(res, 500, err.message || 'Erro ao excluir escala.');

@@ -1669,6 +1669,43 @@
     </div>
   </div>
 
+  <!-- Modal: Excluir escala (com redirecionamento de inscrições) -->
+  <div id="modalExcluirEscala" class="modal" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Excluir escala</h2>
+        <button type="button" class="modal-close" id="modalExcluirEscalaClose">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="modalExcluirEscalaMsg" class="auth-subtitle" style="margin-bottom:16px"></p>
+        <input type="hidden" id="excluirEscalaId">
+        <div class="form-group" id="excluirEscalaRedirectGroup">
+          <label for="excluirEscalaRedirectSelect">Redirecionar inscrições para</label>
+          <select id="excluirEscalaRedirectSelect">
+            <option value="">Selecione uma escala futura ativa…</option>
+          </select>
+          <small style="color:var(--text-muted);display:block;margin-top:6px">
+            Candidaturas (pendentes e aprovadas) serão movidas. Quem já estiver inscrito na escala de destino permanece lá.
+          </small>
+        </div>
+        <div class="form-group" id="excluirEscalaSemDestino" style="display:none">
+          <p class="auth-subtitle" style="color:var(--warning,#eab308)">
+            Não há outra escala futura ativa. Crie uma nova escala ou exclua sem redirecionar (as inscrições serão removidas).
+          </p>
+        </div>
+        <label class="checkbox-label" style="margin-top:12px" id="excluirEscalaForceLabel">
+          <input type="checkbox" id="excluirEscalaForce">
+          Excluir sem redirecionar (apaga todas as inscrições desta escala)
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="modalExcluirEscalaCancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btnConfirmExcluirEscala" style="background:var(--danger,#ef4444);border-color:var(--danger,#ef4444)">Excluir escala</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: Copiar link por ministério -->
   <div id="modalCopiarLinkMinisterio" class="modal" aria-hidden="true">
     <div class="modal-backdrop"></div>
@@ -1742,6 +1779,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.5"></script>
+  <script defer src="app.js?v=1.6.6"></script>
 </body>
 </html>

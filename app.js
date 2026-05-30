@@ -5355,12 +5355,111 @@ async function toggleEscalaAtivo(id) {
 
 async function excluirEscala(id) {
   const escala = escalasList.find(e => String(e._id) === id);
+  const total = Number(escala?.totalCandidaturas) || 0;
+  if (total > 0) {
+    openModalExcluirEscala(id);
+    return;
+  }
   if (!confirm(`Excluir a escala "${(escala?.nome || '').replace(/"/g, '')}"? Esta ação não pode ser desfeita.`)) return;
+  await executarExclusaoEscala(id, {});
+}
+
+function listEscalasFuturasAtivas(excludeId) {
+  const hoje = getHojeDateString();
+  return (Array.isArray(escalasList) ? escalasList : []).filter((e) => {
+    if (String(e._id) === String(excludeId)) return false;
+    if (e.ativo === false) return false;
+    const ymd = escalaDataToYMD(e.data);
+    return ymd && ymd >= hoje;
+  });
+}
+
+function openModalExcluirEscala(id) {
+  const escala = escalasList.find(e => String(e._id) === id);
+  const modal = document.getElementById('modalExcluirEscala');
+  if (!modal || !escala) return;
+  const total = Number(escala.totalCandidaturas) || 0;
+  const msg = document.getElementById('modalExcluirEscalaMsg');
+  const idEl = document.getElementById('excluirEscalaId');
+  const sel = document.getElementById('excluirEscalaRedirectSelect');
+  const redirectGroup = document.getElementById('excluirEscalaRedirectGroup');
+  const semDestino = document.getElementById('excluirEscalaSemDestino');
+  const forceCb = document.getElementById('excluirEscalaForce');
+  if (idEl) idEl.value = id;
+  if (msg) {
+    msg.textContent = `A escala "${escala.nome || '—'}" tem ${total} candidatura(s). Você pode mover as inscrições para outra escala futura ativa antes de excluir.`;
+  }
+  const destinos = listEscalasFuturasAtivas(id);
+  if (sel) {
+    sel.innerHTML = destinos.length
+      ? '<option value="">Selecione uma escala…</option>'
+        + destinos.map((e) => {
+          const data = formatEscalaDateOnly(e.data);
+          return `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome || '—')} — ${escapeHtml(data)}</option>`;
+        }).join('')
+      : '<option value="">Nenhuma escala futura ativa disponível</option>';
+    sel.disabled = destinos.length === 0;
+  }
+  if (redirectGroup) redirectGroup.style.display = destinos.length ? '' : 'none';
+  if (semDestino) semDestino.style.display = destinos.length ? 'none' : '';
+  if (forceCb) forceCb.checked = destinos.length === 0;
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeModalExcluirEscala() {
+  const modal = document.getElementById('modalExcluirEscala');
+  if (!modal) return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+}
+
+async function executarExclusaoEscala(id, { redirectToEscalaId, forceWithoutRedirect } = {}) {
   try {
-    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ redirectToEscalaId: redirectToEscalaId || undefined, forceWithoutRedirect: !!forceWithoutRedirect }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 409 && data.needRedirect) {
+      openModalExcluirEscala(id);
+      return;
+    }
+    if (!r.ok) throw new Error(data.error || 'Falha ao excluir escala.');
+    closeModalExcluirEscala();
+    const moved = Number(data.moved) || 0;
+    if (data.redirectedTo && moved > 0) {
+      alert(`${moved} inscrição(ões) redirecionada(s). Escala excluída.`);
+    } else if (data.redirectedTo) {
+      alert('Escala excluída. Inscrições já existentes na escala de destino foram mantidas.');
+    }
     await fetchEscalasCriar();
-  } catch (e) { alert(e.message || 'Erro ao excluir escala.'); }
+  } catch (e) {
+    alert(e.message || 'Erro ao excluir escala.');
+  }
+}
+
+async function confirmarExclusaoEscalaComOpcoes() {
+  const id = (document.getElementById('excluirEscalaId')?.value || '').trim();
+  if (!id) return;
+  const escala = escalasList.find(e => String(e._id) === id);
+  const force = document.getElementById('excluirEscalaForce')?.checked === true;
+  const redirectToEscalaId = (document.getElementById('excluirEscalaRedirectSelect')?.value || '').trim();
+  const total = Number(escala?.totalCandidaturas) || 0;
+  if (total > 0 && !force && !redirectToEscalaId) {
+    alert('Selecione uma escala de destino ou marque "Excluir sem redirecionar".');
+    return;
+  }
+  if (force) {
+    if (!confirm(`Excluir "${(escala?.nome || '').replace(/"/g, '')}" e remover ${total} inscrição(ões)? Esta ação não pode ser desfeita.`)) return;
+    await executarExclusaoEscala(id, { forceWithoutRedirect: true });
+    return;
+  }
+  const dest = escalasList.find(e => String(e._id) === redirectToEscalaId);
+  const destLabel = dest ? `${dest.nome} (${formatEscalaDateOnly(dest.data)})` : 'escala selecionada';
+  if (!confirm(`Excluir "${(escala?.nome || '').replace(/"/g, '')}" e mover ${total} inscrição(ões) para "${destLabel}"?`)) return;
+  await executarExclusaoEscala(id, { redirectToEscalaId });
 }
 
 function openModalEditarEscala(id) {
@@ -5456,6 +5555,16 @@ document.getElementById('formEditarEscala')?.addEventListener('submit', async (e
 });
 document.getElementById('modalNovaEscala')?.querySelector('.modal-backdrop')?.addEventListener('click', () => { document.getElementById('modalNovaEscala')?.classList.remove('open'); });
 document.getElementById('modalEditarEscala')?.querySelector('.modal-backdrop')?.addEventListener('click', () => { document.getElementById('modalEditarEscala')?.classList.remove('open'); });
+
+document.getElementById('btnConfirmExcluirEscala')?.addEventListener('click', () => { void confirmarExclusaoEscalaComOpcoes(); });
+['modalExcluirEscalaClose', 'modalExcluirEscalaCancel'].forEach((id) => {
+  document.getElementById(id)?.addEventListener('click', closeModalExcluirEscala);
+});
+document.getElementById('modalExcluirEscala')?.querySelector('.modal-backdrop')?.addEventListener('click', closeModalExcluirEscala);
+document.getElementById('excluirEscalaForce')?.addEventListener('change', (ev) => {
+  const sel = document.getElementById('excluirEscalaRedirectSelect');
+  if (sel) sel.disabled = ev.target.checked;
+});
 
 let _modalCopiarLinkEscalaId = null;
 let _modalCopiarLinkMinisterios = [];

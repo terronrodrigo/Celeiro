@@ -234,18 +234,95 @@ export async function pgHardDeleteEscala(id, igrejaId) {
   return (rowCount || 0) > 0;
 }
 
-export async function pgDeleteEscala(id, igrejaId) {
-  const { rows } = await getPostgresPool().query(
+export async function pgDeleteEscala(id, igrejaId, opts = {}) {
+  const redirectToEscalaId = (opts.redirectToEscalaId || '').trim() || null;
+  const forceWithoutRedirect = opts.forceWithoutRedirect === true;
+  const pool = getPostgresPool();
+
+  const { rows: srcRows } = await pool.query(
+    'SELECT id FROM escalas WHERE id = $1 AND igreja_id = $2 LIMIT 1',
+    [id, igrejaId],
+  );
+  if (!srcRows[0]) return { deleted: false, candidaturas: 0, notFound: true };
+
+  const { rows } = await pool.query(
     'SELECT COUNT(*)::int AS c FROM candidaturas WHERE escala_id = $1 AND igreja_id = $2',
     [id, igrejaId],
   );
   const count = rows[0]?.c || 0;
-  if (count > 0) return { deleted: false, candidaturas: count };
-  const { rowCount } = await getPostgresPool().query(
-    'DELETE FROM escalas WHERE id = $1 AND igreja_id = $2',
-    [id, igrejaId],
+
+  if (count > 0 && !redirectToEscalaId && !forceWithoutRedirect) {
+    return { deleted: false, candidaturas: count, needRedirect: true };
+  }
+
+  if (count > 0 && redirectToEscalaId) {
+    const targetCheck = pgValidateEscalaRedirectTarget(
+      await pgFindEscalaById(redirectToEscalaId, igrejaId),
+      id,
+    );
+    if (!targetCheck.ok) return { deleted: false, candidaturas: count, error: targetCheck.error };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let moved = 0;
+    if (count > 0 && redirectToEscalaId) {
+      moved = await pgMoveCandidaturasBetweenEscalas(client, id, redirectToEscalaId, igrejaId);
+    }
+    const { rowCount } = await client.query(
+      'DELETE FROM escalas WHERE id = $1 AND igreja_id = $2',
+      [id, igrejaId],
+    );
+    await client.query('COMMIT');
+    return {
+      deleted: (rowCount || 0) > 0,
+      candidaturas: count,
+      moved,
+      redirectedTo: redirectToEscalaId || null,
+    };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/** Escala de destino: ativa, data ≥ hoje (Brasília), diferente da origem. */
+export function pgValidateEscalaRedirectTarget(target, sourceId) {
+  if (!target) return { ok: false, error: 'Escala de destino não encontrada.' };
+  if (String(target._id) === String(sourceId)) {
+    return { ok: false, error: 'Escolha uma escala diferente da que será excluída.' };
+  }
+  if (target.ativo === false) {
+    return { ok: false, error: 'A escala de destino precisa estar ativa (inscrições abertas).' };
+  }
+  const ymd = escalaDataToYMD(target.data);
+  const hoje = getHojeDateString();
+  if (!ymd || ymd < hoje) {
+    return { ok: false, error: 'A escala de destino precisa ser futura (data de hoje ou posterior).' };
+  }
+  return { ok: true };
+}
+
+async function pgMoveCandidaturasBetweenEscalas(client, sourceId, targetId, igrejaId) {
+  await client.query(
+    `DELETE FROM candidaturas c_src
+     WHERE c_src.escala_id = $1 AND c_src.igreja_id = $3
+       AND EXISTS (
+         SELECT 1 FROM candidaturas c_tgt
+         WHERE c_tgt.escala_id = $2 AND c_tgt.igreja_id = $3
+           AND LOWER(c_tgt.dados->>'email') = LOWER(c_src.dados->>'email')
+       )`,
+    [sourceId, targetId, igrejaId],
   );
-  return { deleted: rowCount > 0, candidaturas: 0 };
+  const { rowCount } = await client.query(
+    `UPDATE candidaturas SET escala_id = $2
+     WHERE escala_id = $1 AND igreja_id = $3`,
+    [sourceId, targetId, igrejaId],
+  );
+  return rowCount || 0;
 }
 
 export async function pgGetEscalaInscricaoStatus(escalaId, ministerio) {
