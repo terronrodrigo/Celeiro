@@ -1816,6 +1816,56 @@ function renderEventosCheckin() {
   updateEventosCheckinSelectionUi();
 }
 
+async function purgeEventosCheckinOrfaos() {
+  if (!authToken) return;
+  const btn = document.getElementById('btnPurgeEventosCheckinOrfaos');
+  if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
+  try {
+    const preview = await authFetch(`${API_BASE}/api/eventos-checkin/purge-orfaos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun: true }),
+    });
+    const prev = await preview.json().catch(() => ({}));
+    if (!preview.ok) throw new Error(prev.error || 'Falha ao verificar órfãos.');
+    const n = Number(prev.orphansCount) || 0;
+    const ck = Number(prev.checkinsCount) || 0;
+    if (!n) {
+      showToast('Nenhum evento órfão (sem escala ativa).');
+      return;
+    }
+    const sample = (prev.sample || []).slice(0, 5).map((o) => {
+      const d = o.data ? new Date(o.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
+      return `• ${d} — ${(o.label || 'sem nome').slice(0, 40)}`;
+    }).join('\n');
+    const extra = sample ? `\n\nExemplos:\n${sample}${n > 5 ? `\n… e mais ${n - 5}` : ''}` : '';
+    if (!confirm(
+      `Encontrados ${n} evento(s) de check-in sem escala ativa vinculada`
+      + (ck ? ` (${ck} registro(s) de presença serão removidos)` : '')
+      + '.\n\nExcluir todos? Esta ação não pode ser desfeita.'
+      + extra,
+    )) return;
+    if (btn) btn.textContent = 'Limpando…';
+    const r = await authFetch(`${API_BASE}/api/eventos-checkin/purge-orfaos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun: false }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Falha ao limpar.');
+    showToast(data.message || 'Limpeza concluída.');
+    selectedEventoCheckinIds.clear();
+    await fetchEventosCheckin();
+  } catch (err) {
+    alert(err.message || 'Erro ao limpar órfãos.');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Limpar órfãos';
+    }
+  }
+}
+
 async function fetchEventosCheckin() {
   if (!authToken) return;
   try {
@@ -6638,6 +6688,9 @@ document.getElementById('selectAllEventosCheckin')?.addEventListener('change', (
 });
 document.getElementById('btnExcluirEventosCheckinSelecionados')?.addEventListener('click', () => {
   excluirEventosCheckinSelecionados();
+});
+document.getElementById('btnPurgeEventosCheckinOrfaos')?.addEventListener('click', () => {
+  purgeEventosCheckinOrfaos();
 });
 checkinMinisterioSort?.addEventListener('change', () => {
   checkinMinisterioSortOrder = checkinMinisterioSort.value || 'date-desc';

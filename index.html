@@ -524,6 +524,9 @@
               <button type="button" class="btn btn-ghost" id="btnExcluirEventosCheckinSelecionados" disabled style="color:var(--danger,#ef4444)">
                 Excluir selecionados (<span id="eventosCheckinSelectedCount">0</span>)
               </button>
+              <button type="button" class="btn btn-ghost" id="btnPurgeEventosCheckinOrfaos" title="Remove eventos de check-in sem escala ativa vinculada">
+                Limpar órfãos
+              </button>
             </div>
           </section>
           <section class="filters-row">
@@ -1783,6 +1786,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.9"></script>
+  <script defer src="app.js?v=1.6.10"></script>
 </body>
 </html>

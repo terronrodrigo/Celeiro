@@ -62,6 +62,8 @@ import {
   pgListAcompanhamentoEscala, pgBackfillCheckinCandidaturas, pgAutoMarcarFaltas,
   pgListMinhasCandidaturasParaEscalas, pgFindEventosCheckinByIds, pgListMeusCheckins,
   pgClearEventoAberturaEmailEnviado,
+  pgListEventosCheckinSemEscalaAtiva,
+  pgPurgeEventosCheckinSemEscalaAtiva,
 } from './db/postgres/escalas-checkin.js';
 import { buildCheckinPublicUrl, resolveAppBaseUrl } from './lib/checkin-public-url.js';
 import { generateCheckinQrPng } from './lib/checkin-qrcode.js';
@@ -2300,6 +2302,43 @@ app.post('/api/eventos-checkin/:id/enviar-email-abertura', requireAuth, resolveT
   } catch (err) {
     console.error('enviar-email-abertura:', err?.message || err);
     sendError(res, 500, err.message || 'Erro ao enviar emails.');
+  }
+});
+
+// POST /api/eventos-checkin/purge-orfaos — remove eventos sem escala ativa (+ checkins)
+app.post('/api/eventos-checkin/purge-orfaos', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const dryRun = req.body?.dryRun !== false && req.query?.dryRun !== 'false';
+    if (dryRun) {
+      const orphans = await pgListEventosCheckinSemEscalaAtiva(req.tenantIgrejaId);
+      const checkinsCount = orphans.reduce((s, o) => s + (o.checkinsCount || 0), 0);
+      return res.json({
+        ok: true,
+        dryRun: true,
+        orphansCount: orphans.length,
+        checkinsCount,
+        sample: orphans.slice(0, 15).map((o) => ({
+          _id: o._id,
+          label: o.label,
+          data: o.data,
+          checkinsCount: o.checkinsCount,
+        })),
+      });
+    }
+    const r = await pgPurgeEventosCheckinSemEscalaAtiva(req.tenantIgrejaId, { dryRun: false });
+    invalidateCache();
+    res.json({
+      ok: true,
+      deleted: r.deleted,
+      orphansCount: r.orphans?.length || 0,
+      message: r.deleted.eventos
+        ? `${r.deleted.eventos} evento(s) e ${r.deleted.checkins} registro(s) de presença removidos.`
+        : 'Nenhum evento órfão encontrado.',
+    });
+  } catch (err) {
+    console.error('eventos-checkin purge-orfaos:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao limpar eventos órfãos.');
   }
 });
 
