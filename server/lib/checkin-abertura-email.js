@@ -73,11 +73,15 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
     eventoId: evento._id,
     igrejaSlug: igreja?.slug || 'celeiro-sp',
   });
-  const qrDataUrl = await generateCheckinQrDataUrl(checkinUrl, { size: 400 });
   const ymd = escalaDataToYMD(evento.data);
   const eventoDataLabel = ymd ? formatDataPtBr(ymd) : '';
-  const horarioTexto = horarioCheckinLabel(evento);
   const eventoLabel = (evento.label || '').trim() || `Culto ${eventoDataLabel}`;
+  const qrDataUrl = await generateCheckinQrDataUrl(checkinUrl, {
+    size: 400,
+    title: eventoLabel,
+    subtitle: eventoDataLabel ? `Check-in · ${eventoDataLabel}` : 'Check-in de presença',
+  });
+  const horarioTexto = horarioCheckinLabel(evento);
 
   const voluntarios = await pgListVoluntarios(evento.igrejaId);
   const byEmail = new Map();

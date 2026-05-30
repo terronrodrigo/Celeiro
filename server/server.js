@@ -2254,7 +2254,13 @@ app.get('/api/eventos-checkin/:id/qr.png', requireAuth, resolveTenant, requireAd
       eventoId: evento._id,
       igrejaSlug: slug,
     });
-    const png = await generateCheckinQrPng(checkinUrl, { size: 640 });
+    const ymd = escalaDataToYMD(evento.data);
+    const eventoDataLabel = ymd ? formatDataPtBr(ymd) : '';
+    const eventoLabel = (evento.label || '').trim() || (eventoDataLabel ? `Culto ${eventoDataLabel}` : 'Check-in');
+    const png = await generateCheckinQrPng(checkinUrl, {
+      title: eventoLabel,
+      subtitle: eventoDataLabel ? `Check-in · ${eventoDataLabel}` : 'Check-in de presença',
+    });
     const safeLabel = ((evento.label || 'checkin').replace(/[^\w\-]+/g, '-').slice(0, 40) || 'checkin');
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Content-Disposition', `attachment; filename="checkin-qr-${safeLabel}.png"`);
