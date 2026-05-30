@@ -5049,69 +5049,137 @@ function buildVisaoConsolidadaSectionHtml() {
   <section class="filters-card visao-consolidada-card" id="visaoConsolidadaWrap">
     <div class="visao-consolidada-header">
       <h2 class="visao-consolidada-title">Visão consolidada (domingo)</h2>
-      <p class="auth-subtitle visao-consolidada-desc">Resumo por ministério (Manhã, Almoço com 2 cultos, Tarde). No WhatsApp você pode pedir: <em>visão escala</em> ou <em>visão 17/05</em>.</p>
+      <p class="auth-subtitle visao-consolidada-desc">Contagem por ministério e interseção (voluntários inscritos na manhã <strong>e</strong> na tarde). Atualiza ao mudar a data.</p>
     </div>
     <div class="visao-consolidada-controls">
       <div class="visao-consolidada-date">
-        <label for="visaoConsolidadaData">Data de referência</label>
+        <label for="visaoConsolidadaData">Domingo</label>
         <input type="date" id="visaoConsolidadaData" class="visao-consolidada-date-input" autocomplete="off">
-        <p class="visao-consolidada-field-hint">Opcional: preencha uma data ou deixe em branco e use <strong>Próximo domingo</strong>.</p>
       </div>
       <div class="visao-consolidada-actions">
-        <button type="button" class="btn btn-primary" id="btnVisaoConsolidadaGerar">Gerar relatório</button>
-        <div class="visao-consolidada-actions-secondary">
-          <button type="button" class="btn btn-ghost btn-sm" id="btnVisaoProximoDomingo">Próximo domingo</button>
-          <button type="button" class="btn btn-ghost btn-sm" id="btnVisaoConsolidadaCopiar" disabled title="Disponível após gerar o relatório">Copiar texto</button>
-        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="btnVisaoProximoDomingo">Próximo domingo</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btnVisaoConsolidadaCopiar" disabled title="Copiar texto para WhatsApp">Copiar texto</button>
       </div>
     </div>
-    <div id="visaoConsolidadaPlaceholder" class="visao-consolidada-placeholder" role="status">
-      <div class="visao-consolidada-placeholder-inner">
-        <p class="visao-consolidada-placeholder-title">Relatório ainda não foi gerado</p>
-        <p class="visao-consolidada-placeholder-text">Escolha a data (ou clique em <strong>Próximo domingo</strong>) e em seguida em <strong>Gerar relatório</strong>. O texto para colar no WhatsApp aparecerá aqui embaixo.</p>
-      </div>
+    <div id="visaoConsolidadaMeta" class="visao-consolidada-meta" hidden></div>
+    <div id="visaoConsolidadaContent" class="visao-consolidada-content">
+      <p class="visao-consolidada-placeholder-text">Carregando visão consolidada…</p>
     </div>
-    <pre id="visaoConsolidadaTexto" class="visao-consolidada-pre" hidden></pre>
+    <pre id="visaoConsolidadaTexto" class="visao-consolidada-pre" hidden aria-hidden="true"></pre>
   </section>`;
 }
 
-async function loadVisaoConsolidada(opts = {}) {
+function formatVisaoTurnoCell(entries) {
+  if (!Array.isArray(entries) || !entries.length) return '—';
+  return entries.map((e) => escapeHtml((e.ministerio || e.ministerioKey || '—').trim())).join(', ');
+}
+
+function renderVisaoConsolidadaTables(d) {
+  const content = document.getElementById('visaoConsolidadaContent');
+  const meta = document.getElementById('visaoConsolidadaMeta');
   const pre = document.getElementById('visaoConsolidadaTexto');
   const btnCopy = document.getElementById('btnVisaoConsolidadaCopiar');
-  const placeholder = document.getElementById('visaoConsolidadaPlaceholder');
-  if (!pre) return;
-  const params = new URLSearchParams({ formato: 'texto' });
+  if (!content) return;
+
+  const ministerios = Array.isArray(d?.ministerios) ? d.ministerios : [];
+  const intersecao = Array.isArray(d?.intersecao) ? d.intersecao : [];
+  const escManha = (d?.escalasManha || []).map((e) => e.nome).filter(Boolean).join(' · ') || '—';
+  const escTarde = (d?.escalasTarde || []).map((e) => e.nome).filter(Boolean).join(' · ') || '—';
+  const dataLabel = d?.dataLabel || (d?.data ? formatEscalaDateOnly(d.data) : '—');
+  const diaNomes = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  const diaNome = Number.isInteger(d?.diaSemana) ? diaNomes[d.diaSemana] : '';
+
+  if (meta) {
+    meta.hidden = false;
+    meta.innerHTML = `
+      <p class="visao-consolidada-meta-line"><strong>${escapeHtml(diaNome ? `${diaNome} ${dataLabel}` : dataLabel)}</strong></p>
+      <p class="visao-consolidada-meta-line">Manhã: ${escapeHtml(escManha)} · Tarde: ${escapeHtml(escTarde)}</p>
+      <p class="visao-consolidada-meta-line">Almoço (2 cultos): <strong>${d?.totalAlmoco || 0}</strong> pessoa(s) · Intercessão — M:${d?.intercessao?.manha || 0} / A:${d?.intercessao?.almoco || 0} / T:${d?.intercessao?.tarde || 0}</p>`;
+  }
+
+  if (!ministerios.length && !intersecao.length) {
+    content.innerHTML = '<p class="visao-consolidada-empty">Nenhuma candidatura aprovada para escalas de manhã/tarde nesta data. Verifique se as escalas têm “Manhã” ou “Tarde” no nome.</p>';
+  } else {
+    const minRows = ministerios.map((m) => `
+      <tr>
+        <td data-label="Ministério"><strong>${escapeHtml(m.key)}</strong></td>
+        <td data-label="Manhã" class="num">${m.manha || 0}</td>
+        <td data-label="Almoço" class="num visao-col-intersecao">${m.almoco || 0}</td>
+        <td data-label="Tarde" class="num">${m.tarde || 0}</td>
+      </tr>`).join('');
+
+    const interRows = intersecao.length
+      ? intersecao.map((p) => `
+      <tr>
+        <td data-label="Nome">${escapeHtml(p.nome || '—')}</td>
+        <td data-label="Email">${escapeHtml(p.email || '')}</td>
+        <td data-label="Manhã">${formatVisaoTurnoCell(p.manha)}</td>
+        <td data-label="Tarde">${formatVisaoTurnoCell(p.tarde)}</td>
+      </tr>`).join('')
+      : '<tr><td colspan="4" class="visao-consolidada-empty-cell">Ninguém inscrito nos dois cultos nesta data.</td></tr>';
+
+    content.innerHTML = `
+      <div class="visao-consolidada-grid">
+        <div class="table-card visao-consolidada-table-wrap">
+          <div class="chart-header"><h3>Por ministério</h3></div>
+          <div class="table-wrapper">
+            <table class="data-table visao-consolidada-table">
+              <thead><tr><th>Ministério</th><th>Manhã</th><th>Almoço ∩</th><th>Tarde</th></tr></thead>
+              <tbody>${minRows || '<tr><td colspan="4" class="visao-consolidada-empty-cell">Sem dados</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="table-card visao-consolidada-table-wrap">
+          <div class="chart-header"><h3>Interseção — 2 cultos (${intersecao.length})</h3></div>
+          <p class="visao-consolidada-table-hint">Voluntários aprovados na escala da manhã <em>e</em> da tarde (inner join por email).</p>
+          <div class="table-wrapper">
+            <table class="data-table visao-consolidada-table">
+              <thead><tr><th>Nome</th><th>Email</th><th>Manhã</th><th>Tarde</th></tr></thead>
+              <tbody>${interRows}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  if (pre) {
+    pre.textContent = d?.texto || '';
+    pre.dataset.visaoTexto = pre.textContent;
+  }
+  if (btnCopy) btnCopy.disabled = !(d?.texto || '').trim();
+}
+
+async function loadVisaoConsolidada(opts = {}) {
+  const content = document.getElementById('visaoConsolidadaContent');
+  const btnCopy = document.getElementById('btnVisaoConsolidadaCopiar');
+  const meta = document.getElementById('visaoConsolidadaMeta');
+  if (!content) return;
+  const params = new URLSearchParams();
   if (opts.proximoDomingo) params.set('proximoDomingo', '1');
   else if (opts.data) params.set('data', opts.data);
   else params.set('proximoDomingo', '1');
-  if (placeholder) placeholder.style.display = 'none';
-  pre.removeAttribute('hidden');
-  pre.classList.add('visao-consolidada-pre--loading');
-  pre.textContent = 'Gerando relatório…';
+  if (meta) meta.hidden = true;
+  content.innerHTML = '<p class="visao-consolidada-placeholder-text visao-consolidada-pre--loading">Carregando…</p>';
   if (btnCopy) btnCopy.disabled = true;
   try {
     const r = await authFetch(`${API_BASE}/api/escalas/visao-consolidada?${params}`);
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(d.error || 'Falha ao gerar visão');
-    pre.textContent = d.texto || 'Sem escalas para esta data.';
-    pre.dataset.visaoTexto = pre.textContent;
-    pre.classList.remove('visao-consolidada-pre--loading');
-    if (btnCopy) btnCopy.disabled = !(pre.textContent || '').trim();
+    if (!r.ok) throw new Error(d.error || 'Falha ao carregar visão');
+    renderVisaoConsolidadaTables(d);
     const dateInput = document.getElementById('visaoConsolidadaData');
     if (dateInput && d.data) dateInput.value = d.data;
   } catch (e) {
-    pre.textContent = e.message || 'Erro ao carregar.';
-    pre.dataset.visaoTexto = '';
-    pre.classList.remove('visao-consolidada-pre--loading');
+    content.innerHTML = `<p class="visao-consolidada-empty">${escapeHtml(e.message || 'Erro ao carregar.')}</p>`;
     if (btnCopy) btnCopy.disabled = true;
   }
 }
 
 function bindVisaoConsolidadaEvents() {
-  document.getElementById('btnVisaoConsolidadaGerar')?.addEventListener('click', () => {
+  const reloadFromInput = () => {
     const data = document.getElementById('visaoConsolidadaData')?.value || '';
     loadVisaoConsolidada(data ? { data } : { proximoDomingo: true });
-  });
+  };
+  document.getElementById('visaoConsolidadaData')?.addEventListener('change', reloadFromInput);
   document.getElementById('btnVisaoProximoDomingo')?.addEventListener('click', () => {
     const dateInput = document.getElementById('visaoConsolidadaData');
     if (dateInput) dateInput.value = '';
@@ -5127,12 +5195,13 @@ function bindVisaoConsolidadaEvents() {
       prompt('Copie o relatório:', txt);
     }
   });
+  loadVisaoConsolidada({ proximoDomingo: true });
 }
 
 function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) {
   return `
   ${buildVisaoConsolidadaSectionHtml()}
-  <p class="auth-subtitle escala-candidatos-intro">Depois, escolha uma <strong>escala</strong> abaixo para ver candidatos, aprovar em lote e exportar.</p>
+  <p class="auth-subtitle escala-candidatos-intro">Escolha uma <strong>escala</strong> abaixo para ver candidatos, aprovar em lote e exportar.</p>
   <section class="filters-row escala-analise-filters-wrap">
     <div class="filters-card escala-analise-filters">
       <div class="escala-analise-filters-inner">

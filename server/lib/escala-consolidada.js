@@ -180,6 +180,72 @@ export function pickDayFromVisao(visao, dataYmd) {
   return visao.byDate.get(sorted[sorted.length - 1]) || null;
 }
 
+/** Pessoas aprovadas em manhã E tarde no mesmo domingo (inner join por email). */
+export function buildIntersecaoDomingo({ escalas, candidaturas, statusIn = ['aprovado'] }) {
+  const statusSet = new Set(statusIn);
+  const escalasById = new Map(escalas.map((e) => [String(e._id), e]));
+  const byEmail = new Map();
+
+  for (const c of candidaturas) {
+    if (!statusSet.has(c.status)) continue;
+    const escala = escalasById.get(String(c.escalaId));
+    if (!escala) continue;
+    const turno = detectTurnoEscala(escala.nome);
+    if (!turno) continue;
+    const em = (c.email || '').toLowerCase().trim();
+    if (!em) continue;
+    if (!byEmail.has(em)) {
+      byEmail.set(em, { email: em, nome: (c.nome || '').trim(), manha: [], tarde: [] });
+    }
+    const row = byEmail.get(em);
+    if (!row.nome && c.nome) row.nome = (c.nome || '').trim();
+    row[turno].push({
+      ministerio: (c.ministerio || '').trim(),
+      ministerioKey: normalizeMinisterioKey(c.ministerio),
+      escalaId: escala._id,
+      escalaNome: (escala.nome || '').trim(),
+    });
+  }
+
+  return [...byEmail.values()]
+    .filter((p) => p.manha.length > 0 && p.tarde.length > 0)
+    .sort((a, b) => (a.nome || a.email).localeCompare(b.nome || b.email, 'pt-BR'));
+}
+
+export function sortMinisterioKeys(keys) {
+  const set = new Set(keys);
+  const ordered = [
+    ...MINISTERIO_REPORT_ORDER.filter((k) => set.has(k)),
+    ...[...set].filter((k) => !MINISTERIO_REPORT_ORDER.includes(k)).sort(),
+  ];
+  return ordered;
+}
+
+export function dayPayloadFromVisao(day) {
+  if (!day) {
+    return {
+      ministerios: [],
+      totalAlmoco: 0,
+      intercessao: { manha: 0, almoco: 0, tarde: 0 },
+      escalasManha: [],
+      escalasTarde: [],
+    };
+  }
+  const keys = sortMinisterioKeys([...day.ministerios.keys()]);
+  return {
+    dataLabel: day.dataLabel,
+    diaSemana: day.diaSemana,
+    escalasManha: day.escalas.manha,
+    escalasTarde: day.escalas.tarde,
+    ministerios: keys.map((key) => {
+      const v = day.ministerios.get(key);
+      return { key, manha: v?.manha || 0, almoco: v?.almoco || 0, tarde: v?.tarde || 0 };
+    }),
+    totalAlmoco: day.totalAlmoco || 0,
+    intercessao: day.intercessao || { manha: 0, almoco: 0, tarde: 0 },
+  };
+}
+
 /** Parse "17/05", "17/05/2026", "2026-05-17" → YYYY-MM-DD */
 export function parseDataQuery(input, refYmd) {
   const s = String(input || '').trim();

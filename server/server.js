@@ -89,7 +89,9 @@ import {
   pgCreateFormularioApresentacao, pgListFormulariosApresentacaoByEvento,
 } from './db/postgres/formularios.js';
 import {
+  buildIntersecaoDomingo,
   buildVisaoConsolidada,
+  dayPayloadFromVisao,
   formatVisaoConsolidadaTexto,
   pickDayFromVisao,
   parseDataQuery,
@@ -4689,54 +4691,21 @@ app.get('/api/escalas/visao-consolidada', requireAuth, resolveTenant, async (req
     const { escalas, candidaturas } = await loadEscalasECandidaturasVisao(req, dataYmd);
     const visao = buildVisaoConsolidada({ escalas, candidaturas, statusIn });
     const day = pickDayFromVisao(visao, dataYmd);
-
-    const detalhes = req.query.detalhes === '1';
-    let detalhesAlmoco = null;
-    if (detalhes && day) {
-      const emailsManha = new Set();
-      const emailsTarde = new Set();
-      const byEmail = new Map();
-      for (const c of candidaturas) {
-        if (!statusIn.includes(c.status)) continue;
-        const escala = escalas.find((e) => String(e._id) === String(c.escalaId));
-        if (!escala) continue;
-        const turno = detectTurnoEscala(escala.nome);
-        const em = (c.email || '').toLowerCase();
-        if (!em) continue;
-        if (turno === 'manha') emailsManha.add(em);
-        if (turno === 'tarde') emailsTarde.add(em);
-        if (!byEmail.has(em)) byEmail.set(em, { email: em, nome: c.nome, ministerios: new Set() });
-        byEmail.get(em).ministerios.add(c.ministerio);
-      }
-      detalhesAlmoco = [...emailsManha].filter((e) => emailsTarde.has(e)).map((e) => ({
-        email: e,
-        nome: byEmail.get(e)?.nome || '',
-        ministerios: [...(byEmail.get(e)?.ministerios || [])],
-      }));
-    }
+    const intersecao = buildIntersecaoDomingo({ escalas, candidaturas, statusIn });
+    const dayFields = dayPayloadFromVisao(day);
 
     const payload = {
       data: dataYmd,
       timezone: visao.timezone,
-      escalasManha: day?.escalas?.manha || [],
-      escalasTarde: day?.escalas?.tarde || [],
-      ministerios: day
-        ? [...day.ministerios.entries()].map(([key, v]) => ({
-          key,
-          manha: v.manha,
-          almoco: v.almoco,
-          tarde: v.tarde,
-        }))
-        : [],
-      totalAlmoco: day?.totalAlmoco || 0,
-      intercessao: day?.intercessao || { manha: 0, almoco: 0, tarde: 0 },
-      detalhesAlmoco,
+      ...dayFields,
+      intersecao,
+      texto: formatVisaoConsolidadaTexto(day),
     };
 
     if ((req.query.formato || '').toString() === 'texto') {
-      return res.json({ ...payload, texto: formatVisaoConsolidadaTexto(day) });
+      return res.json(payload);
     }
-    res.json({ ...payload, texto: formatVisaoConsolidadaTexto(day) });
+    res.json(payload);
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao gerar visão consolidada.');

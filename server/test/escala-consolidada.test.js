@@ -5,6 +5,7 @@ import {
   buildVisaoConsolidada,
   formatVisaoConsolidadaTexto,
   pickDayFromVisao,
+  buildIntersecaoDomingo,
 } from '../lib/escala-consolidada.js';
 
 describe('escala-consolidada', () => {
@@ -50,5 +51,23 @@ describe('escala-consolidada', () => {
     const texto = formatVisaoConsolidadaTexto(day);
     assert.match(texto, /STORE/);
     assert.match(texto, /Manhã:/);
+  });
+
+  it('buildIntersecaoDomingo retorna quem está em manhã e tarde', () => {
+    const dataRef = '2026-05-17T15:00:00.000Z';
+    const escalas = [
+      { _id: 'e1', nome: 'Domingo de Manhã', data: dataRef },
+      { _id: 'e2', nome: 'Domingo de Tarde', data: dataRef },
+    ];
+    const candidaturas = [
+      { escalaId: 'e1', email: 'a@test.com', ministerio: 'Kids', status: 'aprovado', nome: 'Ana' },
+      { escalaId: 'e2', email: 'a@test.com', ministerio: 'Kids', status: 'aprovado', nome: 'Ana' },
+      { escalaId: 'e1', email: 'b@test.com', ministerio: 'Parking', status: 'aprovado', nome: 'Bob' },
+    ];
+    const inter = buildIntersecaoDomingo({ escalas, candidaturas, statusIn: ['aprovado'] });
+    assert.equal(inter.length, 1);
+    assert.equal(inter[0].email, 'a@test.com');
+    assert.equal(inter[0].manha.length, 1);
+    assert.equal(inter[0].tarde.length, 1);
   });
 });
