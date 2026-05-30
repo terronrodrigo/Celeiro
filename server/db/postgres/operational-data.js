@@ -529,7 +529,14 @@ export async function pgMapUltimosMinisteriosServidos(igrejaId, { perEmail = 3 }
        SELECT
          LOWER(c.dados->>'email') AS em,
          TRIM(c.dados->>'ministerio') AS ministerio,
-         COALESCE((e.dados->>'data')::timestamptz, c.created_at) AS served_at,
+         COALESCE(
+           CASE
+             WHEN NULLIF(TRIM(e.dados->>'data'), '') ~ '^\\d{4}-\\d{2}-\\d{2}'
+               THEN (SUBSTRING(TRIM(e.dados->>'data') FROM 1 FOR 10))::date
+             ELSE NULL
+           END,
+           c.created_at
+         ) AS served_at,
          c.escala_id AS escala_id
        FROM candidaturas c
        INNER JOIN escalas e ON e.id = c.escala_id

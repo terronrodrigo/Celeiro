@@ -50,6 +50,7 @@ function mapEscalaRow(row) {
 }
 
 function mapEventoRow(row) {
+  if (!row) return null;
   let ymd = '';
   if (row.data instanceof Date) {
     // Caso o parser global não tenha sido aplicado (conexão antiga): use componentes UTC
@@ -123,6 +124,14 @@ export async function pgListEscalasByDataYmd(igrejaId, ymd, { ativoOnly = true }
   sql += " ORDER BY (dados->>'nome') ASC NULLS LAST, created_at ASC";
   const { rows } = await getPostgresPool().query(sql, [igrejaId, ymd]);
   return rows.map(mapEscalaRow);
+}
+
+export async function pgClearEscalaLembreteEnviado(igrejaId, tipo, cultoDataYmd) {
+  await getPostgresPool().query(
+    `DELETE FROM escala_lembrete_emails
+     WHERE igreja_id = $1 AND tipo = $2 AND culto_data = $3::date`,
+    [igrejaId, tipo, cultoDataYmd],
+  );
 }
 
 export async function pgWasEscalaLembreteEnviado(igrejaId, tipo, cultoDataYmd) {

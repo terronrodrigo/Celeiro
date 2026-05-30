@@ -62,6 +62,8 @@ import {
   pgListAcompanhamentoEscala, pgBackfillCheckinCandidaturas, pgAutoMarcarFaltas,
   pgListMinhasCandidaturasParaEscalas, pgFindEventosCheckinByIds, pgListMeusCheckins,
   pgClearEventoAberturaEmailEnviado,
+  pgClearEscalaLembreteEnviado,
+  pgWasEscalaLembreteEnviado,
   pgListEventosCheckinSemEscalaAtiva,
   pgPurgeEventosCheckinSemEscalaAtiva,
   pgAttachEscalasVinculadasToEventos,
@@ -2297,6 +2299,9 @@ app.get('/api/eventos-checkin/:id/qr.png', requireAuth, resolveTenant, requireAd
 app.post('/api/eventos-checkin/:id/enviar-email-abertura', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
     if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    if (!(process.env.RESEND_API_KEY || '').trim()) {
+      return sendError(res, 503, 'RESEND_API_KEY não configurada.');
+    }
     const force = req.body?.force === true;
     const evento = await pgFindEventoCheckinById(req.params.id, req.tenantIgrejaId);
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
@@ -2306,21 +2311,27 @@ app.post('/api/eventos-checkin/:id/enviar-email-abertura', requireAuth, resolveT
     if (force && evento.emailAberturaEnviadoEm) {
       await pgClearEventoAberturaEmailEnviado(evento._id, req.tenantIgrejaId);
     }
-    const r = await sendCheckinAberturaEmailsForEvento(evento, {
-      appBase: resolveAppBaseUrl(req),
-      markSent: true,
-    });
-    if (r.skipped && r.reason === 'already_sent') {
-      return sendError(res, 409, 'Email de abertura já foi enviado. Confirme reenvio.');
-    }
-    if (r.skipped) return sendError(res, 503, 'RESEND_API_KEY não configurada.');
+    const emails = await pgListVoluntarioEmails(req.tenantIgrejaId);
+    const total = emails.length;
+    const appBase = resolveAppBaseUrl(req);
+    const eventoId = evento._id;
     res.json({
       ok: true,
-      sent: r.sent,
-      failed: r.failed,
-      total: r.total,
-      checkinUrl: r.checkinUrl,
+      started: true,
+      total,
+      message: 'Envio iniciado em segundo plano.',
     });
+    sendCheckinAberturaEmailsForEvento(evento, { appBase, markSent: true })
+      .then((r) => {
+        if (r.skipped && r.reason === 'already_sent') {
+          console.warn(`enviar-email-abertura ${eventoId}: já enviado (concorrência).`);
+          return;
+        }
+        console.log(`✉️ enviar-email-abertura ${eventoId}: ${r.sent || 0}/${r.total || 0} enviado(s).`);
+      })
+      .catch((err) => {
+        console.error('enviar-email-abertura background:', eventoId, err?.message || err);
+      });
   } catch (err) {
     console.error('enviar-email-abertura:', err?.message || err);
     sendError(res, 500, err.message || 'Erro ao enviar emails.');
@@ -5156,29 +5167,44 @@ app.post('/api/escalas/enviar-lembrete', requireAuth, resolveTenant, requireAdmi
       return sendError(res, 400, 'Informe tipo "quarta" ou "domingo", ou a data de um culto de quarta ou domingo.');
     }
     if (!cultoDataYmd) return sendError(res, 400, 'Não foi possível determinar a data do culto.');
-    const r = await sendEscalaLembreteEmailsForIgreja({
-      igrejaId: req.tenantIgrejaId,
-      tipo,
-      cultoDataYmd,
-      appBase: resolveAppBaseUrl(req),
-      force,
-    });
-    if (r.skipped && r.reason === 'no_resend') {
+    if (!(process.env.RESEND_API_KEY || '').trim()) {
       return sendError(res, 503, 'RESEND_API_KEY não configurada.');
     }
-    if (r.skipped && r.reason === 'already_sent' && !force) {
-      return sendError(res, 409, 'Lembrete já enviado para esta data. Use force: true para reenviar.');
+    if (!force && await pgWasEscalaLembreteEnviado(req.tenantIgrejaId, tipo, cultoDataYmd)) {
+      return sendError(res, 409, 'Lembrete já enviado para esta data. Confirme reenvio.');
     }
+    if (force) {
+      await pgClearEscalaLembreteEnviado(req.tenantIgrejaId, tipo, cultoDataYmd);
+    }
+    const emails = await pgListVoluntarioEmails(req.tenantIgrejaId);
+    const total = emails.length;
+    const igrejaId = req.tenantIgrejaId;
+    const appBase = resolveAppBaseUrl(req);
     res.json({
       ok: true,
+      started: true,
+      total,
       tipo,
       cultoDataYmd,
-      sent: r.sent || 0,
-      failed: r.failed || 0,
-      total: r.total || 0,
-      skipped: r.skipped || false,
-      reason: r.reason || null,
+      message: 'Envio iniciado em segundo plano.',
     });
+    sendEscalaLembreteEmailsForIgreja({
+      igrejaId,
+      tipo,
+      cultoDataYmd,
+      appBase,
+      force,
+    })
+      .then((r) => {
+        if (r.skipped && r.reason === 'no_escalas') {
+          console.warn(`enviar-lembrete ${tipo} ${cultoDataYmd}: sem escalas ativas.`);
+          return;
+        }
+        console.log(`✉️ enviar-lembrete ${tipo} ${cultoDataYmd}: ${r.sent || 0}/${r.total || 0} enviado(s).`);
+      })
+      .catch((err) => {
+        console.error('escalas/enviar-lembrete background:', err?.message || err);
+      });
   } catch (err) {
     console.error('escalas/enviar-lembrete:', err?.message || err);
     sendError(res, 500, err.message || 'Erro ao enviar lembretes.');

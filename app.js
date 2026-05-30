@@ -2036,13 +2036,22 @@ async function enviarEmailAberturaEvento(eventoId) {
         });
         const d2 = await r2.json().catch(() => ({}));
         if (!r2.ok) throw new Error(d2.error || 'Falha ao reenviar.');
-        alert(`${d2.sent || 0} email(s) enviado(s) de ${d2.total || 0}.`);
+        if (d2.started) {
+          alert(`Envio iniciado! ${d2.total || 0} email(s) serão enviados em segundo plano (pode levar alguns minutos).`);
+        } else {
+          alert(`${d2.sent || 0} email(s) enviado(s) de ${d2.total || 0}.`);
+        }
         await fetchEventosCheckin();
         return;
       }
       return;
     }
     if (!r.ok) throw new Error(data.error || 'Falha ao enviar emails.');
+    if (data.started) {
+      alert(`Envio iniciado! ${data.total || 0} email(s) serão enviados em segundo plano (pode levar alguns minutos).`);
+      await fetchEventosCheckin();
+      return;
+    }
     alert(`${data.sent || 0} email(s) enviado(s) de ${data.total || 0}.`);
     await fetchEventosCheckin();
   } catch (e) {
@@ -4879,6 +4888,10 @@ async function enviarLembreteEscalaVoluntarios(force = false) {
       return;
     }
     if (!r.ok) throw new Error(data.error || 'Falha ao enviar emails.');
+    if (data.started) {
+      alert(`Envio iniciado! ${data.total || 0} email(s) serão enviados em segundo plano (pode levar alguns minutos).`);
+      return;
+    }
     if (data.skipped && data.reason === 'no_escalas') {
       alert('Não há escalas ativas nesta data para incluir no email.');
       return;

@@ -1,3 +1,4 @@
+import QRCode from 'qrcode';
 import { Resend } from 'resend';
 import { formatDataPtBr, escalaDataToYMD } from './brasilia.js';
 import { buildCheckinPublicUrl } from './checkin-public-url.js';
@@ -8,6 +9,19 @@ import {
   pgListEventosCheckinAberturaEmailPendentes,
   pgTryClaimEventoAberturaEmail,
 } from '../db/postgres/escalas-checkin.js';
+
+async function buildCheckinEmailQrDataUrl(checkinUrl, opts = {}) {
+  try {
+    return await generateCheckinQrDataUrl(checkinUrl, opts);
+  } catch (e) {
+    console.warn('checkin abertura QR estilizado falhou, usando QR simples:', e?.message || e);
+    return QRCode.toDataURL(checkinUrl, {
+      width: 400,
+      margin: 2,
+      errorCorrectionLevel: 'H',
+    });
+  }
+}
 
 function horarioCheckinLabel(evento) {
   const hin = (evento.horarioInicio || '').trim();
@@ -66,31 +80,31 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
   const apiKey = (process.env.RESEND_API_KEY || '').trim();
   if (!apiKey) return { sent: 0, failed: 0, total: 0, skipped: true, reason: 'no_resend' };
 
+  const igreja = await pgFindIgrejaById(evento.igrejaId);
+  const appBase = (opts.appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
+  const checkinUrl = buildCheckinPublicUrl({
+    appBase,
+    eventoId: evento._id,
+    igrejaSlug: igreja?.slug || 'celeiro-sp',
+  });
+  const ymd = escalaDataToYMD(evento.data);
+  const eventoDataLabel = ymd ? formatDataPtBr(ymd) : '';
+  const eventoLabel = (evento.label || '').trim() || `Culto ${eventoDataLabel}`;
+  const qrDataUrl = await buildCheckinEmailQrDataUrl(checkinUrl, {
+    size: 400,
+    title: eventoLabel,
+    subtitle: eventoDataLabel ? `Check-in · ${eventoDataLabel}` : 'Check-in de presença',
+  });
+  const horarioTexto = horarioCheckinLabel(evento);
+
   let ev = evento;
-  if (opts.markSent !== false) {
+  if (opts.markSent !== false && !opts.alreadyClaimed) {
     const claimed = await pgTryClaimEventoAberturaEmail(evento._id, evento.igrejaId);
     if (!claimed) {
       return { sent: 0, failed: 0, total: 0, skipped: true, reason: 'already_sent' };
     }
     ev = claimed;
   }
-
-  const igreja = await pgFindIgrejaById(ev.igrejaId);
-  const appBase = (opts.appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
-  const checkinUrl = buildCheckinPublicUrl({
-    appBase,
-    eventoId: ev._id,
-    igrejaSlug: igreja?.slug || 'celeiro-sp',
-  });
-  const ymd = escalaDataToYMD(ev.data);
-  const eventoDataLabel = ymd ? formatDataPtBr(ymd) : '';
-  const eventoLabel = (ev.label || '').trim() || `Culto ${eventoDataLabel}`;
-  const qrDataUrl = await generateCheckinQrDataUrl(checkinUrl, {
-    size: 400,
-    title: eventoLabel,
-    subtitle: eventoDataLabel ? `Check-in · ${eventoDataLabel}` : 'Check-in de presença',
-  });
-  const horarioTexto = horarioCheckinLabel(ev);
 
   const voluntarios = await pgListVoluntarios(ev.igrejaId);
   const byEmail = new Map();
