@@ -57,11 +57,21 @@ import {
   pgCreateEventoCheckin, pgUpdateEventoCheckin, pgDeleteEventoCheckin, pgCreateCheckin,
   pgCreateCandidatura, pgFindCandidaturaDuplicada, pgFindEventoCheckinPorData,
   pgListCandidaturasByEscalaIds,
-  pgDeleteEscala, pgGetEscalaInscricaoStatus, pgSetEscalaInscricaoStatus,
+  pgDeleteEscala, pgBulkDeleteEscalas, pgGetEscalaInscricaoStatus, pgSetEscalaInscricaoStatus,
   pgCountAprovadosByMinisterio, pgAutoLinkEscalasOrfas, pgFindEscalaByEventoCheckin,
   pgListAcompanhamentoEscala, pgBackfillCheckinCandidaturas, pgAutoMarcarFaltas,
   pgListMinhasCandidaturasParaEscalas, pgFindEventosCheckinByIds, pgListMeusCheckins,
+  pgClearEventoAberturaEmailEnviado,
 } from './db/postgres/escalas-checkin.js';
+import { buildCheckinPublicUrl, resolveAppBaseUrl } from './lib/checkin-public-url.js';
+import { generateCheckinQrPng } from './lib/checkin-qrcode.js';
+import { sendCheckinAberturaEmailsForEvento, runCheckinAberturaEmailJob } from './lib/checkin-abertura-email.js';
+import {
+  runEscalaLembreteEmailJob,
+  sendEscalaLembreteEmailsForIgreja,
+  getCultoDataYmdForLembrete,
+  resolveEscalaLembreteTipoForToday,
+} from './lib/escala-lembrete-email.js';
 import {
   pgListEventosFormulario, pgFindEventoFormularioById, pgCreateEventoFormulario,
   pgUpdateEventoFormulario, pgDeleteEventoFormulario,
@@ -2229,6 +2239,61 @@ app.put('/api/eventos-checkin/:id', requireAuth, resolveTenant, requireAdmin, as
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao atualizar evento.');
+  }
+});
+
+// QR code PNG do link público de check-in
+app.get('/api/eventos-checkin/:id/qr.png', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const evento = await pgFindEventoCheckinById(req.params.id, req.tenantIgrejaId);
+    if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+    const slug = req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG;
+    const checkinUrl = buildCheckinPublicUrl({
+      appBase: resolveAppBaseUrl(req),
+      eventoId: evento._id,
+      igrejaSlug: slug,
+    });
+    const png = await generateCheckinQrPng(checkinUrl, { size: 640 });
+    const safeLabel = ((evento.label || 'checkin').replace(/[^\w\-]+/g, '-').slice(0, 40) || 'checkin');
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Disposition', `attachment; filename="checkin-qr-${safeLabel}.png"`);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.send(png);
+  } catch (err) {
+    console.error('eventos-checkin qr:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao gerar QR code.');
+  }
+});
+
+// Disparo manual do email de abertura (voluntários da igreja)
+app.post('/api/eventos-checkin/:id/enviar-email-abertura', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const force = req.body?.force === true;
+    const evento = await pgFindEventoCheckinById(req.params.id, req.tenantIgrejaId);
+    if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+    if (evento.emailAberturaEnviadoEm && !force) {
+      return sendError(res, 409, 'Email de abertura já foi enviado. Confirme reenvio.');
+    }
+    if (force && evento.emailAberturaEnviadoEm) {
+      await pgClearEventoAberturaEmailEnviado(evento._id, req.tenantIgrejaId);
+    }
+    const r = await sendCheckinAberturaEmailsForEvento(evento, {
+      appBase: resolveAppBaseUrl(req),
+      markSent: true,
+    });
+    if (r.skipped) return sendError(res, 503, 'RESEND_API_KEY não configurada.');
+    res.json({
+      ok: true,
+      sent: r.sent,
+      failed: r.failed,
+      total: r.total,
+      checkinUrl: r.checkinUrl,
+    });
+  } catch (err) {
+    console.error('enviar-email-abertura:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao enviar emails.');
   }
 });
 
@@ -4923,6 +4988,142 @@ app.put('/api/escalas/:id', requireAuth, resolveTenant, requireAdmin, async (req
   } catch (err) { console.error(err); sendError(res, 500, err.message); }
 });
 
+// POST /api/escalas/enviar-lembrete — lembrete de inscrição (segunda→quarta, quinta→domingo)
+app.post('/api/escalas/enviar-lembrete', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const body = req.body || {};
+    const force = body.force === true;
+    let tipo = (body.tipo || '').toString().trim().toLowerCase();
+    if (!tipo) tipo = resolveEscalaLembreteTipoForToday() || '';
+    if (tipo !== 'quarta' && tipo !== 'domingo') {
+      return sendError(res, 400, 'Informe tipo "quarta" ou "domingo" (ou rode em segunda/quinta).');
+    }
+    const cultoDataYmd = (body.cultoData || '').toString().trim().slice(0, 10)
+      || getCultoDataYmdForLembrete(tipo);
+    if (!cultoDataYmd) return sendError(res, 400, 'Não foi possível determinar a data do culto.');
+    const r = await sendEscalaLembreteEmailsForIgreja({
+      igrejaId: req.tenantIgrejaId,
+      tipo,
+      cultoDataYmd,
+      appBase: resolveAppBaseUrl(req),
+      force,
+    });
+    if (r.skipped && r.reason === 'no_resend') {
+      return sendError(res, 503, 'RESEND_API_KEY não configurada.');
+    }
+    if (r.skipped && r.reason === 'already_sent' && !force) {
+      return sendError(res, 409, 'Lembrete já enviado para esta data. Use force: true para reenviar.');
+    }
+    res.json({
+      ok: true,
+      tipo,
+      cultoDataYmd,
+      sent: r.sent || 0,
+      failed: r.failed || 0,
+      total: r.total || 0,
+      skipped: r.skipped || false,
+      reason: r.reason || null,
+    });
+  } catch (err) {
+    console.error('escalas/enviar-lembrete:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao enviar lembretes.');
+  }
+});
+
+// POST /api/escalas/bulk-delete — exclui várias escalas (admin)
+app.post('/api/escalas/bulk-delete', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const ids = Array.isArray(body.ids)
+      ? body.ids.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+    const redirectToEscalaId = (body.redirectToEscalaId || '').toString().trim() || null;
+    const forceWithoutRedirect = body.forceWithoutRedirect === true;
+
+    if (!ids.length) return sendError(res, 400, 'Informe ao menos uma escala (ids).');
+    if (ids.length > 100) return sendError(res, 400, 'Máximo de 100 escalas por operação.');
+
+    if (isPostgres()) {
+      const r = await pgBulkDeleteEscalas(ids, req.tenantIgrejaId, {
+        redirectToEscalaId,
+        forceWithoutRedirect,
+      });
+      if (r.error && !r.needRedirect) return sendError(res, 400, r.error);
+      if (r.needRedirect) {
+        return res.status(409).json({
+          error: `As escalas selecionadas têm ${r.candidaturas} candidatura(s) no total. Escolha uma escala futura ativa para redirecionar ou confirme exclusão sem redirecionar.`,
+          needRedirect: true,
+          candidaturas: r.candidaturas,
+          ids: r.ids,
+        });
+      }
+      invalidateCache();
+      return res.json({
+        ok: true,
+        deleted: r.deleted || 0,
+        moved: r.moved || 0,
+        redirectedTo: r.redirectedTo || null,
+      });
+    }
+
+    if (redirectToEscalaId && ids.includes(String(redirectToEscalaId))) {
+      return sendError(res, 400, 'A escala de destino não pode estar na lista de exclusão.');
+    }
+
+    const found = await Escala.find({ _id: { $in: ids }, ...tQ(req) }).select('_id').lean();
+    if (found.length !== ids.length) {
+      return sendError(res, 404, 'Uma ou mais escalas não foram encontradas.');
+    }
+
+    const totalCand = await Candidatura.countDocuments({ escalaId: { $in: ids }, ...tQ(req) });
+    if (totalCand > 0 && !redirectToEscalaId && !forceWithoutRedirect) {
+      return res.status(409).json({
+        error: `As escalas selecionadas têm ${totalCand} candidatura(s) no total. Escolha uma escala futura ativa para redirecionar ou confirme exclusão sem redirecionar.`,
+        needRedirect: true,
+        candidaturas: totalCand,
+        ids,
+      });
+    }
+
+    if (totalCand > 0 && redirectToEscalaId) {
+      const target = await Escala.findOne({ _id: redirectToEscalaId, ...tQ(req) }).lean();
+      const hoje = getHojeDateString();
+      const ymd = escalaDataToYMD(target?.data);
+      if (!target) return sendError(res, 400, 'Escala de destino não encontrada.');
+      if (target.ativo === false) {
+        return sendError(res, 400, 'A escala de destino precisa estar ativa (inscrições abertas).');
+      }
+      if (!ymd || ymd < hoje) {
+        return sendError(res, 400, 'A escala de destino precisa ser futura (data de hoje ou posterior).');
+      }
+    }
+
+    for (const escalaId of ids) {
+      if (totalCand > 0 && redirectToEscalaId) {
+        const sources = await Candidatura.find({ escalaId, ...tQ(req) }).select('email').lean();
+        for (const c of sources) {
+          const em = (c.email || '').toLowerCase().trim();
+          const dup = await Candidatura.findOne({
+            escalaId: redirectToEscalaId,
+            email: em,
+            ...tQ(req),
+          }).select('_id').lean();
+          if (dup) await Candidatura.deleteOne({ _id: c._id, ...tQ(req) });
+          else await Candidatura.updateOne({ _id: c._id, ...tQ(req) }, { escalaId: redirectToEscalaId });
+        }
+      }
+      await Escala.findOneAndDelete({ _id: escalaId, ...tQ(req) });
+    }
+
+    invalidateCache();
+    res.json({ ok: true, deleted: ids.length, redirectedTo: redirectToEscalaId || null });
+  } catch (err) {
+    console.error('escalas bulk-delete:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao excluir escalas.');
+  }
+});
+
 // DELETE /api/escalas/:id — exclui escala (admin). Com inscrições: redirectToEscalaId ou forceWithoutRedirect.
 app.delete('/api/escalas/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
@@ -6238,6 +6439,40 @@ async function start() {
         console.error('pgAutoMarcarFaltas falhou:', err.message || err);
       }
     }, AUTO_FALTA_MS).unref?.();
+
+    const CHECKIN_ABERTURA_MS = Number(process.env.CHECKIN_ABERTURA_INTERVAL_MS) || 60 * 1000;
+    setTimeout(() => {
+      runCheckinAberturaEmailJob().catch((err) => {
+        console.error('checkin abertura email (boot):', err?.message || err);
+      });
+    }, 15_000);
+    setInterval(async () => {
+      try {
+        const r = await runCheckinAberturaEmailJob();
+        if ((r.sent || 0) > 0) {
+          console.log(`⏱️  checkin abertura email: ${r.sent} enviado(s) em ${r.processed} evento(s).`);
+        }
+      } catch (err) {
+        console.error('runCheckinAberturaEmailJob falhou:', err.message || err);
+      }
+    }, CHECKIN_ABERTURA_MS).unref?.();
+
+    const ESCALA_LEMBRETE_MS = Number(process.env.ESCALA_LEMBRETE_INTERVAL_MS) || 30 * 60 * 1000;
+    setTimeout(() => {
+      runEscalaLembreteEmailJob().catch((err) => {
+        console.error('escala lembrete email (boot):', err?.message || err);
+      });
+    }, 45_000);
+    setInterval(async () => {
+      try {
+        const r = await runEscalaLembreteEmailJob();
+        if ((r.sent || 0) > 0) {
+          console.log(`⏱️  escala lembrete ${r.tipo}: ${r.sent} enviado(s) — culto ${r.cultoDataYmd}.`);
+        }
+      } catch (err) {
+        console.error('runEscalaLembreteEmailJob falhou:', err.message || err);
+      }
+    }, ESCALA_LEMBRETE_MS).unref?.();
   }
 
   app.listen(PORT, '0.0.0.0', () => {

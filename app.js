@@ -515,6 +515,7 @@ function clearTenantScopedData() {
   checkinsMinisterio = [];
   checkinMinisterioResumo = {};
   escalasList = [];
+  selectedEscalaIds.clear();
   escalaAtiva = null;
   candidaturasAll = [];
   candidaturasEscalaList = [];
@@ -817,6 +818,7 @@ let usersList = [];
 let checkinsMinisterio = [];
 let checkinMinisterioResumo = {};
 let escalasList = [];
+let selectedEscalaIds = new Set();
 let escalaAtiva = null;
 let candidaturasAll = [];
 let candidaturasAnaliseFilters = {};
@@ -1714,12 +1716,19 @@ function renderEventoCheckinRowHtml(e) {
   const ativo = e.ativo !== false;
   const statusText = ativo ? 'Ativo' : 'Inativo';
   const btnLabel = ativo ? 'Desligar' : 'Ligar';
+  const emailSentBadge = e.emailAberturaEnviadoEm
+    ? ' <span class="evento-status evento-status-ativo" style="font-size:.75rem;margin-left:4px" title="Email de abertura enviado">✉️</span>'
+    : '';
   return `<tr data-event-id="${escapeAttr(eventId)}">
     <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
-    <td>${escapeHtml(label)}</td>
+    <td>${escapeHtml(label)}${emailSentBadge}</td>
     <td>${escapeHtml(horarioText)}</td>
     <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
-    <td><button type="button" class="btn btn-sm btn-primary" data-event-link="${escapeAttr(eventId)}" title="Copiar link para check-in público (qualquer pessoa)">Copiar link</button></td>
+    <td class="escala-actions-cell">
+      <button type="button" class="btn btn-sm btn-primary" data-event-link="${escapeAttr(eventId)}" title="Copiar link para check-in público">Copiar link</button>
+      <button type="button" class="btn btn-sm btn-ghost" data-event-qr="${escapeAttr(eventId)}" title="Baixar QR code (PNG)">QR PNG</button>
+    </td>
+    <td><button type="button" class="btn btn-sm btn-ghost" data-event-email-abertura="${escapeAttr(eventId)}" title="Enviar email de abertura aos voluntários">Email abertura</button></td>
     <td><button type="button" class="btn btn-sm btn-ghost" data-event-edit="${escapeAttr(eventId)}" title="Editar horários e status">Editar</button> <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-event-toggle="${escapeAttr(eventId)}">${btnLabel}</button> <button type="button" class="btn btn-sm btn-ghost" data-event-delete="${escapeAttr(eventId)}" title="Excluir evento">Excluir</button></td>
   </tr>`;
 }
@@ -1741,6 +1750,12 @@ function wireEventosCheckinTableActions() {
       navigator.clipboard.writeText(url).then(() => alert('Link copiado! Compartilhe para as pessoas fazerem check-in (email + ministério).')).catch(() => prompt('Copie o link:', url));
     });
   });
+  eventosCheckinBody.querySelectorAll('[data-event-qr]').forEach(btn => {
+    btn.addEventListener('click', () => downloadEventoCheckinQr(btn.getAttribute('data-event-qr')));
+  });
+  eventosCheckinBody.querySelectorAll('[data-event-email-abertura]').forEach(btn => {
+    btn.addEventListener('click', () => enviarEmailAberturaEvento(btn.getAttribute('data-event-email-abertura')));
+  });
   eventosCheckinBody.querySelectorAll('[data-event-delete]').forEach(btn => {
     btn.addEventListener('click', () => excluirEventoCheckin(btn.getAttribute('data-event-delete')));
   });
@@ -1755,8 +1770,8 @@ function renderEventosCheckin() {
   if (!total) {
     const hasAny = (eventosCheckin || []).length > 0;
     eventosCheckinBody.innerHTML = hasAny
-      ? '<tr><td colspan="6">Nenhum evento corresponde aos filtros.</td></tr>'
-      : '<tr><td colspan="6">Nenhum evento. Clique em "Novo evento de check-in" para criar.</td></tr>';
+      ? '<tr><td colspan="7">Nenhum evento corresponde aos filtros.</td></tr>'
+      : '<tr><td colspan="7">Nenhum evento. Clique em "Novo evento de check-in" para criar.</td></tr>';
   } else {
     eventosCheckinBody.innerHTML = displayList.map(renderEventoCheckinRowHtml).join('');
     wireEventosCheckinTableActions();
@@ -1781,6 +1796,68 @@ async function fetchEventosCheckin() {
     if (e.message === 'AUTH_REQUIRED') return;
     showErrorToast(e.message || 'Erro ao carregar eventos de check-in.');
   } finally { setViewLoading('eventos-checkin', false); }
+}
+
+async function downloadEventoCheckinQr(eventoId) {
+  const id = (eventoId || '').trim();
+  if (!id) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/eventos-checkin/${encodeURIComponent(id)}/qr.png`);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha ao gerar QR code.');
+    const blob = await r.blob();
+    const ev = eventosCheckin.find((e) => String(e._id) === id);
+    const label = (ev?.label || 'checkin').replace(/[^\w\-]+/g, '-').slice(0, 40) || 'checkin';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `checkin-qr-${label}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert(e.message || 'Erro ao baixar QR code.');
+  }
+}
+
+async function enviarEmailAberturaEvento(eventoId) {
+  const id = (eventoId || '').trim();
+  if (!id) return;
+  const ev = eventosCheckin.find((e) => String(e._id) === id);
+  const label = ev?.label || 'este evento';
+  const force = !!ev?.emailAberturaEnviadoEm;
+  const msg = force
+    ? `Reenviar email de abertura do check-in para todos os voluntários de "${label}"?`
+    : `Enviar email de abertura (com link e QR code) para todos os voluntários de "${label}"?`;
+  if (!confirm(msg)) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/eventos-checkin/${encodeURIComponent(id)}/enviar-email-abertura`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 409) {
+      if (confirm((data.error || 'Email já enviado.') + '\n\nDeseja reenviar mesmo assim?')) {
+        const r2 = await authFetch(`${API_BASE}/api/eventos-checkin/${encodeURIComponent(id)}/enviar-email-abertura`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force: true }),
+        });
+        const d2 = await r2.json().catch(() => ({}));
+        if (!r2.ok) throw new Error(d2.error || 'Falha ao reenviar.');
+        alert(`${d2.sent || 0} email(s) enviado(s) de ${d2.total || 0}.`);
+        await fetchEventosCheckin();
+        return;
+      }
+      return;
+    }
+    if (!r.ok) throw new Error(data.error || 'Falha ao enviar emails.');
+    alert(`${data.sent || 0} email(s) enviado(s) de ${data.total || 0}.`);
+    await fetchEventosCheckin();
+  } catch (e) {
+    alert(e.message || 'Erro ao enviar emails de abertura.');
+  }
 }
 
 let cultosRecorrentesList = [];
@@ -3787,9 +3864,10 @@ async function fetchEscalasCriar() {
     }
     const data = await r.json().catch(() => null);
     escalasList = sortByDataSmart(Array.isArray(data) ? data : [], 'data');
+    pruneSelectedEscalaIds();
     renderEscalasCriar();
     authFetch(`${API_BASE}/api/escalas`).then(r2 => r2.ok ? r2.json() : null).then(full => {
-      if (Array.isArray(full)) { escalasList = sortByDataSmart(full, 'data'); renderEscalasCriar(); }
+      if (Array.isArray(full)) { escalasList = sortByDataSmart(full, 'data'); pruneSelectedEscalaIds(); renderEscalasCriar(); }
     }).catch(() => {});
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
@@ -4531,6 +4609,27 @@ function renderAnaliseTab() {
 }
 
 /** Criar escalas (admin): apenas tabela CRUD, leve */
+function pruneSelectedEscalaIds() {
+  const valid = new Set((escalasList || []).map((e) => String(e._id)));
+  selectedEscalaIds = new Set([...selectedEscalaIds].filter((id) => valid.has(String(id))));
+}
+
+function updateEscalasCriarSelectionUi() {
+  const n = selectedEscalaIds.size;
+  const countEl = document.getElementById('escalasCriarSelectedCount');
+  const btn = document.getElementById('btnExcluirEscalasSelecionadas');
+  if (countEl) countEl.textContent = String(n);
+  if (btn) btn.disabled = n === 0;
+  const allIds = (escalasList || []).map((e) => String(e._id));
+  const allSelected = allIds.length > 0 && allIds.every((id) => selectedEscalaIds.has(id));
+  const someSelected = allIds.some((id) => selectedEscalaIds.has(id));
+  const selectAll = document.getElementById('selectAllEscalasCriar');
+  if (selectAll) {
+    selectAll.checked = allSelected;
+    selectAll.indeterminate = someSelected && !allSelected;
+  }
+}
+
 function renderEscalasCriar() {
   const container = document.getElementById('escalasCriarContent');
   if (!container) return;
@@ -4540,32 +4639,41 @@ function renderEscalasCriar() {
     const ativoFlag = e.ativo !== false;
     const statusLabel = aberta ? 'Aberta' : (ativoFlag ? 'Fora do prazo' : 'Inscrições fechadas');
     const statusClass = aberta ? 'evento-status-ativo' : 'evento-status-inativo';
+    const eid = String(e._id);
+    const checked = selectedEscalaIds.has(eid);
     return `<tr>
+      <td class="col-check" data-label=""><input type="checkbox" class="row-check-escala" data-escala-id="${escapeAttr(eid)}" ${checked ? 'checked' : ''} aria-label="Selecionar escala"></td>
       <td data-label="Nome">${escapeHtml(e.nome)}</td>
       <td data-label="Data">${data}</td>
       <td data-label="Status"><span class="evento-status ${statusClass}">${statusLabel}</span></td>
       <td data-label="Candidatos">${e.totalCandidaturas || 0} <span style="color:var(--text-muted);font-size:.8em">(${e.totalAprovados || 0} aprovados)</span></td>
-      <td class="escala-actions-cell" data-label="Link"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-link="${escapeAttr(String(e._id))}" title="Copiar link (qualquer ministério)">Copiar link</button> <button class="btn btn-sm btn-ghost" data-escala-link-ministerio="${escapeAttr(String(e._id))}" title="Link só para um ministério">Por ministério</button></td>
+      <td class="escala-actions-cell" data-label="Link"><button class="btn btn-sm btn-primary escala-btn-main" data-escala-link="${escapeAttr(eid)}" title="Copiar link (qualquer ministério)">Copiar link</button> <button class="btn btn-sm btn-ghost" data-escala-link-ministerio="${escapeAttr(eid)}" title="Link só para um ministério">Por ministério</button></td>
       <td class="escala-actions-cell" data-label="">
         <div class="escala-actions-wrap">
-          <button class="btn btn-sm btn-ghost" data-escala-edit="${escapeAttr(String(e._id))}">Editar</button>
-          <button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(String(e._id))}">${ativoFlag ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
-          <button class="btn btn-sm btn-ghost" data-escala-delete="${escapeAttr(String(e._id))}">Excluir</button>
+          <button class="btn btn-sm btn-ghost" data-escala-edit="${escapeAttr(eid)}">Editar</button>
+          <button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(eid)}">${ativoFlag ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
+          <button class="btn btn-sm btn-ghost" data-escala-delete="${escapeAttr(eid)}">Excluir</button>
         </div>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="6">Nenhuma escala. Clique em "Nova escala" para criar.</td></tr>';
+  }).join('') || '<tr><td colspan="7">Nenhuma escala. Clique em "Nova escala" para criar.</td></tr>';
 
   container.innerHTML = `
     <div class="filters-card" style="margin-bottom:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
       <button type="button" class="btn btn-primary" id="btnNovaEscala">+ Nova escala</button>
+      <button type="button" class="btn btn-ghost" id="btnExcluirEscalasSelecionadas" disabled style="color:var(--danger,#ef4444)">
+        Excluir selecionadas (<span id="escalasCriarSelectedCount">0</span>)
+      </button>
     </div>
     <div class="table-card escala-table-card">
       <div class="chart-header"><h2>Escalas</h2></div>
-      <p class="auth-subtitle" style="margin-bottom:12px">Crie escalas, edite ou copie o link para os voluntários se candidatarem.</p>
+      <p class="auth-subtitle" style="margin-bottom:12px">Crie escalas, edite ou copie o link para os voluntários se candidatarem. Selecione várias para excluir em lote.</p>
       <div class="table-wrapper">
         <table class="data-table escala-table">
-          <thead><tr><th>Nome</th><th>Data</th><th>Status</th><th>Candidaturas</th><th>Link</th><th>Ações</th></tr></thead>
+          <thead><tr>
+            <th class="col-check"><input type="checkbox" id="selectAllEscalasCriar" title="Selecionar todas"></th>
+            <th>Nome</th><th>Data</th><th>Status</th><th>Candidaturas</th><th>Link</th><th>Ações</th>
+          </tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -4601,6 +4709,29 @@ function renderEscalasCriar() {
   container.querySelectorAll('[data-escala-edit]').forEach(btn => { btn.addEventListener('click', () => openModalEditarEscala(btn.getAttribute('data-escala-edit'))); });
   container.querySelectorAll('[data-escala-toggle]').forEach(btn => { btn.addEventListener('click', () => toggleEscalaAtivo(btn.getAttribute('data-escala-toggle'))); });
   container.querySelectorAll('[data-escala-delete]').forEach(btn => { btn.addEventListener('click', () => excluirEscala(btn.getAttribute('data-escala-delete'))); });
+  container.querySelectorAll('.row-check-escala').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const id = cb.getAttribute('data-escala-id');
+      if (!id) return;
+      if (cb.checked) selectedEscalaIds.add(id);
+      else selectedEscalaIds.delete(id);
+      updateEscalasCriarSelectionUi();
+    });
+  });
+  document.getElementById('selectAllEscalasCriar')?.addEventListener('change', (ev) => {
+    const checked = ev.target.checked;
+    (escalasList || []).forEach((e) => {
+      const id = String(e._id);
+      if (checked) selectedEscalaIds.add(id);
+      else selectedEscalaIds.delete(id);
+    });
+    container.querySelectorAll('.row-check-escala').forEach((cb) => { cb.checked = checked; });
+    updateEscalasCriarSelectionUi();
+  });
+  document.getElementById('btnExcluirEscalasSelecionadas')?.addEventListener('click', () => {
+    void excluirEscalasSelecionadas();
+  });
+  updateEscalasCriarSelectionUi();
 }
 
 function buildVisaoConsolidadaSectionHtml() {
@@ -5354,42 +5485,100 @@ async function toggleEscalaAtivo(id) {
 }
 
 async function excluirEscala(id) {
-  const escala = escalasList.find(e => String(e._id) === id);
-  const total = Number(escala?.totalCandidaturas) || 0;
-  if (total > 0) {
-    openModalExcluirEscala(id);
-    return;
-  }
-  if (!confirm(`Excluir a escala "${(escala?.nome || '').replace(/"/g, '')}"? Esta ação não pode ser desfeita.`)) return;
-  await executarExclusaoEscala(id, {});
+  await excluirEscalasPorIds([id]);
 }
 
-function listEscalasFuturasAtivas(excludeId) {
+async function excluirEscalasSelecionadas() {
+  const ids = [...selectedEscalaIds];
+  if (!ids.length) {
+    alert('Selecione ao menos uma escala.');
+    return;
+  }
+  await excluirEscalasPorIds(ids);
+}
+
+function normalizeExcluirEscalaIds(input) {
+  const arr = Array.isArray(input) ? input : [input];
+  return [...new Set(arr.map((x) => String(x).trim()).filter(Boolean))];
+}
+
+function sumCandidaturasEscalas(ids) {
+  return ids.reduce((sum, id) => {
+    const e = escalasList.find((x) => String(x._id) === String(id));
+    return sum + (Number(e?.totalCandidaturas) || 0);
+  }, 0);
+}
+
+async function excluirEscalasPorIds(input) {
+  const ids = normalizeExcluirEscalaIds(input);
+  if (!ids.length) return;
+  const totalCand = sumCandidaturasEscalas(ids);
+  if (totalCand > 0) {
+    openModalExcluirEscala(ids);
+    return;
+  }
+  const label = ids.length === 1
+    ? `"${(escalasList.find((e) => String(e._id) === ids[0])?.nome || '').replace(/"/g, '')}"`
+    : `${ids.length} escalas`;
+  if (!confirm(`Excluir ${label}? Esta ação não pode ser desfeita.`)) return;
+  await executarExclusaoEscalas(ids, {});
+}
+
+function listEscalasFuturasAtivas(excludeIds) {
+  const exclude = new Set(normalizeExcluirEscalaIds(excludeIds));
   const hoje = getHojeDateString();
   return (Array.isArray(escalasList) ? escalasList : []).filter((e) => {
-    if (String(e._id) === String(excludeId)) return false;
+    if (exclude.has(String(e._id))) return false;
     if (e.ativo === false) return false;
     const ymd = escalaDataToYMD(e.data);
     return ymd && ymd >= hoje;
   });
 }
 
-function openModalExcluirEscala(id) {
-  const escala = escalasList.find(e => String(e._id) === id);
+function getExcluirEscalaIdsFromModal() {
+  const raw = document.getElementById('excluirEscalaIds')?.value || '';
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length) return normalizeExcluirEscalaIds(parsed);
+  } catch (_) { /* legado */ }
+  const legacy = (document.getElementById('excluirEscalaId')?.value || '').trim();
+  return legacy ? [legacy] : [];
+}
+
+function openModalExcluirEscala(input) {
+  const ids = normalizeExcluirEscalaIds(input);
+  if (!ids.length) return;
   const modal = document.getElementById('modalExcluirEscala');
-  if (!modal || !escala) return;
-  const total = Number(escala.totalCandidaturas) || 0;
+  if (!modal) return;
+  const total = sumCandidaturasEscalas(ids);
   const msg = document.getElementById('modalExcluirEscalaMsg');
-  const idEl = document.getElementById('excluirEscalaId');
+  const idsEl = document.getElementById('excluirEscalaIds');
+  const legacyIdEl = document.getElementById('excluirEscalaId');
+  const titleEl = document.getElementById('modalExcluirEscalaTitle');
+  const confirmBtn = document.getElementById('btnConfirmExcluirEscala');
   const sel = document.getElementById('excluirEscalaRedirectSelect');
   const redirectGroup = document.getElementById('excluirEscalaRedirectGroup');
   const semDestino = document.getElementById('excluirEscalaSemDestino');
   const forceCb = document.getElementById('excluirEscalaForce');
-  if (idEl) idEl.value = id;
-  if (msg) {
-    msg.textContent = `A escala "${escala.nome || '—'}" tem ${total} candidatura(s). Você pode mover as inscrições para outra escala futura ativa antes de excluir.`;
+  if (idsEl) idsEl.value = JSON.stringify(ids);
+  if (legacyIdEl) legacyIdEl.value = ids.length === 1 ? ids[0] : '';
+  if (titleEl) titleEl.textContent = ids.length === 1 ? 'Excluir escala' : `Excluir ${ids.length} escalas`;
+  if (confirmBtn) confirmBtn.textContent = ids.length === 1 ? 'Excluir escala' : `Excluir ${ids.length} escalas`;
+  const forceText = document.getElementById('excluirEscalaForceText');
+  if (forceText) {
+    forceText.textContent = ids.length === 1
+      ? 'Excluir sem redirecionar (apaga todas as inscrições desta escala)'
+      : 'Excluir sem redirecionar (apaga todas as inscrições das escalas selecionadas)';
   }
-  const destinos = listEscalasFuturasAtivas(id);
+  if (msg) {
+    if (ids.length === 1) {
+      const escala = escalasList.find((e) => String(e._id) === ids[0]);
+      msg.textContent = `A escala "${escala?.nome || '—'}" tem ${total} candidatura(s). Você pode mover as inscrições para outra escala futura ativa antes de excluir.`;
+    } else {
+      msg.textContent = `${ids.length} escalas selecionadas, com ${total} candidatura(s) no total. Você pode mover todas as inscrições para uma escala futura ativa antes de excluir.`;
+    }
+  }
+  const destinos = listEscalasFuturasAtivas(ids);
   if (sel) {
     sel.innerHTML = destinos.length
       ? '<option value="">Selecione uma escala…</option>'
@@ -5414,52 +5603,79 @@ function closeModalExcluirEscala() {
   modal.setAttribute('aria-hidden', 'true');
 }
 
-async function executarExclusaoEscala(id, { redirectToEscalaId, forceWithoutRedirect } = {}) {
+async function executarExclusaoEscalas(ids, { redirectToEscalaId, forceWithoutRedirect } = {}) {
+  const normalized = normalizeExcluirEscalaIds(ids);
+  if (!normalized.length) return;
   try {
-    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ redirectToEscalaId: redirectToEscalaId || undefined, forceWithoutRedirect: !!forceWithoutRedirect }),
-    });
-    const data = await r.json().catch(() => ({}));
+    let r;
+    let data = {};
+    if (normalized.length === 1) {
+      r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(normalized[0])}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ redirectToEscalaId: redirectToEscalaId || undefined, forceWithoutRedirect: !!forceWithoutRedirect }),
+      });
+      data = await r.json().catch(() => ({}));
+    } else {
+      r = await authFetch(`${API_BASE}/api/escalas/bulk-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: normalized,
+          redirectToEscalaId: redirectToEscalaId || undefined,
+          forceWithoutRedirect: !!forceWithoutRedirect,
+        }),
+      });
+      data = await r.json().catch(() => ({}));
+    }
     if (r.status === 409 && data.needRedirect) {
-      openModalExcluirEscala(id);
+      openModalExcluirEscala(normalized);
       return;
     }
-    if (!r.ok) throw new Error(data.error || 'Falha ao excluir escala.');
+    if (!r.ok) throw new Error(data.error || 'Falha ao excluir escala(s).');
     closeModalExcluirEscala();
+    normalized.forEach((id) => selectedEscalaIds.delete(id));
+    const deleted = normalized.length === 1 ? 1 : (Number(data.deleted) || normalized.length);
     const moved = Number(data.moved) || 0;
     if (data.redirectedTo && moved > 0) {
-      alert(`${moved} inscrição(ões) redirecionada(s). Escala excluída.`);
+      alert(`${moved} inscrição(ões) redirecionada(s). ${deleted} escala(s) excluída(s).`);
     } else if (data.redirectedTo) {
-      alert('Escala excluída. Inscrições já existentes na escala de destino foram mantidas.');
+      alert(`${deleted} escala(s) excluída(s). Inscrições já existentes na escala de destino foram mantidas.`);
+    } else if (deleted > 1) {
+      alert(`${deleted} escalas excluídas.`);
     }
     await fetchEscalasCriar();
   } catch (e) {
-    alert(e.message || 'Erro ao excluir escala.');
+    alert(e.message || 'Erro ao excluir escala(s).');
   }
 }
 
 async function confirmarExclusaoEscalaComOpcoes() {
-  const id = (document.getElementById('excluirEscalaId')?.value || '').trim();
-  if (!id) return;
-  const escala = escalasList.find(e => String(e._id) === id);
+  const ids = getExcluirEscalaIdsFromModal();
+  if (!ids.length) return;
   const force = document.getElementById('excluirEscalaForce')?.checked === true;
   const redirectToEscalaId = (document.getElementById('excluirEscalaRedirectSelect')?.value || '').trim();
-  const total = Number(escala?.totalCandidaturas) || 0;
+  const total = sumCandidaturasEscalas(ids);
   if (total > 0 && !force && !redirectToEscalaId) {
     alert('Selecione uma escala de destino ou marque "Excluir sem redirecionar".');
     return;
   }
+  const n = ids.length;
   if (force) {
-    if (!confirm(`Excluir "${(escala?.nome || '').replace(/"/g, '')}" e remover ${total} inscrição(ões)? Esta ação não pode ser desfeita.`)) return;
-    await executarExclusaoEscala(id, { forceWithoutRedirect: true });
+    const msg = n === 1
+      ? `Excluir a escala selecionada e remover ${total} inscrição(ões)? Esta ação não pode ser desfeita.`
+      : `Excluir ${n} escalas e remover ${total} inscrição(ões)? Esta ação não pode ser desfeita.`;
+    if (!confirm(msg)) return;
+    await executarExclusaoEscalas(ids, { forceWithoutRedirect: true });
     return;
   }
-  const dest = escalasList.find(e => String(e._id) === redirectToEscalaId);
+  const dest = escalasList.find((e) => String(e._id) === redirectToEscalaId);
   const destLabel = dest ? `${dest.nome} (${formatEscalaDateOnly(dest.data)})` : 'escala selecionada';
-  if (!confirm(`Excluir "${(escala?.nome || '').replace(/"/g, '')}" e mover ${total} inscrição(ões) para "${destLabel}"?`)) return;
-  await executarExclusaoEscala(id, { redirectToEscalaId });
+  const msg = n === 1
+    ? `Excluir a escala e mover ${total} inscrição(ões) para "${destLabel}"?`
+    : `Excluir ${n} escalas e mover ${total} inscrição(ões) para "${destLabel}"?`;
+  if (!confirm(msg)) return;
+  await executarExclusaoEscalas(ids, { redirectToEscalaId });
 }
 
 function openModalEditarEscala(id) {

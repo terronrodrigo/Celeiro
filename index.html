@@ -553,10 +553,10 @@
           </section>
           <div id="eventosCheckinList" class="table-card">
             <div class="chart-header"><h2>Eventos de check-in</h2></div>
-            <p class="auth-subtitle">Datas de culto para check-in. <span id="eventosCheckinCount" class="list-count">(0)</span></p>
+            <p class="auth-subtitle">Datas de culto para check-in. Na abertura da janela (horário de Brasília), voluntários recebem email automático com link e QR code — se <code>RESEND_API_KEY</code> estiver configurada. <span id="eventosCheckinCount" class="list-count">(0)</span></p>
             <div class="table-wrapper">
               <table class="data-table">
-                <thead><tr><th>Data</th><th>Nome</th><th>Horário (SP)</th><th>Status</th><th>Link público</th><th>Ação</th></tr></thead>
+                <thead><tr><th>Data</th><th>Nome</th><th>Horário (SP)</th><th>Status</th><th>Link / QR</th><th>Email</th><th>Ações</th></tr></thead>
                 <tbody id="eventosCheckinBody"></tbody>
               </table>
             </div>
@@ -1674,11 +1674,12 @@
     <div class="modal-backdrop"></div>
     <div class="modal-box">
       <div class="modal-header">
-        <h2>Excluir escala</h2>
+        <h2 id="modalExcluirEscalaTitle">Excluir escala</h2>
         <button type="button" class="modal-close" id="modalExcluirEscalaClose">&times;</button>
       </div>
       <div class="modal-body">
         <p id="modalExcluirEscalaMsg" class="auth-subtitle" style="margin-bottom:16px"></p>
+        <input type="hidden" id="excluirEscalaIds" value="[]">
         <input type="hidden" id="excluirEscalaId">
         <div class="form-group" id="excluirEscalaRedirectGroup">
           <label for="excluirEscalaRedirectSelect">Redirecionar inscrições para</label>
@@ -1696,7 +1697,7 @@
         </div>
         <label class="checkbox-label" style="margin-top:12px" id="excluirEscalaForceLabel">
           <input type="checkbox" id="excluirEscalaForce">
-          Excluir sem redirecionar (apaga todas as inscrições desta escala)
+          <span id="excluirEscalaForceText">Excluir sem redirecionar (apaga todas as inscrições desta escala)</span>
         </label>
       </div>
       <div class="modal-footer">
@@ -1779,6 +1780,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.6"></script>
+  <script defer src="app.js?v=1.6.8"></script>
 </body>
 </html>

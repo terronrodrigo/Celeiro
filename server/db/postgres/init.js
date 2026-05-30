@@ -232,6 +232,8 @@ export async function initPostgres(connectionString) {
   `);
   const { migrateCultosRecorrentesSchema } = await import('./cultos-recorrentes.js');
   await migrateCultosRecorrentesSchema();
+  const { migrateEventosCheckinSchema } = await import('./escalas-checkin.js');
+  await migrateEventosCheckinSchema();
   const { migrateConvitesLiderSchema } = await import('./convites-lider.js');
   await migrateConvitesLiderSchema();
   const { migrateAuthSessionsSchema, pgPurgeExpiredAuthSessions } = await import('./auth-sessions.js');

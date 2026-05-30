@@ -503,3 +503,66 @@ export function buildVoluntariosResumo(list) {
     cidades: [],
   };
 }
+
+/**
+ * Histórico de ministérios servidos por email (check-ins + candidaturas aprovadas).
+ * @returns {Map<string, Array<{ ministerio: string, servedAt: Date, escalaId: string|null }>>}
+ */
+export async function pgMapUltimosMinisteriosServidos(igrejaId, { perEmail = 3 } = {}) {
+  const pool = getPostgresPool();
+  const { rows } = await pool.query(
+    `WITH history AS (
+       SELECT
+         LOWER(ch.email) AS em,
+         TRIM(ch.ministerio) AS ministerio,
+         COALESCE(
+           ch.data_checkin,
+           CASE WHEN ch.timestamp_ms IS NOT NULL THEN to_timestamp(ch.timestamp_ms / 1000.0) END,
+           ch.created_at
+         ) AS served_at,
+         cand.escala_id AS escala_id
+       FROM checkins ch
+       LEFT JOIN candidaturas cand ON cand.id = ch.candidatura_id
+       WHERE ch.igreja_id = $1
+         AND TRIM(COALESCE(ch.ministerio, '')) <> ''
+       UNION ALL
+       SELECT
+         LOWER(c.dados->>'email') AS em,
+         TRIM(c.dados->>'ministerio') AS ministerio,
+         COALESCE((e.dados->>'data')::timestamptz, c.created_at) AS served_at,
+         c.escala_id AS escala_id
+       FROM candidaturas c
+       INNER JOIN escalas e ON e.id = c.escala_id
+       WHERE c.igreja_id = $1
+         AND COALESCE(c.dados->>'status', '') = 'aprovado'
+         AND TRIM(COALESCE(c.dados->>'ministerio', '')) <> ''
+     ),
+     best AS (
+       SELECT em, ministerio,
+         MAX(served_at) AS served_at,
+         (array_agg(escala_id ORDER BY served_at DESC NULLS LAST))[1] AS escala_id
+       FROM history
+       WHERE em IS NOT NULL AND em <> '' AND ministerio IS NOT NULL AND ministerio <> ''
+       GROUP BY em, ministerio
+     )
+     SELECT em, ministerio, served_at, escala_id
+     FROM best
+     ORDER BY em, served_at DESC`,
+    [igrejaId],
+  );
+  const limit = Math.max(1, Math.min(10, Number(perEmail) || 3));
+  const out = new Map();
+  for (const r of rows) {
+    const em = (r.em || '').toLowerCase().trim();
+    if (!em) continue;
+    if (!out.has(em)) out.set(em, []);
+    const list = out.get(em);
+    if (list.length >= limit) continue;
+    list.push({
+      ministerio: r.ministerio,
+      servedAt: r.served_at,
+      escalaId: r.escala_id ? String(r.escala_id) : null,
+    });
+  }
+  return out;
+}

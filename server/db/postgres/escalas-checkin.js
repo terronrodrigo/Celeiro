@@ -10,6 +10,23 @@ import {
 } from '../../lib/brasilia.js';
 import { isCheckinEventAberto } from '../../lib/escala-checkin-rules.js';
 
+const EVENTOS_CHECKIN_MIGRATION_SQL = `
+ALTER TABLE eventos_checkin ADD COLUMN IF NOT EXISTS email_abertura_enviado_em TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS escala_lembrete_emails (
+  igreja_id TEXT NOT NULL REFERENCES igrejas(id) ON DELETE CASCADE,
+  tipo TEXT NOT NULL CHECK (tipo IN ('quarta', 'domingo')),
+  culto_data DATE NOT NULL,
+  enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  emails_enviados INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (igreja_id, tipo, culto_data)
+);
+`;
+
+export async function migrateEventosCheckinSchema() {
+  await getPostgresPool().query(EVENTOS_CHECKIN_MIGRATION_SQL);
+}
+
 function mapEscalaRow(row) {
   const d = row.dados || {};
   const dataIso = d.data || (row.data_ymd ? `${row.data_ymd}T03:00:00.000Z` : null);
@@ -53,6 +70,7 @@ function mapEventoRow(row) {
     autoGerado: !!row.auto_gerado,
     criadoPor: row.criado_por || null,
     createdAt: row.created_at,
+    emailAberturaEnviadoEm: row.email_abertura_enviado_em || null,
   };
 }
 
@@ -92,6 +110,39 @@ export async function pgListEscalas(igrejaId, {
     escalas = filterNextPerCulto(escalas);
   }
   return escalas;
+}
+
+/** Escalas ativas (ou todas) em uma data YMD (Brasília). */
+export async function pgListEscalasByDataYmd(igrejaId, ymd, { ativoOnly = true } = {}) {
+  if (!ymd) return [];
+  let sql = `SELECT id, igreja_id, dados, created_at FROM escalas
+    WHERE igreja_id = $1 AND (dados->>'data')::date = $2::date`;
+  if (ativoOnly) {
+    sql += " AND (dados->>'ativo')::boolean IS DISTINCT FROM FALSE";
+  }
+  sql += " ORDER BY (dados->>'nome') ASC NULLS LAST, created_at ASC";
+  const { rows } = await getPostgresPool().query(sql, [igrejaId, ymd]);
+  return rows.map(mapEscalaRow);
+}
+
+export async function pgWasEscalaLembreteEnviado(igrejaId, tipo, cultoDataYmd) {
+  const { rows } = await getPostgresPool().query(
+    `SELECT 1 FROM escala_lembrete_emails
+     WHERE igreja_id = $1 AND tipo = $2 AND culto_data = $3::date LIMIT 1`,
+    [igrejaId, tipo, cultoDataYmd],
+  );
+  return rows.length > 0;
+}
+
+export async function pgMarkEscalaLembreteEnviado(igrejaId, tipo, cultoDataYmd, emailsEnviados = 0) {
+  await getPostgresPool().query(
+    `INSERT INTO escala_lembrete_emails (igreja_id, tipo, culto_data, emails_enviados)
+     VALUES ($1, $2, $3::date, $4)
+     ON CONFLICT (igreja_id, tipo, culto_data) DO UPDATE SET
+       enviado_em = NOW(),
+       emails_enviados = EXCLUDED.emails_enviados`,
+    [igrejaId, tipo, cultoDataYmd, emailsEnviados],
+  );
 }
 
 /**
@@ -325,6 +376,85 @@ async function pgMoveCandidaturasBetweenEscalas(client, sourceId, targetId, igre
   return rowCount || 0;
 }
 
+const BULK_DELETE_ESCALAS_MAX = 100;
+
+/**
+ * Exclui várias escalas de uma vez (mesmas regras de redirect/force que pgDeleteEscala).
+ */
+export async function pgBulkDeleteEscalas(rawIds, igrejaId, opts = {}) {
+  const ids = [...new Set((rawIds || []).map((x) => String(x).trim()).filter(Boolean))].slice(0, BULK_DELETE_ESCALAS_MAX);
+  if (!ids.length) return { deleted: 0, error: 'Nenhuma escala informada.' };
+
+  const redirectToEscalaId = (opts.redirectToEscalaId || '').trim() || null;
+  const forceWithoutRedirect = opts.forceWithoutRedirect === true;
+
+  if (redirectToEscalaId && ids.includes(String(redirectToEscalaId))) {
+    return { deleted: 0, error: 'A escala de destino não pode estar na lista de exclusão.' };
+  }
+
+  const pool = getPostgresPool();
+  const { rows: found } = await pool.query(
+    'SELECT id FROM escalas WHERE igreja_id = $1 AND id = ANY($2::text[])',
+    [igrejaId, ids],
+  );
+  if (found.length !== ids.length) {
+    return { deleted: 0, error: 'Uma ou mais escalas não foram encontradas.' };
+  }
+
+  const { rows: candRows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM candidaturas
+     WHERE igreja_id = $1 AND escala_id = ANY($2::text[])`,
+    [igrejaId, ids],
+  );
+  const totalCandidaturas = candRows[0]?.c || 0;
+
+  if (totalCandidaturas > 0 && !redirectToEscalaId && !forceWithoutRedirect) {
+    return { deleted: 0, candidaturas: totalCandidaturas, needRedirect: true, ids };
+  }
+
+  if (totalCandidaturas > 0 && redirectToEscalaId) {
+    const target = await pgFindEscalaById(redirectToEscalaId, igrejaId);
+    for (const id of ids) {
+      const check = pgValidateEscalaRedirectTarget(target, id);
+      if (!check.ok) return { deleted: 0, error: check.error, candidaturas: totalCandidaturas };
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let totalMoved = 0;
+    let deleted = 0;
+    for (const id of ids) {
+      const { rows: cRow } = await client.query(
+        'SELECT COUNT(*)::int AS c FROM candidaturas WHERE escala_id = $1 AND igreja_id = $2',
+        [id, igrejaId],
+      );
+      const count = cRow[0]?.c || 0;
+      if (count > 0 && redirectToEscalaId) {
+        totalMoved += await pgMoveCandidaturasBetweenEscalas(client, id, redirectToEscalaId, igrejaId);
+      }
+      const { rowCount } = await client.query(
+        'DELETE FROM escalas WHERE id = $1 AND igreja_id = $2',
+        [id, igrejaId],
+      );
+      if (rowCount) deleted += 1;
+    }
+    await client.query('COMMIT');
+    return {
+      deleted,
+      moved: totalMoved,
+      redirectedTo: redirectToEscalaId,
+      candidaturas: totalCandidaturas,
+    };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 export async function pgGetEscalaInscricaoStatus(escalaId, ministerio) {
   const { rows } = await getPostgresPool().query(
     'SELECT ativo FROM escala_inscricoes_por_ministerio WHERE escala_id = $1 AND ministerio = $2 LIMIT 1',
@@ -367,7 +497,7 @@ export async function pgListEventosCheckin(igrejaId, {
   ativoOnly = false, dataYmd = null, nextPerCultoOnly = false, futureOnly = false, limit = 500,
 } = {}) {
   let sql = `SELECT id, igreja_id, data, label, ativo, horario_inicio, horario_fim,
-    culto_recorrente_id, auto_gerado, criado_por, created_at
+    culto_recorrente_id, auto_gerado, criado_por, created_at, email_abertura_enviado_em
     FROM eventos_checkin WHERE igreja_id = $1`;
   const params = [igrejaId];
   if (ativoOnly) sql += ' AND ativo = TRUE';
@@ -406,7 +536,8 @@ export async function pgFindEventoCheckinPorData(igrejaId, dataYmd) {
 export async function pgFindEventoCheckinById(id, igrejaId = null) {
   const params = [id];
   let sql = `SELECT id, igreja_id, data, label, ativo, horario_inicio, horario_fim,
-    culto_recorrente_id, auto_gerado, criado_por, created_at FROM eventos_checkin WHERE id = $1`;
+    culto_recorrente_id, auto_gerado, criado_por, created_at, email_abertura_enviado_em
+    FROM eventos_checkin WHERE id = $1`;
   if (igrejaId) {
     params.push(igrejaId);
     sql += ' AND igreja_id = $2';
@@ -462,6 +593,35 @@ export async function pgDeleteEventoCheckin(id, igrejaId) {
     [id, igrejaId],
   );
   return rowCount > 0;
+}
+
+/** Eventos de hoje, ativos, janela de check-in aberta, email de abertura ainda não enviado. */
+export async function pgListEventosCheckinAberturaEmailPendentes() {
+  const hoje = getHojeDateString();
+  const { rows } = await getPostgresPool().query(
+    `SELECT id, igreja_id, data, label, ativo, horario_inicio, horario_fim,
+            culto_recorrente_id, auto_gerado, criado_por, created_at, email_abertura_enviado_em
+     FROM eventos_checkin
+     WHERE ativo = TRUE AND data = $1::date AND email_abertura_enviado_em IS NULL`,
+    [hoje],
+  );
+  return rows.map(mapEventoRow).filter((e) => isCheckinEventAberto(e));
+}
+
+export async function pgMarkEventoAberturaEmailEnviado(id, igrejaId) {
+  await getPostgresPool().query(
+    `UPDATE eventos_checkin SET email_abertura_enviado_em = NOW()
+     WHERE id = $1 AND igreja_id = $2`,
+    [id, igrejaId],
+  );
+}
+
+export async function pgClearEventoAberturaEmailEnviado(id, igrejaId) {
+  await getPostgresPool().query(
+    `UPDATE eventos_checkin SET email_abertura_enviado_em = NULL
+     WHERE id = $1 AND igreja_id = $2`,
+    [id, igrejaId],
+  );
 }
 
 /**
