@@ -1743,11 +1743,15 @@ function renderEventoCheckinRowHtml(e) {
   const emailSentBadge = e.emailAberturaEnviadoEm
     ? ' <span class="evento-status evento-status-ativo" style="font-size:.75rem;margin-left:4px" title="Email de abertura enviado">✉️</span>'
     : '';
+  const vinc = Array.isArray(e.escalasVinculadas) ? e.escalasVinculadas : [];
+  const escalaBadge = vinc.length
+    ? ` <span class="evento-status evento-status-ativo" style="font-size:.75rem;margin-left:4px" title="${escapeAttr(vinc.map((s) => s.nome).join(', '))}">🔗 ${vinc.length} escala${vinc.length > 1 ? 's' : ''}</span>`
+    : '';
   const checked = selectedEventoCheckinIds.has(eventId);
   return `<tr data-event-id="${escapeAttr(eventId)}">
     <td class="col-check" data-label=""><input type="checkbox" class="row-check-evento-checkin" data-evento-id="${escapeAttr(eventId)}" ${checked ? 'checked' : ''} aria-label="Selecionar evento"></td>
     <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
-    <td>${escapeHtml(label)}${emailSentBadge}</td>
+    <td>${escapeHtml(label)}${emailSentBadge}${escalaBadge}</td>
     <td>${escapeHtml(horarioText)}</td>
     <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
     <td class="escala-actions-cell">
@@ -1755,7 +1759,7 @@ function renderEventoCheckinRowHtml(e) {
       <button type="button" class="btn btn-sm btn-ghost" data-event-qr="${escapeAttr(eventId)}" title="Baixar QR code (PNG)">QR PNG</button>
     </td>
     <td><button type="button" class="btn btn-sm btn-ghost" data-event-email-abertura="${escapeAttr(eventId)}" title="Enviar email de abertura aos voluntários">Email abertura</button></td>
-    <td><button type="button" class="btn btn-sm btn-ghost" data-event-edit="${escapeAttr(eventId)}" title="Editar horários e status">Editar</button> <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-event-toggle="${escapeAttr(eventId)}">${btnLabel}</button> <button type="button" class="btn btn-sm btn-ghost" data-event-delete="${escapeAttr(eventId)}" title="Excluir evento">Excluir</button></td>
+    <td><button type="button" class="btn btn-sm btn-ghost" data-event-associar-escala="${escapeAttr(eventId)}" title="Vincular este check-in a uma escala ativa">Associar escala</button> <button type="button" class="btn btn-sm btn-ghost" data-event-edit="${escapeAttr(eventId)}" title="Editar horários e status">Editar</button> <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-event-toggle="${escapeAttr(eventId)}">${btnLabel}</button> <button type="button" class="btn btn-sm btn-ghost" data-event-delete="${escapeAttr(eventId)}" title="Excluir evento">Excluir</button></td>
   </tr>`;
 }
 
@@ -1781,6 +1785,9 @@ function wireEventosCheckinTableActions() {
   });
   eventosCheckinBody.querySelectorAll('[data-event-email-abertura]').forEach(btn => {
     btn.addEventListener('click', () => enviarEmailAberturaEvento(btn.getAttribute('data-event-email-abertura')));
+  });
+  eventosCheckinBody.querySelectorAll('[data-event-associar-escala]').forEach(btn => {
+    btn.addEventListener('click', () => openModalAssociarEventoEscala(btn.getAttribute('data-event-associar-escala')));
   });
   eventosCheckinBody.querySelectorAll('[data-event-delete]').forEach(btn => {
     btn.addEventListener('click', () => excluirEventoCheckin(btn.getAttribute('data-event-delete')));
@@ -1814,6 +1821,101 @@ function renderEventosCheckin() {
   }
   updateEventosCheckinRangeAndMore(total, shown);
   updateEventosCheckinSelectionUi();
+}
+
+function closeModalAssociarEventoEscala() {
+  const modal = document.getElementById('modalAssociarEventoEscala');
+  if (!modal) return;
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+}
+
+async function openModalAssociarEventoEscala(eventoId) {
+  const id = (eventoId || '').trim();
+  if (!id || !authToken) return;
+  const modal = document.getElementById('modalAssociarEventoEscala');
+  const idEl = document.getElementById('associarEventoId');
+  const resumo = document.getElementById('associarEventoResumo');
+  const sel = document.getElementById('associarEventoEscalaSelect');
+  const vincWrap = document.getElementById('associarEventoVinculadasWrap');
+  const vincList = document.getElementById('associarEventoVinculadasList');
+  if (!modal || !sel) return;
+  if (idEl) idEl.value = id;
+  sel.innerHTML = '<option value="">Carregando…</option>';
+  if (resumo) resumo.textContent = 'Carregando escalas…';
+  ensureModalPortal(modal);
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  try {
+    const r = await authFetch(`${API_BASE}/api/eventos-checkin/${encodeURIComponent(id)}/vinculo-escala`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Falha ao carregar escalas.');
+    const ev = data.evento || {};
+    const d = ev.data ? new Date(ev.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '—';
+    if (resumo) resumo.textContent = `Evento: ${(ev.label || d).trim()} (${d})`;
+    const vinculadas = Array.isArray(data.vinculadas) ? data.vinculadas : [];
+    if (vincWrap && vincList) {
+      if (vinculadas.length) {
+        vincWrap.style.display = '';
+        vincList.innerHTML = vinculadas.map((s) => {
+          const sd = s.data ? formatEscalaDateOnly(s.data) : '—';
+          return `<li>${escapeHtml(s.nome || 'Escala')} — ${escapeHtml(sd)}</li>`;
+        }).join('');
+      } else {
+        vincWrap.style.display = 'none';
+        vincList.innerHTML = '';
+      }
+    }
+    const candidatas = Array.isArray(data.candidatas) ? data.candidatas : [];
+    if (!candidatas.length) {
+      sel.innerHTML = '<option value="">Nenhuma escala ativa disponível</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">Selecione uma escala…</option>' + candidatas.map((s) => {
+      const sd = s.data ? formatEscalaDateOnly(s.data) : '—';
+      let tag = '';
+      if (s.vinculadaAEste) tag = ' ✓ já vinculada';
+      else if (s.temOutroEvento) tag = ' ⚠ outro check-in';
+      else if (s.mesmaData) tag = ' · mesma data';
+      return `<option value="${escapeAttr(String(s._id))}">${escapeHtml((s.nome || 'Escala') + ' — ' + sd + tag)}</option>`;
+    }).join('');
+    const prefer = candidatas.find((s) => s.mesmaData && !s.temOutroEvento)
+      || candidatas.find((s) => s.mesmaData)
+      || candidatas.find((s) => !s.temOutroEvento)
+      || candidatas[0];
+    if (prefer && !prefer.vinculadaAEste) sel.value = String(prefer._id);
+  } catch (err) {
+    if (resumo) resumo.textContent = err.message || 'Erro ao carregar.';
+    sel.innerHTML = '<option value="">Erro ao carregar</option>';
+  }
+}
+
+async function submitAssociarEventoEscala(ev, forceReplace = false) {
+  ev?.preventDefault?.();
+  const eventoId = (document.getElementById('associarEventoId')?.value || '').trim();
+  const escalaId = (document.getElementById('associarEventoEscalaSelect')?.value || '').trim();
+  if (!eventoId || !escalaId) {
+    alert('Selecione uma escala.');
+    return;
+  }
+  try {
+    const r = await authFetch(`${API_BASE}/api/eventos-checkin/${encodeURIComponent(eventoId)}/associar-escala`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ escalaId, forceReplace }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 409 && data.needConfirm) {
+      if (!confirm(`${data.error || 'Substituir vínculo?'}\n\nConfirmar substituição do check-in vinculado à escala?`)) return;
+      return submitAssociarEventoEscala(null, true);
+    }
+    if (!r.ok) throw new Error(data.error || 'Falha ao associar.');
+    closeModalAssociarEventoEscala();
+    showToast(data.message || 'Evento associado à escala.');
+    await fetchEventosCheckin();
+  } catch (err) {
+    alert(err.message || 'Erro ao associar escala.');
+  }
 }
 
 async function purgeEventosCheckinOrfaos() {
@@ -2139,11 +2241,13 @@ function openModalEditarEvento(eventoId) {
   if (!evento) return;
   const modal = document.getElementById('modalEditarEvento');
   const idEl = document.getElementById('editarEventoId');
+  const dataEl = document.getElementById('editarEventoData');
   const labelEl = document.getElementById('editarEventoLabel');
   const hinEl = document.getElementById('editarEventoHorarioInicio');
   const hfiEl = document.getElementById('editarEventoHorarioFim');
   const ativoEl = document.getElementById('editarEventoAtivo');
   if (idEl) idEl.value = String(evento._id || '');
+  if (dataEl) dataEl.value = escalaDataToYMD(evento.data) || '';
   if (labelEl) labelEl.value = (evento.label || '').trim();
   if (hinEl) hinEl.value = (evento.horarioInicio || '').trim();
   if (hfiEl) hfiEl.value = (evento.horarioFim || '').trim();
@@ -4734,6 +4838,59 @@ function renderAnaliseTab() {
   });
 }
 
+/** Datas futuras com inscrições abertas (para lembrete por email). */
+function buildEscalasLembreteDateOptions() {
+  const todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const byDate = new Map();
+  for (const e of escalasList || []) {
+    if (!e || e.candidaturaAberta !== true) continue;
+    const ymd = escalaDataToYMD(e.data);
+    if (!ymd || ymd < todayYmd) continue;
+    byDate.set(ymd, (byDate.get(ymd) || 0) + 1);
+  }
+  return sortEscalasByDataAsc([...byDate.entries()].map(([ymd, count]) => ({ ymd, count })));
+}
+
+async function enviarLembreteEscalaVoluntarios(force = false) {
+  const sel = document.getElementById('escalaLembreteDataSelect');
+  const cultoData = sel?.value?.trim();
+  if (!cultoData) {
+    alert('Nenhuma escala com inscrições abertas no momento.');
+    return;
+  }
+  const label = sel?.selectedOptions?.[0]?.textContent?.trim() || cultoData;
+  const msg = force
+    ? `Reenviar email de lembrete de inscrição na escala para todos os voluntários?\n\n${label}`
+    : `Enviar email de lembrete de inscrição na escala para todos os voluntários?\n\n${label}`;
+  if (!confirm(msg)) return;
+  const btn = document.getElementById('btnEnviarLembreteEscala');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/enviar-lembrete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cultoData, force }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 409) {
+      if (confirm((data.error || 'Lembrete já enviado.') + '\n\nDeseja reenviar mesmo assim?')) {
+        await enviarLembreteEscalaVoluntarios(true);
+      }
+      return;
+    }
+    if (!r.ok) throw new Error(data.error || 'Falha ao enviar emails.');
+    if (data.skipped && data.reason === 'no_escalas') {
+      alert('Não há escalas ativas nesta data para incluir no email.');
+      return;
+    }
+    alert(`${data.sent || 0} email(s) enviado(s) de ${data.total || 0}.`);
+  } catch (e) {
+    alert(e.message || 'Erro ao enviar lembrete de escala.');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 /** Criar escalas (admin): apenas tabela CRUD, leve */
 function pruneSelectedEscalaIds() {
   const valid = new Set((escalasList || []).map((e) => String(e._id)));
@@ -4784,12 +4941,25 @@ function renderEscalasCriar() {
     </tr>`;
   }).join('') || '<tr><td colspan="7">Nenhuma escala. Clique em "Nova escala" para criar.</td></tr>';
 
+  const lembreteOpcoes = buildEscalasLembreteDateOptions();
+  const lembreteSelectHtml = lembreteOpcoes.length
+    ? lembreteOpcoes.map(({ ymd, count }) => {
+      const label = formatEscalaDateOnly(ymd);
+      return `<option value="${escapeAttr(ymd)}">${escapeHtml(label)} (${count} escala${count !== 1 ? 's' : ''})</option>`;
+    }).join('')
+    : '<option value="">Sem escalas abertas</option>';
+
   container.innerHTML = `
     <div class="filters-card" style="margin-bottom:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
       <button type="button" class="btn btn-primary" id="btnNovaEscala">+ Nova escala</button>
       <button type="button" class="btn btn-ghost" id="btnExcluirEscalasSelecionadas" disabled style="color:var(--danger,#ef4444)">
         Excluir selecionadas (<span id="escalasCriarSelectedCount">0</span>)
       </button>
+      <div class="escala-lembrete-actions" style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <label for="escalaLembreteDataSelect" class="form-hint" style="margin:0">Reforço por email:</label>
+        <select id="escalaLembreteDataSelect" class="igreja-select" style="min-width:180px" ${lembreteOpcoes.length ? '' : 'disabled'}>${lembreteSelectHtml}</select>
+        <button type="button" class="btn btn-ghost" id="btnEnviarLembreteEscala" ${lembreteOpcoes.length ? '' : 'disabled'} title="Envia lembrete de inscrição na escala para todos os voluntários">Email · todos</button>
+      </div>
     </div>
     <div class="table-card escala-table-card">
       <div class="chart-header"><h2>Escalas</h2></div>
@@ -4806,6 +4976,7 @@ function renderEscalasCriar() {
     </div>
   `;
 
+  document.getElementById('btnEnviarLembreteEscala')?.addEventListener('click', () => enviarLembreteEscalaVoluntarios(false));
   document.getElementById('btnNovaEscala')?.addEventListener('click', () => {
     const m = document.getElementById('modalNovaEscala');
     if (m) {
@@ -6801,18 +6972,29 @@ modalEditarEvento?.querySelector('.modal-backdrop')?.addEventListener('click', (
 document.getElementById('formEditarEvento')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const id = document.getElementById('editarEventoId')?.value?.trim();
+  const data = document.getElementById('editarEventoData')?.value?.trim();
   const label = document.getElementById('editarEventoLabel')?.value?.trim() ?? '';
   const horarioInicio = (document.getElementById('editarEventoHorarioInicio')?.value || '').trim();
   const horarioFim = (document.getElementById('editarEventoHorarioFim')?.value || '').trim();
   const ativo = document.getElementById('editarEventoAtivo')?.checked !== false;
   if (!id) return;
+  if (!data) {
+    alert('Informe a data do culto.');
+    return;
+  }
   try {
-    const r = await authFetch(`${API_BASE}/api/eventos-checkin/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label, ativo, horarioInicio: horarioInicio || '', horarioFim: horarioFim || '' }) });
+    const r = await authFetch(`${API_BASE}/api/eventos-checkin/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data, label, ativo, horarioInicio: horarioInicio || '', horarioFim: horarioFim || '' }) });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
     modalEditarEvento?.classList.remove('open');
     fetchEventosCheckin();
   } catch (err) { alert(err.message || 'Erro ao salvar.'); }
 });
+
+const modalAssociarEventoEscala = document.getElementById('modalAssociarEventoEscala');
+document.getElementById('modalAssociarEventoEscalaClose')?.addEventListener('click', closeModalAssociarEventoEscala);
+document.getElementById('modalAssociarEventoEscalaCancel')?.addEventListener('click', closeModalAssociarEventoEscala);
+modalAssociarEventoEscala?.querySelector('.modal-backdrop')?.addEventListener('click', closeModalAssociarEventoEscala);
+document.getElementById('formAssociarEventoEscala')?.addEventListener('submit', (e) => submitAssociarEventoEscala(e, false));
 
 document.getElementById('modalPerfilVoluntarioClose')?.addEventListener('click', closeModalPerfilVoluntario);
 document.getElementById('modalPerfilVoluntario')?.querySelector('.modal-backdrop')?.addEventListener('click', closeModalPerfilVoluntario);

@@ -4,6 +4,7 @@ import {
   resolveEscalaLembreteTipoForToday,
   getCultoDataYmdForLembrete,
   isEscalaLembreteMorningWindow,
+  resolveEscalaLembreteTipoForCulto,
 } from '../lib/escala-lembrete-email.js';
 import { weekdayBrasilia } from '../lib/brasilia.js';
 
@@ -23,6 +24,12 @@ describe('escala-lembrete-email', () => {
   it('outros dias não têm tipo automático', () => {
     assert.equal(resolveEscalaLembreteTipoForToday('2026-06-03'), null);
     assert.equal(resolveEscalaLembreteTipoForToday('2026-06-07'), null);
+  });
+
+  it('resolveEscalaLembreteTipoForCulto infere quarta ou domingo', () => {
+    assert.equal(resolveEscalaLembreteTipoForCulto('2026-06-03'), 'quarta');
+    assert.equal(resolveEscalaLembreteTipoForCulto('2026-06-07'), 'domingo');
+    assert.equal(resolveEscalaLembreteTipoForCulto('2026-06-02'), null);
   });
 
   it('janela da manhã respeita env vars', () => {

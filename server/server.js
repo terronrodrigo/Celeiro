@@ -64,6 +64,9 @@ import {
   pgClearEventoAberturaEmailEnviado,
   pgListEventosCheckinSemEscalaAtiva,
   pgPurgeEventosCheckinSemEscalaAtiva,
+  pgAttachEscalasVinculadasToEventos,
+  pgGetEventoCheckinVinculoEscalas,
+  pgAssociarEventoCheckinAEscala,
 } from './db/postgres/escalas-checkin.js';
 import { buildCheckinPublicUrl, resolveAppBaseUrl } from './lib/checkin-public-url.js';
 import { generateCheckinQrPng } from './lib/checkin-qrcode.js';
@@ -73,6 +76,7 @@ import {
   sendEscalaLembreteEmailsForIgreja,
   getCultoDataYmdForLembrete,
   resolveEscalaLembreteTipoForToday,
+  resolveEscalaLembreteTipoForCulto,
 } from './lib/escala-lembrete-email.js';
 import {
   pgListEventosFormulario, pgFindEventoFormularioById, pgCreateEventoFormulario,
@@ -2108,7 +2112,10 @@ app.get('/api/eventos-checkin', requireAuth, resolveTenant, async (req, res) => 
         // Para líder/voluntário (sem filtro de data específica), aplicar próxima por culto.
         nextPerCultoOnly: !isAdmin && !dataYmd,
       });
-      return res.json(eventos);
+      const out = isAdmin && eventos.length
+        ? await pgAttachEscalasVinculadasToEventos(req.tenantIgrejaId, eventos)
+        : eventos;
+      return res.json(out);
     }
     if (!guardMongoData(res, EMPTY_ARRAY)) return;
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -2210,24 +2217,36 @@ app.put('/api/eventos-checkin/:id/ativo', requireAuth, resolveTenant, requireAdm
 
 app.put('/api/eventos-checkin/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const { label, ativo, horarioInicio, horarioFim } = req.body || {};
+    const { label, ativo, horarioInicio, horarioFim, data } = req.body || {};
     if (isPostgres()) {
       const hin = horarioInicio != null ? parseHHMM(horarioInicio) : undefined;
       const hfi = horarioFim != null ? parseHHMM(horarioFim) : undefined;
       if (horarioInicio != null && horarioInicio !== '' && !hin) return sendError(res, 400, 'horarioInicio deve ser HH:mm.');
       if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm.');
+      let dataYmd;
+      if (data !== undefined) {
+        dataYmd = String(data).trim().slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dataYmd)) return sendError(res, 400, 'Data inválida (use YYYY-MM-DD).');
+      }
       const evento = await pgUpdateEventoCheckin(req.params.id, req.tenantIgrejaId, {
         label: typeof label === 'string' ? label.trim() : undefined,
         ativo: typeof ativo === 'boolean' ? ativo : undefined,
         horarioInicio: horarioInicio !== undefined ? (hin || '') : undefined,
         horarioFim: horarioFim !== undefined ? (hfi || '') : undefined,
+        data: dataYmd,
       });
-      if (!evento) return sendError(res, 404, 'Evento não encontrado.');
+      if (!evento) return sendError(res, 404, 'Evento não encontrado ou data inválida.');
+      invalidateCache();
       return res.json(evento);
     }
     const update = {};
     if (typeof label === 'string') update.label = label.trim();
     if (typeof ativo === 'boolean') update.ativo = ativo;
+    if (data !== undefined) {
+      const dataOnly = parseDateAsBrasilia(String(data).trim().slice(0, 10));
+      if (!dataOnly) return sendError(res, 400, 'Data inválida.');
+      update.data = dataOnly;
+    }
     const hin = horarioInicio != null ? parseHHMM(horarioInicio) : undefined;
     const hfi = horarioFim != null ? parseHHMM(horarioFim) : undefined;
     if (horarioInicio !== undefined) update.horarioInicio = hin || '';
@@ -2291,6 +2310,9 @@ app.post('/api/eventos-checkin/:id/enviar-email-abertura', requireAuth, resolveT
       appBase: resolveAppBaseUrl(req),
       markSent: true,
     });
+    if (r.skipped && r.reason === 'already_sent') {
+      return sendError(res, 409, 'Email de abertura já foi enviado. Confirme reenvio.');
+    }
     if (r.skipped) return sendError(res, 503, 'RESEND_API_KEY não configurada.');
     res.json({
       ok: true,
@@ -2302,6 +2324,60 @@ app.post('/api/eventos-checkin/:id/enviar-email-abertura', requireAuth, resolveT
   } catch (err) {
     console.error('enviar-email-abertura:', err?.message || err);
     sendError(res, 500, err.message || 'Erro ao enviar emails.');
+  }
+});
+
+// GET /api/eventos-checkin/:id/vinculo-escala — escalas ativas para associar
+app.get('/api/eventos-checkin/:id/vinculo-escala', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const data = await pgGetEventoCheckinVinculoEscalas(req.tenantIgrejaId, req.params.id);
+    if (!data) return sendError(res, 404, 'Evento não encontrado.');
+    res.json(data);
+  } catch (err) {
+    console.error('eventos-checkin vinculo-escala:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao carregar escalas.');
+  }
+});
+
+// POST /api/eventos-checkin/:id/associar-escala — vincula evento avulso a escala ativa
+app.post('/api/eventos-checkin/:id/associar-escala', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const escalaId = (req.body?.escalaId || '').toString().trim();
+    if (!escalaId) return sendError(res, 400, 'Informe escalaId.');
+    const forceReplace = req.body?.forceReplace === true;
+    const r = await pgAssociarEventoCheckinAEscala({
+      eventoId: req.params.id,
+      escalaId,
+      igrejaId: req.tenantIgrejaId,
+      forceReplace,
+    });
+    if (!r.ok) {
+      if (r.needConfirm) {
+        return res.status(409).json({
+          error: r.error,
+          needConfirm: true,
+          escalaEventoAtualId: r.escalaEventoAtualId,
+        });
+      }
+      return sendError(res, 400, r.error || 'Não foi possível associar.');
+    }
+    invalidateCache();
+    res.json({
+      ok: true,
+      alreadyLinked: !!r.alreadyLinked,
+      replaced: !!r.replaced,
+      escala: r.escala,
+      message: r.alreadyLinked
+        ? 'Escala já estava vinculada a este evento.'
+        : r.replaced
+          ? 'Vínculo anterior substituído.'
+          : 'Evento associado à escala.',
+    });
+  } catch (err) {
+    console.error('eventos-checkin associar-escala:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao associar escala.');
   }
 });
 
@@ -5065,13 +5141,20 @@ app.post('/api/escalas/enviar-lembrete', requireAuth, resolveTenant, requireAdmi
     if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
     const body = req.body || {};
     const force = body.force === true;
-    let tipo = (body.tipo || '').toString().trim().toLowerCase();
-    if (!tipo) tipo = resolveEscalaLembreteTipoForToday() || '';
-    if (tipo !== 'quarta' && tipo !== 'domingo') {
-      return sendError(res, 400, 'Informe tipo "quarta" ou "domingo" (ou rode em segunda/quinta).');
+    let cultoDataYmd = (body.cultoData || '').toString().trim().slice(0, 10);
+    if (cultoDataYmd && !/^\d{4}-\d{2}-\d{2}$/.test(cultoDataYmd)) {
+      return sendError(res, 400, 'Data do culto inválida (use YYYY-MM-DD).');
     }
-    const cultoDataYmd = (body.cultoData || '').toString().trim().slice(0, 10)
-      || getCultoDataYmdForLembrete(tipo);
+    let tipo = (body.tipo || '').toString().trim().toLowerCase();
+    if (cultoDataYmd && tipo !== 'quarta' && tipo !== 'domingo') {
+      const inferred = resolveEscalaLembreteTipoForCulto(cultoDataYmd);
+      if (inferred) tipo = inferred;
+    }
+    if (!tipo) tipo = resolveEscalaLembreteTipoForToday() || '';
+    if (!cultoDataYmd) cultoDataYmd = getCultoDataYmdForLembrete(tipo) || '';
+    if (tipo !== 'quarta' && tipo !== 'domingo') {
+      return sendError(res, 400, 'Informe tipo "quarta" ou "domingo", ou a data de um culto de quarta ou domingo.');
+    }
     if (!cultoDataYmd) return sendError(res, 400, 'Não foi possível determinar a data do culto.');
     const r = await sendEscalaLembreteEmailsForIgreja({
       igrejaId: req.tenantIgrejaId,

@@ -45,6 +45,15 @@ export function getCultoDataYmdForLembrete(tipo, hoje = getHojeDateString()) {
   return getProximaOcorrenciaYmd(cfg.cultoDiaSemana, hoje);
 }
 
+/** Quarta (3) ou domingo (0) a partir da data do culto — para envio manual. */
+export function resolveEscalaLembreteTipoForCulto(cultoDataYmd) {
+  if (!cultoDataYmd) return null;
+  const wd = weekdayBrasilia(cultoDataYmd);
+  if (wd === 3) return 'quarta';
+  if (wd === 0) return 'domingo';
+  return null;
+}
+
 function pickEscalaForMinisterioLink({ ministerioEntry, upcomingEscalas, pastEscalaById }) {
   if (!upcomingEscalas.length) return null;
   const lastId = ministerioEntry?.escalaId;

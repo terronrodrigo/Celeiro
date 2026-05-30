@@ -6,7 +6,7 @@ import { pgListVoluntarios } from '../db/postgres/operational-data.js';
 import { pgFindIgrejaById } from '../db/postgres/repos.js';
 import {
   pgListEventosCheckinAberturaEmailPendentes,
-  pgMarkEventoAberturaEmailEnviado,
+  pgTryClaimEventoAberturaEmail,
 } from '../db/postgres/escalas-checkin.js';
 
 function horarioCheckinLabel(evento) {
@@ -66,24 +66,33 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
   const apiKey = (process.env.RESEND_API_KEY || '').trim();
   if (!apiKey) return { sent: 0, failed: 0, total: 0, skipped: true, reason: 'no_resend' };
 
-  const igreja = await pgFindIgrejaById(evento.igrejaId);
+  let ev = evento;
+  if (opts.markSent !== false) {
+    const claimed = await pgTryClaimEventoAberturaEmail(evento._id, evento.igrejaId);
+    if (!claimed) {
+      return { sent: 0, failed: 0, total: 0, skipped: true, reason: 'already_sent' };
+    }
+    ev = claimed;
+  }
+
+  const igreja = await pgFindIgrejaById(ev.igrejaId);
   const appBase = (opts.appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
   const checkinUrl = buildCheckinPublicUrl({
     appBase,
-    eventoId: evento._id,
+    eventoId: ev._id,
     igrejaSlug: igreja?.slug || 'celeiro-sp',
   });
-  const ymd = escalaDataToYMD(evento.data);
+  const ymd = escalaDataToYMD(ev.data);
   const eventoDataLabel = ymd ? formatDataPtBr(ymd) : '';
-  const eventoLabel = (evento.label || '').trim() || `Culto ${eventoDataLabel}`;
+  const eventoLabel = (ev.label || '').trim() || `Culto ${eventoDataLabel}`;
   const qrDataUrl = await generateCheckinQrDataUrl(checkinUrl, {
     size: 400,
     title: eventoLabel,
     subtitle: eventoDataLabel ? `Check-in · ${eventoDataLabel}` : 'Check-in de presença',
   });
-  const horarioTexto = horarioCheckinLabel(evento);
+  const horarioTexto = horarioCheckinLabel(ev);
 
-  const voluntarios = await pgListVoluntarios(evento.igrejaId);
+  const voluntarios = await pgListVoluntarios(ev.igrejaId);
   const byEmail = new Map();
   for (const v of voluntarios) {
     const em = (v.email || '').toLowerCase().trim();
@@ -92,10 +101,7 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
   }
   const recipients = [...byEmail.entries()];
   if (!recipients.length) {
-    if (opts.markSent !== false) {
-      await pgMarkEventoAberturaEmailEnviado(evento._id, evento.igrejaId);
-    }
-    return { sent: 0, failed: 0, total: 0 };
+    return { sent: 0, failed: 0, total: 0, checkinUrl };
   }
 
   const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
@@ -137,10 +143,6 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
     }
   }
 
-  if (opts.markSent !== false && (sent > 0 || recipients.length === 0)) {
-    await pgMarkEventoAberturaEmailEnviado(evento._id, evento.igrejaId);
-  }
-
   return { sent, failed, total: recipients.length, checkinUrl };
 }
 
@@ -157,6 +159,7 @@ export async function runCheckinAberturaEmailJob() {
   for (const ev of eventos) {
     try {
       const r = await sendCheckinAberturaEmailsForEvento(ev);
+      if (r.skipped && r.reason === 'already_sent') continue;
       totalSent += r.sent || 0;
       totalFailed += r.failed || 0;
       if ((r.sent || 0) > 0) {

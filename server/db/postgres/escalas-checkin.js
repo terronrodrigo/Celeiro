@@ -699,12 +699,21 @@ export async function pgCreateEventoCheckin({
 export async function pgUpdateEventoCheckin(id, igrejaId, patch) {
   const current = await pgFindEventoCheckinById(id, igrejaId);
   if (!current) return null;
+  let dataYmd = null;
+  if (patch.data !== undefined) {
+    if (patch.data == null || patch.data === '') return null;
+    dataYmd = typeof patch.data === 'string'
+      ? patch.data.trim().slice(0, 10)
+      : escalaDataToYMD(patch.data);
+    if (!dataYmd || !/^\d{4}-\d{2}-\d{2}$/.test(dataYmd)) return null;
+  }
   await getPostgresPool().query(
     `UPDATE eventos_checkin SET
       label = COALESCE($3, label),
       ativo = COALESCE($4, ativo),
       horario_inicio = COALESCE($5, horario_inicio),
-      horario_fim = COALESCE($6, horario_fim)
+      horario_fim = COALESCE($6, horario_fim),
+      data = COALESCE($7::date, data)
      WHERE id = $1 AND igreja_id = $2`,
     [
       id,
@@ -713,6 +722,7 @@ export async function pgUpdateEventoCheckin(id, igrejaId, patch) {
       patch.ativo !== undefined ? patch.ativo : null,
       patch.horarioInicio !== undefined ? patch.horarioInicio : null,
       patch.horarioFim !== undefined ? patch.horarioFim : null,
+      dataYmd,
     ],
   );
   return pgFindEventoCheckinById(id, igrejaId);
@@ -799,6 +809,18 @@ export async function pgMarkEventoAberturaEmailEnviado(id, igrejaId) {
   );
 }
 
+/** Reserva o envio (evita duplicata entre jobs/instâncias). Retorna null se já enviado. */
+export async function pgTryClaimEventoAberturaEmail(id, igrejaId) {
+  const { rows } = await getPostgresPool().query(
+    `UPDATE eventos_checkin SET email_abertura_enviado_em = NOW()
+     WHERE id = $1 AND igreja_id = $2 AND email_abertura_enviado_em IS NULL
+     RETURNING id, igreja_id, data, label, ativo, horario_inicio, horario_fim,
+               culto_recorrente_id, auto_gerado, criado_por, created_at, email_abertura_enviado_em`,
+    [id, igrejaId],
+  );
+  return rows[0] ? mapEventoRow(rows[0]) : null;
+}
+
 export async function pgClearEventoAberturaEmailEnviado(id, igrejaId) {
   await getPostgresPool().query(
     `UPDATE eventos_checkin SET email_abertura_enviado_em = NULL
@@ -859,14 +881,119 @@ export async function pgAutoLinkEscalasOrfas(igrejaId = null) {
 
 /** Busca a escala vinculada a um evento de check-in (se houver). */
 export async function pgFindEscalaByEventoCheckin(igrejaId, eventoCheckinId) {
-  if (!eventoCheckinId) return null;
+  const list = await pgListEscalasByEventoCheckin(igrejaId, eventoCheckinId);
+  return list[0] || null;
+}
+
+/** Todas as escalas vinculadas a um evento de check-in. */
+export async function pgListEscalasByEventoCheckin(igrejaId, eventoCheckinId) {
+  if (!eventoCheckinId) return [];
   const { rows } = await getPostgresPool().query(
     `SELECT id, igreja_id, dados, created_at FROM escalas
-     WHERE igreja_id = $1 AND dados->>'eventoCheckinId' = $2
-     LIMIT 1`,
+     WHERE igreja_id = $1 AND NULLIF(trim(dados->>'eventoCheckinId'), '') = $2
+     ORDER BY (dados->>'data')::timestamptz ASC NULLS LAST, (dados->>'nome') ASC NULLS LAST`,
     [igrejaId, eventoCheckinId],
   );
-  return mapEscalaRow(rows[0]);
+  return rows.map(mapEscalaRow);
+}
+
+/** Anexa escalasVinculadas[] a cada evento (admin). */
+export async function pgAttachEscalasVinculadasToEventos(igrejaId, eventos) {
+  if (!eventos?.length) return eventos || [];
+  const ids = eventos.map((e) => String(e._id));
+  const { rows } = await getPostgresPool().query(
+    `SELECT id,
+            dados->>'nome' AS nome,
+            dados->>'data' AS data_raw,
+            (dados->>'ativo')::boolean AS ativo,
+            NULLIF(trim(dados->>'eventoCheckinId'), '') AS evt_id
+     FROM escalas
+     WHERE igreja_id = $1 AND NULLIF(trim(dados->>'eventoCheckinId'), '') = ANY($2::text[])`,
+    [igrejaId, ids],
+  );
+  const byEvt = new Map();
+  for (const r of rows) {
+    const k = String(r.evt_id);
+    if (!byEvt.has(k)) byEvt.set(k, []);
+    byEvt.get(k).push({
+      _id: r.id,
+      nome: r.nome || '',
+      data: r.data_raw,
+      ativo: r.ativo !== false,
+    });
+  }
+  return eventos.map((e) => ({
+    ...e,
+    escalasVinculadas: byEvt.get(String(e._id)) || [],
+  }));
+}
+
+/** Opções para UI: escalas ativas + vínculos atuais do evento. */
+export async function pgGetEventoCheckinVinculoEscalas(igrejaId, eventoId) {
+  const evento = await pgFindEventoCheckinById(eventoId, igrejaId);
+  if (!evento) return null;
+  const vinculadas = await pgListEscalasByEventoCheckin(igrejaId, eventoId);
+  const eventoYmd = escalaDataToYMD(evento.data);
+  const { rows } = await getPostgresPool().query(
+    `SELECT id, igreja_id, dados, created_at FROM escalas
+     WHERE igreja_id = $1 AND (dados->>'ativo')::boolean IS DISTINCT FROM FALSE
+     ORDER BY (dados->>'data')::timestamptz DESC NULLS LAST, created_at DESC`,
+    [igrejaId],
+  );
+  const candidatas = rows.map(mapEscalaRow).map((e) => {
+    const ymd = escalaDataToYMD(e.data);
+    const evtLink = e.eventoCheckinId ? String(e.eventoCheckinId) : '';
+    return {
+      _id: e._id,
+      nome: e.nome,
+      data: e.data,
+      dataYmd: ymd,
+      eventoCheckinId: evtLink || null,
+      vinculadaAEste: evtLink === String(eventoId),
+      mesmaData: !!(eventoYmd && ymd && ymd === eventoYmd),
+      temOutroEvento: !!(evtLink && evtLink !== String(eventoId)),
+    };
+  });
+  candidatas.sort((a, b) => {
+    if (a.vinculadaAEste !== b.vinculadaAEste) return a.vinculadaAEste ? 1 : -1;
+    if (a.mesmaData !== b.mesmaData) return a.mesmaData ? -1 : 1;
+    if (a.temOutroEvento !== b.temOutroEvento) return a.temOutroEvento ? 1 : -1;
+    return (b.dataYmd || '').localeCompare(a.dataYmd || '');
+  });
+  return { evento, vinculadas, candidatas };
+}
+
+/** Vincula evento de check-in avulso a uma escala ativa (atualiza eventoCheckinId na escala). */
+export async function pgAssociarEventoCheckinAEscala({
+  eventoId, escalaId, igrejaId, forceReplace = false,
+}) {
+  const evento = await pgFindEventoCheckinById(eventoId, igrejaId);
+  if (!evento) return { ok: false, error: 'Evento não encontrado.' };
+  const escala = await pgFindEscalaById(escalaId, igrejaId);
+  if (!escala) return { ok: false, error: 'Escala não encontrada.' };
+  if (escala.ativo === false) return { ok: false, error: 'A escala precisa estar ativa.' };
+
+  const atual = escala.eventoCheckinId ? String(escala.eventoCheckinId) : '';
+  const alvo = String(eventoId);
+  if (atual === alvo) {
+    return { ok: true, escala, evento, alreadyLinked: true };
+  }
+  if (atual && atual !== alvo && !forceReplace) {
+    return {
+      ok: false,
+      needConfirm: true,
+      error: 'Esta escala já está vinculada a outro evento de check-in.',
+      escalaEventoAtualId: atual,
+    };
+  }
+
+  const updated = await pgUpdateEscala(escalaId, igrejaId, { eventoCheckinId: alvo });
+  return {
+    ok: true,
+    escala: updated,
+    evento,
+    replaced: !!(atual && atual !== alvo),
+  };
 }
 
 export async function pgAutoCloseEscalasVencidas(igrejaId) {
