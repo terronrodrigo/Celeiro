@@ -54,7 +54,7 @@ import {
 import {
   pgListEscalas, pgFindEscalaById, pgFindEscalasByIds, pgCreateEscala, pgUpdateEscala, pgCountCandidaturasByEscala,
   pgListEventosCheckin, pgListEventosCheckinHoje, pgFindEventoCheckinById,
-  pgCreateEventoCheckin, pgUpdateEventoCheckin, pgDeleteEventoCheckin, pgCreateCheckin,
+  pgCreateEventoCheckin, pgUpdateEventoCheckin, pgDeleteEventoCheckin, pgBulkDeleteEventosCheckin, pgCreateCheckin,
   pgCreateCandidatura, pgFindCandidaturaDuplicada, pgFindEventoCheckinPorData,
   pgListCandidaturasByEscalaIds,
   pgDeleteEscala, pgBulkDeleteEscalas, pgGetEscalaInscricaoStatus, pgSetEscalaInscricaoStatus,
@@ -2300,6 +2300,32 @@ app.post('/api/eventos-checkin/:id/enviar-email-abertura', requireAuth, resolveT
   } catch (err) {
     console.error('enviar-email-abertura:', err?.message || err);
     sendError(res, 500, err.message || 'Erro ao enviar emails.');
+  }
+});
+
+// POST /api/eventos-checkin/bulk-delete — exclui vários eventos (admin)
+app.post('/api/eventos-checkin/bulk-delete', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const body = req.body || {};
+    const ids = Array.isArray(body.ids)
+      ? body.ids.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+    if (!ids.length) return sendError(res, 400, 'Informe ao menos um evento (ids).');
+    if (ids.length > 100) return sendError(res, 400, 'Máximo de 100 eventos por operação.');
+    const r = await pgBulkDeleteEventosCheckin(ids, req.tenantIgrejaId);
+    if (r.error) return sendError(res, 400, r.error);
+    invalidateCache();
+    res.json({
+      ok: true,
+      deleted: r.deleted,
+      checkinsCount: r.checkinsCount || 0,
+      escalasUnlinked: r.escalasUnlinked || 0,
+      message: r.deleted === 1 ? 'Evento excluído.' : `${r.deleted} eventos excluídos.`,
+    });
+  } catch (err) {
+    console.error('eventos-checkin bulk-delete:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao excluir eventos.');
   }
 });
 

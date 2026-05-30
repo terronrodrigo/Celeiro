@@ -273,16 +273,137 @@ export async function pgCountAprovadosByMinisterio(igrejaId, escalaId) {
   return out;
 }
 
+/** Evento check-in órfão = nenhuma escala ativa aponta para ele via eventoCheckinId. */
+export async function pgListEventosCheckinSemEscalaAtiva(igrejaId = null) {
+  const { rows } = await getPostgresPool().query(
+    `SELECT ec.id, ec.igreja_id, ec.label, ec.data, ec.ativo,
+            (SELECT COUNT(*)::int FROM checkins ch WHERE ch.evento_id = ec.id) AS checkins_count
+     FROM eventos_checkin ec
+     WHERE ($1::text IS NULL OR ec.igreja_id = $1::text)
+       AND NOT EXISTS (
+         SELECT 1 FROM escalas e
+         WHERE e.igreja_id = ec.igreja_id
+           AND NULLIF(trim(e.dados->>'eventoCheckinId'), '') = ec.id
+           AND (e.dados->>'ativo')::boolean IS DISTINCT FROM FALSE
+       )
+     ORDER BY ec.igreja_id, ec.data DESC, ec.created_at DESC`,
+    [igrejaId],
+  );
+  return rows.map((r) => ({
+    _id: r.id,
+    igrejaId: r.igreja_id,
+    label: r.label || '',
+    data: r.data,
+    ativo: r.ativo !== false,
+    checkinsCount: r.checkins_count || 0,
+  }));
+}
+
+export async function pgCollectEventoCheckinIdsFromEscalas(executor, igrejaId, escalaIds) {
+  if (!escalaIds?.length) return [];
+  const { rows } = await executor.query(
+    `SELECT DISTINCT NULLIF(trim(dados->>'eventoCheckinId'), '') AS evt_id
+     FROM escalas WHERE igreja_id = $1 AND id = ANY($2::text[])`,
+    [igrejaId, escalaIds],
+  );
+  return rows.map((r) => r.evt_id).filter(Boolean);
+}
+
+export async function pgDeleteEventosCheckinComRegistros(executor, igrejaId, eventoIds) {
+  if (!eventoIds?.length) return { eventos: 0, checkins: 0 };
+  const { rowCount: checkinsDeleted } = await executor.query(
+    'DELETE FROM checkins WHERE igreja_id = $1 AND evento_id = ANY($2::text[])',
+    [igrejaId, eventoIds],
+  );
+  const { rowCount: eventosDeleted } = await executor.query(
+    'DELETE FROM eventos_checkin WHERE igreja_id = $1 AND id = ANY($2::text[])',
+    [igrejaId, eventoIds],
+  );
+  return { eventos: eventosDeleted || 0, checkins: checkinsDeleted || 0 };
+}
+
+/** Entre candidatos, remove eventos que ficaram sem escala ativa (+ registros em checkins). */
+export async function pgPurgeOrphanEventosCheckinCandidates(executor, igrejaId, candidateIds) {
+  if (!candidateIds?.length) return { eventos: 0, checkins: 0 };
+  const unique = [...new Set(candidateIds.map(String))];
+  const { rows } = await executor.query(
+    `SELECT t.id FROM unnest($2::text[]) AS t(id)
+     WHERE NOT EXISTS (
+       SELECT 1 FROM escalas e
+       WHERE e.igreja_id = $1
+         AND NULLIF(trim(e.dados->>'eventoCheckinId'), '') = t.id
+         AND (e.dados->>'ativo')::boolean IS DISTINCT FROM FALSE
+     )`,
+    [igrejaId, unique],
+  );
+  return pgDeleteEventosCheckinComRegistros(executor, igrejaId, rows.map((r) => r.id));
+}
+
+/** Limpa todos os eventos_checkin sem escala ativa (e check-ins vinculados). */
+export async function pgPurgeEventosCheckinSemEscalaAtiva(igrejaId = null, { dryRun = false } = {}) {
+  const orphans = await pgListEventosCheckinSemEscalaAtiva(igrejaId);
+  if (dryRun) {
+    return {
+      dryRun: true,
+      orphans,
+      deleted: { eventos: 0, checkins: 0 },
+      totalCheckins: orphans.reduce((s, o) => s + (o.checkinsCount || 0), 0),
+    };
+  }
+  const pool = getPostgresPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let eventos = 0;
+    let checkins = 0;
+    const byIgreja = new Map();
+    for (const o of orphans) {
+      if (!byIgreja.has(o.igrejaId)) byIgreja.set(o.igrejaId, []);
+      byIgreja.get(o.igrejaId).push(o._id);
+    }
+    for (const [igId, ids] of byIgreja) {
+      const r = await pgDeleteEventosCheckinComRegistros(client, igId, ids);
+      eventos += r.eventos;
+      checkins += r.checkins;
+    }
+    await client.query('COMMIT');
+    return { orphans, deleted: { eventos, checkins } };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Remove a escala (candidaturas e linhas de escala_inscricoes somem por ON DELETE CASCADE).
  * Uso interno ao excluir culto recorrente e em scripts — não usar na rota admin sem confirmação.
  */
 export async function pgHardDeleteEscala(id, igrejaId) {
-  const { rowCount } = await getPostgresPool().query(
-    'DELETE FROM escalas WHERE id = $1 AND igreja_id = $2',
-    [id, igrejaId],
-  );
-  return (rowCount || 0) > 0;
+  const pool = getPostgresPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const evtIds = await pgCollectEventoCheckinIdsFromEscalas(client, igrejaId, [id]);
+    const { rowCount } = await client.query(
+      'DELETE FROM escalas WHERE id = $1 AND igreja_id = $2',
+      [id, igrejaId],
+    );
+    const eventosCheckinRemoved = rowCount
+      ? await pgPurgeOrphanEventosCheckinCandidates(client, igrejaId, evtIds)
+      : { eventos: 0, checkins: 0 };
+    await client.query('COMMIT');
+    return {
+      deleted: (rowCount || 0) > 0,
+      eventosCheckinRemoved,
+    };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export async function pgDeleteEscala(id, igrejaId, opts = {}) {
@@ -317,6 +438,7 @@ export async function pgDeleteEscala(id, igrejaId, opts = {}) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const evtIds = await pgCollectEventoCheckinIdsFromEscalas(client, igrejaId, [id]);
     let moved = 0;
     if (count > 0 && redirectToEscalaId) {
       moved = await pgMoveCandidaturasBetweenEscalas(client, id, redirectToEscalaId, igrejaId);
@@ -325,12 +447,16 @@ export async function pgDeleteEscala(id, igrejaId, opts = {}) {
       'DELETE FROM escalas WHERE id = $1 AND igreja_id = $2',
       [id, igrejaId],
     );
+    const eventosCheckinRemoved = rowCount
+      ? await pgPurgeOrphanEventosCheckinCandidates(client, igrejaId, evtIds)
+      : { eventos: 0, checkins: 0 };
     await client.query('COMMIT');
     return {
       deleted: (rowCount || 0) > 0,
       candidaturas: count,
       moved,
       redirectedTo: redirectToEscalaId || null,
+      eventosCheckinRemoved,
     };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -423,6 +549,7 @@ export async function pgBulkDeleteEscalas(rawIds, igrejaId, opts = {}) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const evtIds = await pgCollectEventoCheckinIdsFromEscalas(client, igrejaId, ids);
     let totalMoved = 0;
     let deleted = 0;
     for (const id of ids) {
@@ -440,12 +567,16 @@ export async function pgBulkDeleteEscalas(rawIds, igrejaId, opts = {}) {
       );
       if (rowCount) deleted += 1;
     }
+    const eventosCheckinRemoved = deleted
+      ? await pgPurgeOrphanEventosCheckinCandidates(client, igrejaId, evtIds)
+      : { eventos: 0, checkins: 0 };
     await client.query('COMMIT');
     return {
       deleted,
       moved: totalMoved,
       redirectedTo: redirectToEscalaId,
       candidaturas: totalCandidaturas,
+      eventosCheckinRemoved,
     };
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
@@ -588,11 +719,63 @@ export async function pgUpdateEventoCheckin(id, igrejaId, patch) {
 }
 
 export async function pgDeleteEventoCheckin(id, igrejaId) {
-  const { rowCount } = await getPostgresPool().query(
-    'DELETE FROM eventos_checkin WHERE id = $1 AND igreja_id = $2',
-    [id, igrejaId],
+  const r = await pgBulkDeleteEventosCheckin([id], igrejaId);
+  return (r.deleted || 0) > 0;
+}
+
+const BULK_DELETE_EVENTOS_CHECKIN_MAX = 100;
+
+async function pgUnlinkEscalasFromEventosCheckin(executor, igrejaId, eventoIds) {
+  if (!eventoIds?.length) return 0;
+  const { rowCount } = await executor.query(
+    `UPDATE escalas SET dados = (dados - 'eventoCheckinId')
+      || jsonb_build_object('updatedAt', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+     WHERE igreja_id = $1 AND (dados->>'eventoCheckinId') = ANY($2::text[])`,
+    [igrejaId, eventoIds],
   );
-  return rowCount > 0;
+  return rowCount || 0;
+}
+
+/** Exclui vários eventos de check-in; desvincula escalas e culto_ocorrencias (CASCADE/SET NULL). */
+export async function pgBulkDeleteEventosCheckin(rawIds, igrejaId) {
+  const ids = [...new Set((rawIds || []).map((x) => String(x).trim()).filter(Boolean))]
+    .slice(0, BULK_DELETE_EVENTOS_CHECKIN_MAX);
+  if (!ids.length) return { deleted: 0, error: 'Nenhum evento informado.' };
+
+  const pool = getPostgresPool();
+  const { rows: found } = await pool.query(
+    'SELECT id FROM eventos_checkin WHERE igreja_id = $1 AND id = ANY($2::text[])',
+    [igrejaId, ids],
+  );
+  if (found.length !== ids.length) {
+    return { deleted: 0, error: 'Um ou mais eventos não foram encontrados.' };
+  }
+
+  const { rows: ckRows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM checkins WHERE igreja_id = $1 AND evento_id = ANY($2::text[])`,
+    [igrejaId, ids],
+  );
+  const checkinsCount = ckRows[0]?.c || 0;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const escalasUnlinked = await pgUnlinkEscalasFromEventosCheckin(client, igrejaId, ids);
+    const removed = await pgDeleteEventosCheckinComRegistros(client, igrejaId, ids);
+    await client.query('COMMIT');
+    return {
+      deleted: removed.eventos,
+      checkinsDeleted: removed.checkins,
+      checkinsCount: removed.checkins,
+      escalasUnlinked,
+      ids,
+    };
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 /** Eventos de hoje, ativos, janela de check-in aberta, email de abertura ainda não enviado. */

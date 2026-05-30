@@ -519,8 +519,11 @@
         <!-- Eventos de check-in (admin) -->
         <section class="view" data-view="eventos-checkin">
           <section class="filters-row">
-            <div class="filters-card">
+            <div class="filters-card" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
               <button type="button" class="btn btn-primary" id="btnNovoEvento">➕ Novo evento de check-in</button>
+              <button type="button" class="btn btn-ghost" id="btnExcluirEventosCheckinSelecionados" disabled style="color:var(--danger,#ef4444)">
+                Excluir selecionados (<span id="eventosCheckinSelectedCount">0</span>)
+              </button>
             </div>
           </section>
           <section class="filters-row">
@@ -553,10 +556,10 @@
           </section>
           <div id="eventosCheckinList" class="table-card">
             <div class="chart-header"><h2>Eventos de check-in</h2></div>
-            <p class="auth-subtitle">Datas de culto para check-in. Na abertura da janela (horário de Brasília), voluntários recebem email automático com link e QR code — se <code>RESEND_API_KEY</code> estiver configurada. <span id="eventosCheckinCount" class="list-count">(0)</span></p>
+            <p class="auth-subtitle">Datas de culto para check-in. Na abertura da janela (horário de Brasília), voluntários recebem email automático com link e QR code — se <code>RESEND_API_KEY</code> estiver configurada. Selecione vários para excluir em lote. <span id="eventosCheckinCount" class="list-count">(0)</span></p>
             <div class="table-wrapper">
               <table class="data-table">
-                <thead><tr><th>Data</th><th>Nome</th><th>Horário (SP)</th><th>Status</th><th>Link / QR</th><th>Email</th><th>Ações</th></tr></thead>
+                <thead><tr><th class="col-check"><input type="checkbox" id="selectAllEventosCheckin" title="Selecionar todos"></th><th>Data</th><th>Nome</th><th>Horário (SP)</th><th>Status</th><th>Link / QR</th><th>Email</th><th>Ações</th></tr></thead>
                 <tbody id="eventosCheckinBody"></tbody>
               </table>
             </div>
@@ -1780,6 +1783,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.8"></script>
+  <script defer src="app.js?v=1.6.9"></script>
 </body>
 </html>

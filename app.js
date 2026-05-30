@@ -166,6 +166,7 @@ let authVerified = false;
 let authVerifyGeneration = 0;
 let loginInProgress = false;
 let eventosCheckin = [];
+let selectedEventoCheckinIds = new Set();
 let eventosBatismo = [];
 let eventosApresentacao = [];
 let eventoSelecionadoHoje = null;
@@ -416,6 +417,7 @@ function clearUserContent() {
   checkins = [];
   checkinResumo = {};
   eventosCheckin = [];
+  selectedEventoCheckinIds.clear();
   eventoSelecionadoHoje = null;
   selectedEmails.clear();
   currentView = '';
@@ -508,6 +510,7 @@ function clearTenantScopedData() {
   checkinResumo = {};
   allCheckins = [];
   eventosCheckin = [];
+  selectedEventoCheckinIds.clear();
   eventoSelecionadoHoje = null;
   selectedEmails.clear();
   ministrosList = [];
@@ -1691,6 +1694,27 @@ function getFilteredEventosCheckin() {
   return sortEventosCheckinList(filtered, eventosCheckinSortOrder);
 }
 
+function pruneSelectedEventoCheckinIds() {
+  const valid = new Set((eventosCheckin || []).map((e) => String(e._id)));
+  selectedEventoCheckinIds = new Set([...selectedEventoCheckinIds].filter((id) => valid.has(String(id))));
+}
+
+function updateEventosCheckinSelectionUi() {
+  const n = selectedEventoCheckinIds.size;
+  const countEl = document.getElementById('eventosCheckinSelectedCount');
+  const btn = document.getElementById('btnExcluirEventosCheckinSelecionados');
+  if (countEl) countEl.textContent = String(n);
+  if (btn) btn.disabled = n === 0;
+  const allIds = getFilteredEventosCheckin().map((e) => String(e._id));
+  const allSelected = allIds.length > 0 && allIds.every((id) => selectedEventoCheckinIds.has(id));
+  const someSelected = allIds.some((id) => selectedEventoCheckinIds.has(id));
+  const selectAll = document.getElementById('selectAllEventosCheckin');
+  if (selectAll) {
+    selectAll.checked = allSelected;
+    selectAll.indeterminate = someSelected && !allSelected;
+  }
+}
+
 function updateEventosCheckinRangeAndMore(total, shown) {
   const rangeEl = document.getElementById('eventosCheckinRange');
   const btnMore = document.getElementById('btnVerMaisEventosCheckin');
@@ -1719,7 +1743,9 @@ function renderEventoCheckinRowHtml(e) {
   const emailSentBadge = e.emailAberturaEnviadoEm
     ? ' <span class="evento-status evento-status-ativo" style="font-size:.75rem;margin-left:4px" title="Email de abertura enviado">✉️</span>'
     : '';
+  const checked = selectedEventoCheckinIds.has(eventId);
   return `<tr data-event-id="${escapeAttr(eventId)}">
+    <td class="col-check" data-label=""><input type="checkbox" class="row-check-evento-checkin" data-evento-id="${escapeAttr(eventId)}" ${checked ? 'checked' : ''} aria-label="Selecionar evento"></td>
     <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
     <td>${escapeHtml(label)}${emailSentBadge}</td>
     <td>${escapeHtml(horarioText)}</td>
@@ -1759,6 +1785,16 @@ function wireEventosCheckinTableActions() {
   eventosCheckinBody.querySelectorAll('[data-event-delete]').forEach(btn => {
     btn.addEventListener('click', () => excluirEventoCheckin(btn.getAttribute('data-event-delete')));
   });
+  eventosCheckinBody.querySelectorAll('.row-check-evento-checkin').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const id = cb.getAttribute('data-evento-id');
+      if (!id) return;
+      if (cb.checked) selectedEventoCheckinIds.add(id);
+      else selectedEventoCheckinIds.delete(id);
+      updateEventosCheckinSelectionUi();
+    });
+  });
+  updateEventosCheckinSelectionUi();
 }
 
 function renderEventosCheckin() {
@@ -1770,13 +1806,14 @@ function renderEventosCheckin() {
   if (!total) {
     const hasAny = (eventosCheckin || []).length > 0;
     eventosCheckinBody.innerHTML = hasAny
-      ? '<tr><td colspan="7">Nenhum evento corresponde aos filtros.</td></tr>'
-      : '<tr><td colspan="7">Nenhum evento. Clique em "Novo evento de check-in" para criar.</td></tr>';
+      ? '<tr><td colspan="8">Nenhum evento corresponde aos filtros.</td></tr>'
+      : '<tr><td colspan="8">Nenhum evento. Clique em "Novo evento de check-in" para criar.</td></tr>';
   } else {
     eventosCheckinBody.innerHTML = displayList.map(renderEventoCheckinRowHtml).join('');
     wireEventosCheckinTableActions();
   }
   updateEventosCheckinRangeAndMore(total, shown);
+  updateEventosCheckinSelectionUi();
 }
 
 async function fetchEventosCheckin() {
@@ -1791,6 +1828,7 @@ async function fetchEventosCheckin() {
     const list = await r.json();
     if (currentView !== 'eventos-checkin') return;
     eventosCheckin = list || [];
+    pruneSelectedEventoCheckinIds();
     renderEventosCheckin();
   } catch (e) {
     if (e.message === 'AUTH_REQUIRED') return;
@@ -1997,15 +2035,53 @@ async function syncAllCultosRecorrentes() {
 }
 
 async function excluirEventoCheckin(eventoId) {
-  if (!eventoId || !authToken) return;
-  const evento = (eventosCheckin || []).find(e => String(e._id) === String(eventoId));
-  const label = evento?.label || (evento?.data ? new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '');
-  if (!confirm(`Excluir o evento "${(label || '').replace(/"/g, '')}"? Esta ação não pode ser desfeita.`)) return;
+  await excluirEventosCheckinPorIds([eventoId]);
+}
+
+function normalizeExcluirEventoCheckinIds(input) {
+  const arr = Array.isArray(input) ? input : [input];
+  return [...new Set(arr.map((x) => String(x).trim()).filter(Boolean))];
+}
+
+function labelEventoCheckinResumo(id) {
+  const evento = (eventosCheckin || []).find((e) => String(e._id) === String(id));
+  if (!evento) return 'evento';
+  const d = evento.data ? new Date(evento.data) : null;
+  return (evento.label || (d ? d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '')).replace(/"/g, '') || 'evento';
+}
+
+async function excluirEventosCheckinSelecionados() {
+  const ids = [...selectedEventoCheckinIds];
+  if (!ids.length) {
+    alert('Selecione ao menos um evento.');
+    return;
+  }
+  await excluirEventosCheckinPorIds(ids);
+}
+
+async function excluirEventosCheckinPorIds(input) {
+  const ids = normalizeExcluirEventoCheckinIds(input);
+  if (!ids.length || !authToken) return;
+  const label = ids.length === 1
+    ? `"${labelEventoCheckinResumo(ids[0])}"`
+    : `${ids.length} eventos`;
+  const extra = '\n\nCheck-ins registrados permanecem no histórico, mas ficam sem evento vinculado.';
+  if (!confirm(`Excluir ${label}? Esta ação não pode ser desfeita.${extra}`)) return;
   try {
-    const r = await authFetch(`${API_BASE}/api/eventos-checkin/${eventoId}`, { method: 'DELETE' });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    const r = await authFetch(`${API_BASE}/api/eventos-checkin/bulk-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Falha ao excluir.');
+    ids.forEach((id) => selectedEventoCheckinIds.delete(id));
+    updateEventosCheckinSelectionUi();
     fetchEventosCheckin();
-  } catch (err) { alert(err.message || 'Erro ao excluir evento.'); }
+    if (data.deleted > 1) showToast(`${data.deleted} eventos excluídos.`);
+  } catch (err) {
+    alert(err.message || 'Erro ao excluir evento(s).');
+  }
 }
 
 function openModalEditarEvento(eventoId) {
@@ -6550,6 +6626,18 @@ document.getElementById('btnClearEventosCheckinFilters')?.addEventListener('clic
   if (sortEl) sortEl.value = 'smart';
   resetEventosCheckinListPage();
   renderEventosCheckin();
+});
+document.getElementById('selectAllEventosCheckin')?.addEventListener('change', (ev) => {
+  const checked = ev.target.checked;
+  getFilteredEventosCheckin().forEach((e) => {
+    const id = String(e._id);
+    if (checked) selectedEventoCheckinIds.add(id);
+    else selectedEventoCheckinIds.delete(id);
+  });
+  renderEventosCheckin();
+});
+document.getElementById('btnExcluirEventosCheckinSelecionados')?.addEventListener('click', () => {
+  excluirEventosCheckinSelecionados();
 });
 checkinMinisterioSort?.addEventListener('change', () => {
   checkinMinisterioSortOrder = checkinMinisterioSort.value || 'date-desc';

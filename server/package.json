@@ -15,6 +15,7 @@
     "seed-ministerios-celeiro": "node scripts/seed-ministerios-celeiro.js",
     "import-users-mongo-to-pg": "node scripts/import-users-mongo-to-pg.js",
     "import-lideres-csv": "node scripts/import-lideres-csv.js",
+    "purge-checkin-orfaos": "node scripts/purge-eventos-checkin-orfaos.js",
     "test": "node --test test/*.test.js test/*.test.mjs",
     "test:unit": "node --test test/*.test.js test/*.test.mjs"
   },
