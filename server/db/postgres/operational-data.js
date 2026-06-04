@@ -173,7 +173,7 @@ export async function pgListVoluntarioEmails(igrejaId) {
  * fonte: 'cadastro' (default), 'checkin', 'planilha', etc. — registra como veio.
  * Se já existe, atualiza nome/ministerio (não sobrescreve fonte para preservar histórico).
  */
-export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igrejaId, fonte = 'cadastro', telefone, batizado } = {}) {
+export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igrejaId, fonte = 'cadastro', telefone, batizado, dadosExtra } = {}) {
   const em = (email || '').toString().trim().toLowerCase();
   if (!em || !em.includes('@') || !igrejaId) return null;
   const pool = getPostgresPool();
@@ -185,12 +185,13 @@ export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igreja
   const minStr = (ministerio || '').toString().trim();
   const telStr = (telefone || '').toString().trim();
   const batMerge = batizado === true || batizado === false ? batizado : null;
+  const patchExtra = dadosExtra && typeof dadosExtra === 'object' ? dadosExtra : null;
   if (rows[0]) {
     const dados = { ...(rows[0].dados || {}) };
     if (nomeStr) dados.nome = nomeStr;
     if (minStr) {
       const set = new Set(splitVoluntarioMinisterios({ ministerios: dados.ministerios, ministerio: dados.ministerio }));
-      set.add(minStr);
+      splitVoluntarioMinisterios({ ministerio: minStr }).forEach((m) => set.add(m));
       const arr = [...set];
       dados.ministerios = arr;
       dados.ministerio = arr.join(', ');
@@ -204,6 +205,7 @@ export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igreja
         dados.batizado = batMerge;
       }
     }
+    if (patchExtra) Object.assign(dados, patchExtra);
     await pool.query(
       `UPDATE voluntarios SET dados = $3::jsonb, nome = COALESCE(NULLIF($4, ''), nome)
        WHERE id = $1 AND igreja_id = $2`,
@@ -212,10 +214,11 @@ export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igreja
     return rows[0].id;
   }
   const id = randomUUID();
-  const mins0 = minStr ? [minStr] : [];
+  const mins0 = minStr ? splitVoluntarioMinisterios({ ministerio: minStr }) : [];
   const dados = { nome: nomeStr || em, ministerios: mins0, ministerio: mins0.join(', ') };
   if (telStr) dados.telefone = telStr;
   if (batMerge !== null) dados.batizado = batMerge;
+  if (patchExtra) Object.assign(dados, patchExtra);
   await pool.query(
     `INSERT INTO voluntarios (id, igreja_id, email, nome, dados, ativo, fonte)
      VALUES ($1, $2, $3, $4, $5::jsonb, TRUE, $6)`,
@@ -273,6 +276,24 @@ function mapCheckinRow(row) {
     timestampMs: ms,
     batizado: row.batizado,
   };
+}
+
+/** Datas distintas com check-in (YYYY-MM-DD, Brasília), mais recentes primeiro. */
+export async function pgListCheckinDates(igrejaId, { limit = 120 } = {}) {
+  const cap = Math.max(1, Math.min(365, Number(limit) || 120));
+  const { rows } = await getPostgresPool().query(
+    `SELECT DISTINCT (data_checkin AT TIME ZONE 'America/Sao_Paulo')::date AS d
+     FROM checkins
+     WHERE igreja_id = $1 AND data_checkin IS NOT NULL
+     ORDER BY d DESC
+     LIMIT $2`,
+    [igrejaId, cap],
+  );
+  return rows.map((r) => {
+    const d = r.d;
+    if (d instanceof Date) return d.toISOString().slice(0, 10);
+    return String(d).slice(0, 10);
+  }).filter((ymd) => /^\d{4}-\d{2}-\d{2}$/.test(ymd));
 }
 
 export async function pgListCheckins(igrejaId, { dataYmd = null, eventoId = null, ministerio = null, email = null, limit = 5000 } = {}) {

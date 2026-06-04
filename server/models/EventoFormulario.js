@@ -4,8 +4,8 @@ const eventoFormularioSchema = new mongoose.Schema({
   igrejaId: { type: mongoose.Schema.Types.ObjectId, ref: 'Igreja', required: true },
   data: { type: Date, required: true },
   label: { type: String, trim: true, default: '' },
-  /** 'batismo' | 'apresentacao' */
-  tipo: { type: String, required: true, enum: ['batismo', 'apresentacao'] },
+  /** 'batismo' | 'apresentacao' | 'novo_membro' */
+  tipo: { type: String, required: true, enum: ['batismo', 'apresentacao', 'novo_membro'] },
   criadoPor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   ativo: { type: Boolean, default: true },
   horarioInicio: { type: String, trim: true, default: '' },

@@ -27,6 +27,7 @@ import FormularioMembro from './models/FormularioMembro.js';
 import FormularioConsolidacao from './models/FormularioConsolidacao.js';
 import FormularioBatismo from './models/FormularioBatismo.js';
 import FormularioApresentacao from './models/FormularioApresentacao.js';
+import FormularioNovoMembro from './models/FormularioNovoMembro.js';
 import { normalizarEstado, normalizarCidade } from './utils/normalize-locale.js';
 import { createWhatsAppHandler } from './whatsapp/handler.js';
 import { processBrdidWebhook, getLastVerification } from './brdid/whatsapp-verification.js';
@@ -87,6 +88,7 @@ import {
   pgCreateFormularioConsolidacao, pgListFormulariosConsolidacao,
   pgCreateFormularioBatismo, pgListFormulariosBatismoByEvento,
   pgCreateFormularioApresentacao, pgListFormulariosApresentacaoByEvento,
+  pgCreateFormularioNovoMembro, pgListFormulariosNovoMembroByEvento,
 } from './db/postgres/formularios.js';
 import {
   buildIntersecaoDomingo,
@@ -119,6 +121,7 @@ import {
   pgListVoluntarios, pgListVoluntarioEmails, buildVoluntariosResumo, pgEnsureVoluntarioInList,
   pgBackfillVoluntariosFromCheckins,
   pgListCheckins, pgListCandidaturasByEscala, pgFindCandidaturaById,
+  pgListCheckinDates,
   pgUpdateCandidaturaStatus, pgBulkUpdateCandidaturaStatus, pgCandidaturaStatsByEmails,
   pgListCandidaturasByEmail, pgListCandidaturasForEscalas,
   pgListCheckinEmails,
@@ -1710,6 +1713,33 @@ app.get('/api/voluntarios/emails', requireAuth, resolveTenant, requireAdminOrLid
   }
 });
 
+// GET /api/checkins/datas — datas distintas com check-in (admin)
+app.get('/api/checkins/datas', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (isPostgres()) {
+      const datas = await pgListCheckinDates(req.tenantIgrejaId);
+      return res.json({ datas });
+    }
+    if (!guardMongoData(res, { datas: [] })) return;
+    const rows = await Checkin.aggregate([
+      { $match: { ...tQ(req), dataCheckin: { $exists: true, $ne: null } } },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$dataCheckin', timezone: 'America/Sao_Paulo' },
+          },
+        },
+      },
+      { $sort: { _id: -1 } },
+      { $limit: 120 },
+    ]);
+    res.json({ datas: rows.map((r) => r._id).filter(Boolean) });
+  } catch (err) {
+    console.error('checkins/datas:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao listar datas.');
+  }
+});
+
 app.get('/api/checkins', requireAuth, resolveTenant, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
@@ -2711,7 +2741,7 @@ app.get('/api/eventos-formulario', requireAuth, resolveTenant, async (req, res) 
     }
     if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const query = { ...tQ(req) };
-    if (tipo && (tipo === 'batismo' || tipo === 'apresentacao')) query.tipo = tipo;
+    if (tipo && (tipo === 'batismo' || tipo === 'apresentacao' || tipo === 'novo_membro')) query.tipo = tipo;
     if (!isAdmin) query.ativo = true;
     if (data) {
       const { start, end } = getDayRangeBrasilia(data);
@@ -2729,7 +2759,9 @@ app.post('/api/eventos-formulario', requireAuth, resolveTenant, requireAdmin, as
   try {
     const { data, label, tipo, ativo, horarioInicio, horarioFim } = req.body || {};
     if (!data) return sendError(res, 400, 'Campo "data" é obrigatório (YYYY-MM-DD ou ISO).');
-    if (!tipo || (tipo !== 'batismo' && tipo !== 'apresentacao')) return sendError(res, 400, 'Campo "tipo" deve ser "batismo" ou "apresentacao".');
+    if (!tipo || (tipo !== 'batismo' && tipo !== 'apresentacao' && tipo !== 'novo_membro')) {
+      return sendError(res, 400, 'Campo "tipo" deve ser "batismo", "apresentacao" ou "novo_membro".');
+    }
     const dateStr = typeof data === 'string' ? data.trim().slice(0, 10) : '';
     const dataOnly = parseDateAsBrasilia(dateStr);
     if (!dataOnly || Number.isNaN(dataOnly.getTime())) return sendError(res, 400, 'Data inválida.');
@@ -2737,7 +2769,7 @@ app.post('/api/eventos-formulario', requireAuth, resolveTenant, requireAdmin, as
     const hfi = horarioFim != null ? parseHHMM(horarioFim) : null;
     if (horarioInicio != null && horarioInicio !== '' && !hin) return sendError(res, 400, 'horarioInicio deve ser HH:mm.');
     if (horarioFim != null && horarioFim !== '' && !hfi) return sendError(res, 400, 'horarioFim deve ser HH:mm.');
-    const nomeTipo = tipo === 'batismo' ? 'Batismo' : 'Apresentação de bebês';
+    const nomeTipo = tipo === 'batismo' ? 'Batismo' : tipo === 'apresentacao' ? 'Apresentação de bebês' : 'Novos Membros';
     const labelFinal = label || `${nomeTipo} ${dataOnly.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}`;
     if (isPostgres()) {
       const evento = await pgCreateEventoFormulario({
@@ -2840,7 +2872,7 @@ app.get('/api/formulario-publico/:tipo/:eventoId', async (req, res) => {
     const igrejaDoc = await publicIgrejaFromRequest(req);
     if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug no link.');
     const { tipo, eventoId } = req.params;
-    if (tipo !== 'batismo' && tipo !== 'apresentacao') return sendError(res, 400, 'Tipo inválido.');
+    if (tipo !== 'batismo' && tipo !== 'apresentacao' && tipo !== 'novo_membro') return sendError(res, 400, 'Tipo inválido.');
     let evento = null;
     if (isPostgres()) {
       evento = await pgFindEventoFormularioById(eventoId, igrejaDoc._id);
@@ -2853,18 +2885,32 @@ app.get('/api/formulario-publico/:tipo/:eventoId', async (req, res) => {
     if (!evento) return sendError(res, 404, 'Evento não encontrado.');
     if (evento.tipo !== tipo) return sendError(res, 404, 'Evento não encontrado.');
     if (evento.ativo !== true) return sendError(res, 404, 'Formulário não está aberto para este evento.');
-    const nomeTipo = tipo === 'batismo' ? 'Batismo' : 'Apresentação de Bebês';
+    const nomeTipo = tipo === 'batismo' ? 'Batismo' : tipo === 'apresentacao' ? 'Apresentação de Bebês' : 'Novos Membros';
     let label = (evento.label || '').trim() || nomeTipo;
-    label = label.replace(tipo === 'batismo' ? /^Batismo:\s*/i : /^Apresentação de Bebês:\s*/i, '');
+    label = label.replace(tipo === 'batismo' ? /^Batismo:\s*/i : tipo === 'apresentacao' ? /^Apresentação de Bebês:\s*/i : /^Novos Membros:\s*/i, '');
     label = label.replace(/\s*\(\d{1,2}\/\d{1,2}\/\d{2,4}\)\s*$/, '').replace(/\s*\(\d{4}-\d{2}-\d{2}\)\s*$/, '').trim();
-    res.json({
+    const payload = {
       evento: {
         _id: evento._id,
         label: label || nomeTipo,
         data: evento.data,
         tipo: evento.tipo,
       },
-    });
+    };
+    if (tipo === 'novo_membro') {
+      let ministeriosList = MINISTERIOS_PADRAO_PUBLIC;
+      if (isPostgres()) {
+        const mins = await pgListMinisterios(igrejaDoc._id);
+        if (mins.length > 0) {
+          ministeriosList = mins.filter((m) => m.ativo !== false).map((m) => m.nome).filter(Boolean);
+        }
+      } else if (isMongo()) {
+        const ministerios = await Ministerio.find({ igrejaId: igrejaDoc._id, ativo: true }).sort({ nome: 1 }).select('nome').lean();
+        if (ministerios.length > 0) ministeriosList = ministerios.map((m) => m.nome).filter(Boolean);
+      }
+      payload.ministerios = ministeriosList;
+    }
+    res.json(payload);
   } catch (err) {
     console.error('formulario-publico get:', err?.message || err);
     sendError(res, 500, err.message || 'Erro ao carregar dados.');
@@ -2877,8 +2923,8 @@ app.post('/api/formulario-publico', async (req, res) => {
     const body = req.body || {};
     const tipo = (body.tipo || '').trim().toLowerCase();
     const eventoId = body.eventoId;
-    if (tipo !== 'batismo' && tipo !== 'apresentacao') {
-      return sendError(res, 400, 'Campo "tipo" deve ser "batismo" ou "apresentacao".');
+    if (tipo !== 'batismo' && tipo !== 'apresentacao' && tipo !== 'novo_membro') {
+      return sendError(res, 400, 'Campo "tipo" deve ser "batismo", "apresentacao" ou "novo_membro".');
     }
     if (!eventoId) return sendError(res, 400, 'eventoId é obrigatório.');
     const igrejaDoc = await publicIgrejaFromRequest(req);
@@ -2924,6 +2970,68 @@ app.post('/api/formulario-publico', async (req, res) => {
         dataNascimento: dataNascimento || undefined,
       });
       return res.status(201).json({ ok: true, message: 'Formulário de batismo enviado com sucesso!', id: doc._id });
+    }
+
+    if (tipo === 'novo_membro') {
+      const nomeCompleto = (body.nomeCompleto || '').trim();
+      const email = (body.email || '').trim().toLowerCase();
+      if (!nomeCompleto) return sendError(res, 400, 'Nome completo é obrigatório.');
+      if (!email || !email.includes('@')) return sendError(res, 400, 'Email é obrigatório e deve ser válido.');
+      const telefoneWhatsapp = (body.telefoneWhatsapp || body.celular || '').trim() || '';
+      const endereco = (body.endereco || body.enderecoCompleto || '').trim() || '';
+      const idade = (body.idade || '').toString().trim() || '';
+      const estadoCivil = (body.estadoCivil || '').trim() || '';
+      const batizadoRaw = (body.batizado || '').trim().toLowerCase();
+      const tempoFrequentaIgreja = (body.tempoFrequentaIgreja || '').trim() || '';
+      const interesseServir = (body.interesseServir || '').trim() || '';
+      let ministeriosInteresse = [];
+      if (Array.isArray(body.ministeriosInteresse)) {
+        ministeriosInteresse = body.ministeriosInteresse.map((m) => String(m || '').trim()).filter(Boolean).slice(0, 3);
+      }
+      if (interesseServir === 'sim' && ministeriosInteresse.length > 3) {
+        return sendError(res, 400, 'Selecione no máximo 3 ministérios de interesse.');
+      }
+      const dados = {
+        nomeCompleto,
+        email,
+        telefoneWhatsapp,
+        endereco,
+        idade,
+        estadoCivil,
+        batizado: batizadoRaw === 'sim' ? 'sim' : batizadoRaw === 'não' || batizadoRaw === 'nao' ? 'não' : batizadoRaw,
+        tempoFrequentaIgreja,
+        interesseServir,
+        ministeriosInteresse,
+      };
+      const batizadoBool = batizadoRaw === 'sim' ? true : (batizadoRaw === 'não' || batizadoRaw === 'nao') ? false : null;
+      if (isPostgres()) {
+        const id = await pgCreateFormularioNovoMembro(igrejaDoc._id, evento._id, dados);
+        await pgEnsureVoluntarioInList({
+          email,
+          nome: nomeCompleto,
+          telefone: telefoneWhatsapp,
+          ministerio: ministeriosInteresse.join(', '),
+          igrejaId: igrejaDoc._id,
+          fonte: 'formulario_novo_membro',
+          batizado: batizadoBool,
+          dadosExtra: {
+            potencialVoluntario: true,
+            interesseServir,
+            tempoFrequentaIgreja,
+            estadoCivil,
+            idade,
+            endereco,
+            ministeriosInteresse,
+          },
+        });
+        return res.status(201).json({ ok: true, message: 'Formulário enviado com sucesso! Obrigado por se cadastrar.', id });
+      }
+      const doc = await FormularioNovoMembro.create({
+        igrejaId: igrejaDoc._id,
+        eventoId: evento._id,
+        ...dados,
+      });
+      return res.status(201).json({ ok: true, message: 'Formulário enviado com sucesso! Obrigado por se cadastrar.', id: doc._id });
     }
 
     // apresentação
@@ -3169,6 +3277,31 @@ app.get('/api/formularios/apresentacao/:eventoId', requireAuth, resolveTenant, r
     res.json(list);
   } catch (err) {
     console.error('formularios/apresentacao list:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao listar inscrições.');
+  }
+});
+
+// Admin: listar inscrições novos membros por evento
+app.get('/api/formularios/novo-membro/:eventoId', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    const idRaw = (req.params.eventoId || '').trim();
+    if (!idRaw) return res.json([]);
+    if (isPostgres()) {
+      const ev = await pgFindEventoFormularioById(idRaw, req.tenantIgrejaId);
+      if (!ev || ev.tipo !== 'novo_membro') return res.json([]);
+      const list = await pgListFormulariosNovoMembroByEvento(req.tenantIgrejaId, idRaw);
+      return res.json(list);
+    }
+    if (!guardMongoData(res, EMPTY_ARRAY)) return;
+    if (!mongoose.Types.ObjectId.isValid(idRaw)) return res.json([]);
+    const eventoOid = new mongoose.Types.ObjectId(idRaw);
+    const ev = await EventoFormulario.findOne({ _id: eventoOid, tipo: 'novo_membro', ...tQ(req) }).select('_id').lean();
+    if (!ev) return res.json([]);
+    const baseQ = { ...tQ(req), $or: [{ eventoId: eventoOid }, { eventoId: idRaw }] };
+    const list = await FormularioNovoMembro.find(baseQ).sort({ createdAt: -1 }).lean();
+    res.json(list);
+  } catch (err) {
+    console.error('formularios/novo-membro list:', err?.message || err);
     sendError(res, 500, err.message || 'Erro ao listar inscrições.');
   }
 });
@@ -6229,8 +6362,9 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
 
     // 5) Formulários: contagem do mês
     const monthFilter = `AND created_at >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') AT TIME ZONE 'America/Sao_Paulo'`;
-    const [m1, m2, m3, m4] = await Promise.all([
+    const [m1, m1b, m2, m3, m4] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS n FROM formulario_membro WHERE igreja_id = $1 ${monthFilter}`, [ig]),
+      pool.query(`SELECT COUNT(*)::int AS n FROM formulario_novo_membro WHERE igreja_id = $1 ${monthFilter}`, [ig]),
       pool.query(`SELECT COUNT(*)::int AS n FROM formulario_consolidacao WHERE igreja_id = $1 ${monthFilter}`, [ig]),
       pool.query(`SELECT COUNT(*)::int AS n FROM formulario_batismo WHERE igreja_id = $1 ${monthFilter}`, [ig]),
       pool.query(`SELECT COUNT(*)::int AS n FROM formulario_apresentacao WHERE igreja_id = $1 ${monthFilter}`, [ig]),
@@ -6251,7 +6385,7 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
       presencaMedia: { taxa, baseEscalas: presBase },
       topMinisterios,
       formularios: {
-        membros: m1.rows[0]?.n || 0,
+        membros: (m1.rows[0]?.n || 0) + (m1b.rows[0]?.n || 0),
         consolidacao: m2.rows[0]?.n || 0,
         batismo: m3.rows[0]?.n || 0,
         apresentacao: m4.rows[0]?.n || 0,

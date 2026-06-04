@@ -42,7 +42,7 @@ export async function pgListEventosFormulario(igrejaId, { tipo, ativo, data } = 
   await ensureOnce();
   const params = [igrejaId];
   let sql = 'SELECT * FROM eventos_formulario WHERE igreja_id = $1';
-  if (tipo === 'batismo' || tipo === 'apresentacao') {
+  if (tipo === 'batismo' || tipo === 'apresentacao' || tipo === 'novo_membro') {
     params.push(tipo);
     sql += ` AND tipo = $${params.length}`;
   }
@@ -185,6 +185,23 @@ export async function pgCreateFormularioApresentacao(igrejaId, eventoId, dados) 
 export async function pgListFormulariosApresentacaoByEvento(igrejaId, eventoId) {
   const { rows } = await getPostgresPool().query(
     `SELECT * FROM formulario_apresentacao WHERE igreja_id = $1 AND evento_id = $2 ORDER BY created_at DESC LIMIT 2000`,
+    [igrejaId, eventoId],
+  );
+  return rows.map(mapFormularioRow);
+}
+
+export async function pgCreateFormularioNovoMembro(igrejaId, eventoId, dados) {
+  const id = randomUUID();
+  await getPostgresPool().query(
+    `INSERT INTO formulario_novo_membro (id, igreja_id, evento_id, dados) VALUES ($1, $2, $3, $4::jsonb)`,
+    [id, igrejaId, eventoId, JSON.stringify(dados || {})],
+  );
+  return id;
+}
+
+export async function pgListFormulariosNovoMembroByEvento(igrejaId, eventoId) {
+  const { rows } = await getPostgresPool().query(
+    `SELECT * FROM formulario_novo_membro WHERE igreja_id = $1 AND evento_id = $2 ORDER BY created_at DESC LIMIT 2000`,
     [igrejaId, eventoId],
   );
   return rows.map(mapFormularioRow);

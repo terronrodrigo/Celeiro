@@ -132,6 +132,14 @@ CREATE TABLE IF NOT EXISTS formulario_apresentacao (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS formulario_novo_membro (
+  id TEXT PRIMARY KEY,
+  igreja_id TEXT NOT NULL REFERENCES igrejas(id) ON DELETE CASCADE,
+  evento_id TEXT NOT NULL REFERENCES eventos_formulario(id) ON DELETE CASCADE,
+  dados JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS escalas (
   id TEXT PRIMARY KEY,
   igreja_id TEXT NOT NULL REFERENCES igrejas(id) ON DELETE CASCADE,
@@ -228,6 +236,7 @@ export async function initPostgres(connectionString) {
     CREATE INDEX IF NOT EXISTS formulario_consolidacao_igreja_idx ON formulario_consolidacao (igreja_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS formulario_batismo_evento_idx ON formulario_batismo (igreja_id, evento_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS formulario_apresentacao_evento_idx ON formulario_apresentacao (igreja_id, evento_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS formulario_novo_membro_evento_idx ON formulario_novo_membro (igreja_id, evento_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS role_history_user_idx ON role_history (user_id, created_at DESC);
   `);
   const { migrateCultosRecorrentesSchema } = await import('./cultos-recorrentes.js');

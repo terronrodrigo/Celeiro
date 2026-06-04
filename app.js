@@ -169,6 +169,7 @@ let eventosCheckin = [];
 let selectedEventoCheckinIds = new Set();
 let eventosBatismo = [];
 let eventosApresentacao = [];
+let eventosNovoMembro = [];
 let eventoSelecionadoHoje = null;
 /** Callback após salvar/pular complemento pós-check-in (telefone/cidade/UF). */
 let perfilComplementoPendingDone = null;
@@ -269,6 +270,7 @@ const modalNovoEventoClose = document.getElementById('modalNovoEventoClose');
 const modalNovoEventoCancel = document.getElementById('modalNovoEventoCancel');
 const eventosBatismoBody = document.getElementById('eventosBatismoBody');
 const eventosApresentacaoBody = document.getElementById('eventosApresentacaoBody');
+const eventosNovoMembroBody = document.getElementById('eventosNovoMembroBody');
 const formPerfil = document.getElementById('formPerfil');
 const perfilNome = document.getElementById('perfilNome');
 const perfilEmail = document.getElementById('perfilEmail');
@@ -435,8 +437,10 @@ function clearUserContent() {
   if (eventosCheckinBody) eventosCheckinBody.innerHTML = '';
   if (eventosBatismoBody) eventosBatismoBody.innerHTML = '';
   if (eventosApresentacaoBody) eventosApresentacaoBody.innerHTML = '';
+  if (eventosNovoMembroBody) eventosNovoMembroBody.innerHTML = '';
   eventosBatismo = [];
   eventosApresentacao = [];
+  eventosNovoMembro = [];
   if (voluntariosBody) voluntariosBody.innerHTML = '';
   if (checkinBody) checkinBody.innerHTML = '';
   if (formConfirmarCheckin) formConfirmarCheckin.style.display = 'none';
@@ -527,6 +531,7 @@ function clearTenantScopedData() {
   escalasPreSelectId = null;
   eventosBatismo = [];
   eventosApresentacao = [];
+  eventosNovoMembro = [];
   if (voluntariosBody) voluntariosBody.innerHTML = '';
   if (checkinBody) checkinBody.innerHTML = '';
 }
@@ -961,18 +966,20 @@ function setView(view, options) {
   }
   if (view === 'checkin' && isAdmin) {
     setViewLoading('checkin', true);
-    populateCheckinDataSelect([]);
     const hoje = getHojeDateString();
     if (checkinData && !checkinData.value) checkinData.value = hoje;
-    authFetch(`${API_BASE}/api/eventos-checkin`).then(r => r.ok ? r.json() : []).then(list => {
+    Promise.all([
+      fetchCheckinDateOptions(),
+      authFetch(`${API_BASE}/api/eventos-checkin`).then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    ]).then(([, list]) => {
       eventosCheckin = list || [];
       if (checkinEvento) {
-        checkinEvento.innerHTML = '<option value="">Todos os eventos</option>' + eventosCheckin.map(e => {
+        checkinEvento.innerHTML = '<option value="">Todos os eventos</option>' + eventosCheckin.map((e) => {
           const d = new Date(e.data);
           return `<option value="${e._id}">${e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</option>`;
         }).join('');
       }
-      fetchCheckinsWithFilters({ data: checkinData?.value || hoje });
+      return fetchCheckinsWithFilters({ data: checkinData?.value || hoje });
     }).catch(() => fetchCheckinsWithFilters({ data: hoje }))
       .finally(() => setViewLoading('checkin', false));
   }
@@ -1055,18 +1062,14 @@ async function fetchCheckins() {
   }
 }
 
-/** Extrai datas únicas (YYYY-MM-DD) em Brasília para bater com o filtro do backend. Sempre inclui "Hoje". */
-function populateCheckinDataSelect(checkinsArray) {
+/** Preenche o select de data com YMDs (mais recentes primeiro). Sempre inclui "Hoje". */
+function populateCheckinDataSelectFromDates(dateStrings) {
   if (!checkinData) return;
-  const list = Array.isArray(checkinsArray) ? checkinsArray : [];
-  const dateSet = new Set();
   const hojeStr = getHojeDateString();
-  dateSet.add(hojeStr);
-  list.forEach(c => {
-    const d = c.dataCheckin ? new Date(c.dataCheckin) : (c.timestampMs != null || c.timestamp ? new Date(c.timestampMs ?? c.timestamp) : null);
-    if (d && !Number.isNaN(d.getTime())) {
-      const dateStr = d.toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
-      if (dateStr) dateSet.add(dateStr);
+  const dateSet = new Set([hojeStr]);
+  (dateStrings || []).forEach((ymd) => {
+    if (ymd && /^\d{4}-\d{2}-\d{2}$/.test(String(ymd).slice(0, 10))) {
+      dateSet.add(String(ymd).slice(0, 10));
     }
   });
   const dates = Array.from(dateSet).sort((a, b) => b.localeCompare(a));
@@ -1074,14 +1077,41 @@ function populateCheckinDataSelect(checkinsArray) {
   const options = ['<option value="">Todas as datas</option>'];
   const hojeLabel = 'Hoje (' + new Date(hojeStr + 'T12:00:00').toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA, day: '2-digit', month: '2-digit', year: 'numeric' }) + ')';
   options.push(`<option value="${escapeAttr(hojeStr)}">${escapeHtml(hojeLabel)}</option>`);
-  dates.forEach(dateStr => {
+  dates.forEach((dateStr) => {
     if (dateStr === hojeStr) return;
     const d = new Date(dateStr + 'T12:00:00');
     const label = d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA, weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
     options.push(`<option value="${escapeAttr(dateStr)}">${escapeHtml(label)}</option>`);
   });
   checkinData.innerHTML = options.join('');
-  if (currentValue === hojeStr || dates.includes(currentValue)) checkinData.value = currentValue;
+  if (currentValue === '' || currentValue === hojeStr || dates.includes(currentValue)) {
+    checkinData.value = currentValue;
+  }
+}
+
+/** @deprecated use populateCheckinDataSelectFromDates — extrai datas de check-ins já carregados */
+function populateCheckinDataSelect(checkinsArray) {
+  const list = Array.isArray(checkinsArray) ? checkinsArray : [];
+  const dateSet = new Set();
+  list.forEach((c) => {
+    const d = c.dataCheckin ? new Date(c.dataCheckin) : (c.timestampMs != null || c.timestamp ? new Date(c.timestampMs ?? c.timestamp) : null);
+    if (d && !Number.isNaN(d.getTime())) {
+      const dateStr = d.toLocaleDateString('en-CA', { timeZone: TZ_BRASILIA });
+      if (dateStr) dateSet.add(dateStr);
+    }
+  });
+  populateCheckinDataSelectFromDates([...dateSet]);
+}
+
+async function fetchCheckinDateOptions() {
+  try {
+    const r = await authFetch(`${API_BASE}/api/checkins/datas`);
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'Falha');
+    populateCheckinDataSelectFromDates(d.datas || []);
+  } catch (_) {
+    populateCheckinDataSelectFromDates([]);
+  }
 }
 
 function fetchCheckinsWithFilters(opts) {
@@ -1099,7 +1129,6 @@ function fetchCheckinsWithFilters(opts) {
       allCheckins = checkins;
       invalidateCheckinKpiCache();
     }
-    if (!dataFilter) populateCheckinDataSelect(checkins);
     if (dataOverride !== null && checkinData) checkinData.value = dataOverride;
     resetCheckinsListPage();
     renderCheckins();
@@ -2366,20 +2395,35 @@ function resolveNomeForSendEmail(email) {
   return '';
 }
 
+async function openEmailModalForNovoMembroEvento(eventoId) {
+  if (!eventoId || !authToken) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/formularios/novo-membro/${encodeURIComponent(eventoId)}?_t=${Date.now()}`);
+    const list = r.ok ? (await r.json().catch(() => [])) : [];
+    const recipients = (Array.isArray(list) ? list : []).map((row) => ({
+      email: row.email,
+      nome: row.nomeCompleto,
+    }));
+    openEmailModalFromRecipients(recipients);
+  } catch (_) {
+    alert('Não foi possível carregar as inscrições de novos membros.');
+  }
+}
+
 async function fetchFormularios() {
   if (!authToken) return;
   try {
-    const [rBatismo, rApres, rMembro, rCons] = await Promise.all([
+    const [rNovoMembro, rBatismo, rApres, rCons] = await Promise.all([
+      authFetch(`${API_BASE}/api/eventos-formulario?tipo=novo_membro&_t=${Date.now()}`),
       authFetch(`${API_BASE}/api/eventos-formulario?tipo=batismo&_t=${Date.now()}`),
       authFetch(`${API_BASE}/api/eventos-formulario?tipo=apresentacao&_t=${Date.now()}`),
-      authFetch(`${API_BASE}/api/formularios/membro?_t=${Date.now()}`),
       authFetch(`${API_BASE}/api/formularios/consolidacao?_t=${Date.now()}`),
     ]);
     if (currentView !== 'formularios') return;
     const responses = [
+      { r: rNovoMembro, name: 'eventos de novos membros' },
       { r: rBatismo, name: 'eventos de batismo' },
       { r: rApres, name: 'eventos de apresentação' },
-      { r: rMembro, name: 'formulários de membros' },
       { r: rCons, name: 'formulários de consolidação' },
     ];
     for (const { r, name } of responses) {
@@ -2388,28 +2432,42 @@ async function fetchFormularios() {
         showErrorToast(msg);
       }
     }
+    eventosNovoMembro = rNovoMembro.ok ? (await rNovoMembro.json()) || [] : [];
     eventosBatismo = rBatismo.ok ? (await rBatismo.json()) || [] : [];
     eventosApresentacao = rApres.ok ? (await rApres.json()) || [] : [];
-    const membrosList = rMembro?.ok ? (await rMembro.json()) || [] : [];
-    const totalMembros = Array.isArray(membrosList) ? membrosList.length : 0;
     const consList = rCons?.ok ? (await rCons.json()) || [] : [];
     const totalCons = Array.isArray(consList) ? consList.length : 0;
+    const countNovoMembro = document.getElementById('eventosNovoMembroCount');
     const countBatismo = document.getElementById('eventosBatismoCount');
     const countApres = document.getElementById('eventosApresentacaoCount');
+    if (countNovoMembro) countNovoMembro.textContent = `(${eventosNovoMembro.length})`;
     if (countBatismo) countBatismo.textContent = `(${eventosBatismo.length})`;
     if (countApres) countApres.textContent = `(${eventosApresentacao.length})`;
-    const totalMembroEl = document.getElementById('formulariosMembroCount');
-    if (totalMembroEl) totalMembroEl.textContent = `(${totalMembros})`;
     const totalConsEl = document.getElementById('formulariosConsolidacaoCount');
     if (totalConsEl) totalConsEl.textContent = `(${totalCons})`;
+    const totalNovoMembroEl = document.getElementById('formulariosNovoMembroTotalCount');
     const totalBatismoEl = document.getElementById('formulariosBatismoTotalCount');
     const totalApresEl = document.getElementById('formulariosApresentacaoTotalCount');
 
+    const filledNovoMembroById = new Map();
     const filledBatismoById = new Map();
     const filledApresById = new Map();
+    let totalFilledNovoMembro = 0;
     let totalFilledBatismo = 0;
     let totalFilledApres = 0;
 
+    const novoMembroCountPromises = (eventosNovoMembro || []).map(async (e) => {
+      const id = e?._id;
+      if (!id) return;
+      try {
+        const rr = await authFetch(`${API_BASE}/api/formularios/novo-membro/${encodeURIComponent(String(id))}?_t=${Date.now()}`);
+        if (!rr.ok) return;
+        const list = await rr.json().catch(() => []);
+        const qtd = Array.isArray(list) ? list.length : 0;
+        filledNovoMembroById.set(String(id), qtd);
+        totalFilledNovoMembro += qtd;
+      } catch (_) {}
+    });
     const batismoCountPromises = (eventosBatismo || []).map(async (e) => {
       const id = e?._id;
       if (!id) return;
@@ -2434,15 +2492,70 @@ async function fetchFormularios() {
         totalFilledApres += qtd;
       } catch (_) {}
     });
-    await Promise.all([...batismoCountPromises, ...apresCountPromises]);
+    await Promise.all([...novoMembroCountPromises, ...batismoCountPromises, ...apresCountPromises]);
 
+    if (totalNovoMembroEl) totalNovoMembroEl.textContent = `(${totalFilledNovoMembro})`;
     if (totalBatismoEl) totalBatismoEl.textContent = `(${totalFilledBatismo})`;
     if (totalApresEl) totalApresEl.textContent = `(${totalFilledApres})`;
 
-    const formularioMembroLinkInput = document.getElementById('formularioMembroLinkInput');
-    if (formularioMembroLinkInput) formularioMembroLinkInput.value = getFormularioMembroLinkUrl();
     const formularioConsolidacaoLinkInput = document.getElementById('formularioConsolidacaoLinkInput');
     if (formularioConsolidacaoLinkInput) formularioConsolidacaoLinkInput.value = getFormularioConsolidacaoLinkUrl();
+
+    if (eventosNovoMembroBody) {
+      if (!eventosNovoMembro.length) {
+        eventosNovoMembroBody.innerHTML = '<tr><td colspan="7">Nenhum evento. Clique em "Novo evento de novos membros" para criar.</td></tr>';
+      } else {
+        eventosNovoMembroBody.innerHTML = eventosNovoMembro.map(e => {
+          const eventId = (e._id != null ? String(e._id) : '');
+          const d = new Date(e.data);
+          const label = e.label || d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA });
+          const ativo = e.ativo !== false;
+          const statusText = ativo ? 'Inscrições abertas' : 'Inscrições fechadas';
+          const filled = filledNovoMembroById.get(eventId) || 0;
+          return `<tr data-event-id="${escapeAttr(eventId)}">
+            <td>${d.toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA })}</td>
+            <td>${escapeHtml(label)}</td>
+            <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
+            <td>${filled}</td>
+            <td><button type="button" class="btn btn-sm btn-primary" data-form-link="novo-membro" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-novo-membro="${escapeAttr(eventId)}" title="Enviar e-mail às pessoas que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
+            <td>
+              <button type="button" class="btn btn-sm btn-ghost" data-export-novo-membro-csv="${escapeAttr(eventId)}" data-export-novo-membro-label="${escapeAttr(label)}" title="Baixar CSV só deste evento">Baixar CSV</button>
+              <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-form-toggle-formulario-ativo="${escapeAttr(eventId)}" data-ativo="${ativo ? 'true' : 'false'}" title="${ativo ? 'O link público deixa de aceitar novas inscrições' : 'Permitir novas inscrições pelo link'}">${ativo ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
+              <button type="button" class="btn btn-sm btn-ghost" data-form-delete="novo-membro" data-event-id="${escapeAttr(eventId)}" title="Excluir evento">Excluir</button>
+            </td>
+          </tr>`;
+        }).join('');
+        eventosNovoMembroBody.querySelectorAll('[data-export-novo-membro-csv]').forEach((btn) => {
+          btn.addEventListener('click', () => exportFormularioNovoMembroCsvForEvent(
+            btn.getAttribute('data-export-novo-membro-csv'),
+            btn.getAttribute('data-export-novo-membro-label') || '',
+          ));
+        });
+        eventosNovoMembroBody.querySelectorAll('[data-form-link="novo-membro"]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-event-id');
+            const ig = encodeURIComponent(getTenantSlugForLinks());
+            const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}`;
+            const url = `${base}?novo-membro=${encodeURIComponent(id)}&igreja=${ig}`;
+            navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie o link:', url));
+          });
+        });
+        eventosNovoMembroBody.querySelectorAll('[data-form-email-novo-membro]').forEach((btn) => {
+          btn.addEventListener('click', () => openEmailModalForNovoMembroEvento(btn.getAttribute('data-form-email-novo-membro')));
+        });
+        eventosNovoMembroBody.querySelectorAll('[data-form-toggle-formulario-ativo]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-form-toggle-formulario-ativo');
+            const ativo = btn.getAttribute('data-ativo') === 'true';
+            toggleFormularioEventoAtivo(id, ativo);
+          });
+        });
+        eventosNovoMembroBody.querySelectorAll('[data-form-delete="novo-membro"]').forEach(btn => {
+          btn.addEventListener('click', () => excluirEventoFormulario(btn.getAttribute('data-event-id'), 'novo_membro'));
+        });
+      }
+    }
 
     if (eventosBatismoBody) {
       if (!eventosBatismo.length) {
@@ -2578,7 +2691,7 @@ async function toggleFormularioEventoAtivo(eventoId, currentlyActive) {
 
 async function excluirEventoFormulario(eventoId, tipo) {
   if (!eventoId || !authToken) return;
-  const list = tipo === 'batismo' ? eventosBatismo : eventosApresentacao;
+  const list = tipo === 'batismo' ? eventosBatismo : tipo === 'apresentacao' ? eventosApresentacao : eventosNovoMembro;
   const evento = list.find(e => String(e._id) === String(eventoId));
   const label = evento?.label || (evento?.data ? new Date(evento.data).toLocaleDateString('pt-BR', { timeZone: TZ_BRASILIA }) : '');
   if (!confirm(`Excluir o evento "${(label || '').replace(/"/g, '')}"?`)) return;
@@ -3446,7 +3559,9 @@ function renderTable(list) {
     const checked = selectedEmails.has(email);
     const origemBadge = v.fonte === 'checkin'
       ? '<span title="Adicionado automaticamente após check-in" style="margin-left:6px;font-size:.7rem;background:#e0e7ff;color:#3730a3;border:1px solid #a5b4fc;padding:1px 6px;border-radius:6px;font-weight:600">via check-in</span>'
-      : '';
+      : v.fonte === 'formulario_novo_membro'
+        ? '<span title="Cadastrado pelo formulário de novos membros" style="margin-left:6px;font-size:.7rem;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;padding:1px 6px;border-radius:6px;font-weight:600">potencial voluntário</span>'
+        : '';
     tr.innerHTML = `
       <td class="col-check"><input type="checkbox" class="row-check" data-email="${escapeAttr(email)}" ${checked ? 'checked' : ''}></td>
       <td class="cell-with-avatar"><span class="cell-avatar">${avatarHtml(v.fotoUrl, v.nome)}</span><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(v.nome || '—')}</button>${origemBadge}</td>
@@ -4649,6 +4764,63 @@ async function exportFormularioConsolidacaoCsv() {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'formularios-consolidacao-export.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (err) {
+    alert(err.message || 'Erro ao exportar.');
+  } finally {
+    setViewLoading('formularios', false);
+  }
+}
+
+/** CSV apenas das inscrições do evento de novos membros escolhido. */
+async function exportFormularioNovoMembroCsvForEvent(eventId, eventLabel) {
+  if (!authToken) return updateAuthUi();
+  if (!eventId) return;
+  try {
+    setViewLoading('formularios', true);
+    const rList = await authFetch(`${API_BASE}/api/formularios/novo-membro/${encodeURIComponent(eventId)}?_t=${Date.now()}`);
+    if (!rList.ok) {
+      const body = await rList.json().catch(() => ({}));
+      throw new Error(body.error || body.message || 'Falha ao carregar inscrições deste evento.');
+    }
+    const list = await rList.json().catch(() => []);
+    const items = Array.isArray(list) ? list : [];
+    if (!items.length) return alert('Nenhum formulário preenchido neste evento.');
+
+    const header = [
+      'Nome completo',
+      'Celular/WhatsApp',
+      'Endereço',
+      'E-mail',
+      'Idade',
+      'Estado civil',
+      'Batizado',
+      'Tempo na igreja',
+      'Interesse em servir',
+      'Ministérios de interesse',
+      'Criado em',
+    ];
+
+    const rows = items.map((doc) => ([
+      doc.nomeCompleto || '',
+      doc.telefoneWhatsapp || '',
+      doc.endereco || '',
+      doc.email || '',
+      doc.idade || '',
+      doc.estadoCivil || '',
+      (doc.batizado || '').trim(),
+      doc.tempoFrequentaIgreja || '',
+      (doc.interesseServir || '').trim(),
+      Array.isArray(doc.ministeriosInteresse) ? doc.ministeriosInteresse.join('; ') : '',
+      formatDateTimePtBR(doc.createdAt),
+    ]).map(escapeCsv).join(','));
+
+    const csv = '\uFEFF' + header.map(escapeCsv).join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `novos-membros-${safeFileName(eventLabel || eventId)}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   } catch (err) {
@@ -7185,6 +7357,17 @@ document.getElementById('btnNovoEventoApresentacao')?.addEventListener('click', 
     modalNovoEventoFormulario.classList.add('open');
   }
 });
+document.getElementById('btnNovoEventoNovoMembro')?.addEventListener('click', () => {
+  if (modalNovoEventoFormulario && eventoFormularioTipo) {
+    eventoFormularioTipo.value = 'novo_membro';
+    document.getElementById('modalNovoEventoFormularioTitle').textContent = 'Novo evento de novos membros';
+    if (eventoFormularioData) eventoFormularioData.value = new Date().toISOString().slice(0, 10);
+    if (eventoFormularioLabel) eventoFormularioLabel.value = '';
+    if (eventoFormularioAtivo) eventoFormularioAtivo.checked = true;
+    modalNovoEventoFormulario.setAttribute('aria-hidden', 'false');
+    modalNovoEventoFormulario.classList.add('open');
+  }
+});
 document.getElementById('modalNovoEventoFormularioClose')?.addEventListener('click', () => modalNovoEventoFormulario?.classList.remove('open'));
 document.getElementById('modalNovoEventoFormularioCancel')?.addEventListener('click', () => modalNovoEventoFormulario?.classList.remove('open'));
 modalNovoEventoFormulario?.querySelector('.modal-backdrop')?.addEventListener('click', () => modalNovoEventoFormulario?.classList.remove('open'));
@@ -7808,6 +7991,8 @@ window.addEventListener('hashchange', () => {
 let checkinPublicEventoId = null;
 let formularioBatismoPublicEventoId = null;
 let formularioApresentacaoPublicEventoId = null;
+let formularioNovoMembroPublicEventoId = null;
+let novoMembroMinisteriosPublic = [];
 
 function showFormularioMembroPublico() {
   preparePublicFormSession();
@@ -7850,6 +8035,7 @@ function hidePublicOverlayElements() {
   [
     'cadastroOverlay',
     'formularioMembroOverlay',
+    'formularioNovoMembroPublicOverlay',
     'formularioConsolidacaoOverlay',
     'formularioBatismoPublicOverlay',
     'formularioApresentacaoPublicOverlay',
@@ -7874,13 +8060,77 @@ function hideAllPublicOverlays() {
 function clearPublicOverlayQueryParamsAndHash() {
   try {
     const url = new URL(window.location.href);
-    ['checkin', 'batismo', 'apresentacao', 'escala', 'convite-lider'].forEach((k) => url.searchParams.delete(k));
+    ['checkin', 'batismo', 'apresentacao', 'novo-membro', 'escala', 'convite-lider'].forEach((k) => url.searchParams.delete(k));
     url.hash = '';
     const qs = url.searchParams.toString();
     url.search = qs ? `?${qs}` : '';
     window.history.replaceState({}, '', url.toString());
   } catch (_) {
     // Se algo der errado, não bloqueia o fluxo.
+  }
+}
+
+function showFormularioNovoMembroPublicOverlay() {
+  preparePublicFormSession();
+  hideAllPublicOverlays();
+  const overlay = document.getElementById('formularioNovoMembroPublicOverlay');
+  const auth = document.getElementById('authOverlay');
+  const content = document.getElementById('content');
+  if (overlay) overlay.style.display = 'block';
+  if (auth) auth.style.display = 'none';
+  if (content) content.style.display = 'none';
+}
+
+function renderNovoMembroMinisteriosCheckboxes(ministerios) {
+  const container = document.getElementById('formNovoMembroMinisteriosList');
+  if (!container) return;
+  const list = Array.isArray(ministerios) ? ministerios.filter(Boolean) : [];
+  container.innerHTML = list.map((m) =>
+    `<label class="checkbox-label" style="display:block;margin-bottom:6px;"><input type="checkbox" name="formNovoMembroMinisterioCb" value="${escapeAttr(m)}"> ${escapeHtml(m)}</label>`,
+  ).join('');
+  container.querySelectorAll('input[name="formNovoMembroMinisterioCb"]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const checked = container.querySelectorAll('input[name="formNovoMembroMinisterioCb"]:checked');
+      if (checked.length > 3) {
+        cb.checked = false;
+        alert('Selecione no máximo 3 ministérios.');
+      }
+    });
+  });
+}
+
+function toggleNovoMembroMinisteriosVisibility() {
+  const sel = document.getElementById('formNovoMembroInteresseServir');
+  const wrap = document.getElementById('formNovoMembroMinisteriosWrap');
+  if (!sel || !wrap) return;
+  wrap.style.display = sel.value === 'sim' ? '' : 'none';
+  if (sel.value !== 'sim') {
+    document.querySelectorAll('input[name="formNovoMembroMinisterioCb"]').forEach((cb) => { cb.checked = false; });
+  }
+}
+
+async function loadFormularioNovoMembroPublic(eventoId) {
+  const errEl = document.getElementById('formularioNovoMembroError');
+  const successEl = document.getElementById('formularioNovoMembroSuccess');
+  const labelEl = document.getElementById('formularioNovoMembroEventLabel');
+  if (errEl) errEl.textContent = '';
+  if (successEl) successEl.style.display = 'none';
+  if (labelEl) labelEl.textContent = 'Carregando...';
+  try {
+    const ig = encodeURIComponent(getTenantSlugForLinks());
+    const r = await fetch(`${API_BASE}/api/formulario-publico/novo_membro/${encodeURIComponent(eventoId)}?igreja=${ig}`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (labelEl) labelEl.textContent = data.error || 'Evento não encontrado ou formulário encerrado.';
+      return;
+    }
+    formularioNovoMembroPublicEventoId = data.evento?._id || eventoId;
+    novoMembroMinisteriosPublic = Array.isArray(data.ministerios) ? data.ministerios : [];
+    renderNovoMembroMinisteriosCheckboxes(novoMembroMinisteriosPublic);
+    toggleNovoMembroMinisteriosVisibility();
+    if (labelEl) labelEl.textContent = data.evento?.label || 'Novos Membros';
+  } catch (e) {
+    if (labelEl) labelEl.textContent = 'Erro ao carregar. Tente novamente.';
   }
 }
 
@@ -8160,6 +8410,54 @@ document.getElementById('formularioConsolidacaoForm')?.addEventListener('submit'
   finally { if (btn) btn.disabled = false; }
 });
 
+document.getElementById('formNovoMembroInteresseServir')?.addEventListener('change', toggleNovoMembroMinisteriosVisibility);
+
+document.getElementById('formularioNovoMembroForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('formularioNovoMembroError');
+  const successEl = document.getElementById('formularioNovoMembroSuccess');
+  const btn = document.getElementById('btnFormularioNovoMembroSubmit');
+  if (errEl) errEl.textContent = '';
+  if (successEl) successEl.style.display = 'none';
+  if (!formularioNovoMembroPublicEventoId) { if (errEl) errEl.textContent = 'Sessão expirada. Abra o link novamente.'; return; }
+  const ministeriosInteresse = [];
+  document.querySelectorAll('input[name="formNovoMembroMinisterioCb"]:checked').forEach((cb) => {
+    const v = (cb.value || '').trim();
+    if (v) ministeriosInteresse.push(v);
+  });
+  const interesseServir = (document.getElementById('formNovoMembroInteresseServir')?.value || '').trim();
+  const payload = {
+    tipo: 'novo_membro',
+    eventoId: formularioNovoMembroPublicEventoId,
+    igrejaSlug: getTenantSlugForLinks(),
+    nomeCompleto: (document.getElementById('formNovoMembroNome')?.value || '').trim(),
+    telefoneWhatsapp: (document.getElementById('formNovoMembroCelular')?.value || '').trim(),
+    endereco: (document.getElementById('formNovoMembroEndereco')?.value || '').trim(),
+    email: (document.getElementById('formNovoMembroEmail')?.value || '').trim().toLowerCase(),
+    idade: (document.getElementById('formNovoMembroIdade')?.value || '').trim(),
+    estadoCivil: (document.getElementById('formNovoMembroEstadoCivil')?.value || '').trim(),
+    batizado: (document.getElementById('formNovoMembroBatizado')?.value || '').trim(),
+    tempoFrequentaIgreja: (document.getElementById('formNovoMembroTempoIgreja')?.value || '').trim(),
+    interesseServir,
+    ministeriosInteresse: interesseServir === 'sim' ? ministeriosInteresse.slice(0, 3) : [],
+  };
+  if (!payload.nomeCompleto) { if (errEl) errEl.textContent = 'Nome completo é obrigatório.'; return; }
+  if (!payload.telefoneWhatsapp) { if (errEl) errEl.textContent = 'Celular é obrigatório.'; return; }
+  if (!payload.email || !payload.email.includes('@')) { if (errEl) errEl.textContent = 'E-mail é obrigatório e válido.'; return; }
+  if (interesseServir === 'sim' && ministeriosInteresse.length > 3) { if (errEl) errEl.textContent = 'Selecione no máximo 3 ministérios.'; return; }
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${API_BASE}/api/formulario-publico`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao enviar.'; return; }
+    if (successEl) { successEl.textContent = data.message || 'Formulário enviado com sucesso!'; successEl.style.display = 'block'; }
+    if (errEl) errEl.textContent = '';
+    document.getElementById('formularioNovoMembroForm')?.reset();
+    toggleNovoMembroMinisteriosVisibility();
+  } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
+  finally { if (btn) btn.disabled = false; }
+});
+
 document.getElementById('formularioBatismoForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('formularioBatismoError');
@@ -8258,6 +8556,12 @@ function initPublicFormOrShell() {
   if (apresentacaoParam) {
     showFormularioApresentacaoPublicOverlay();
     loadFormularioApresentacaoPublic(apresentacaoParam);
+    return true;
+  }
+  const novoMembroParam = urlSearchParams.get('novo-membro');
+  if (novoMembroParam) {
+    showFormularioNovoMembroPublicOverlay();
+    loadFormularioNovoMembroPublic(novoMembroParam);
     return true;
   }
   const escalaParam = urlSearchParams.get('escala');
@@ -8389,8 +8693,9 @@ window.addEventListener('pageshow', function(ev) {
     var checkinId = params.get('checkin');
     var batismoId = params.get('batismo');
     var apresentacaoId = params.get('apresentacao');
+    var novoMembroId = params.get('novo-membro');
     var conviteLiderId = params.get('convite-lider');
-    if (escalaId || checkinId || batismoId || apresentacaoId || conviteLiderId) {
+    if (escalaId || checkinId || batismoId || apresentacaoId || novoMembroId || conviteLiderId) {
       var loading = document.getElementById('loading');
       var appShell = document.querySelector('.app-shell');
       if (loading) loading.style.display = 'none';
@@ -8409,6 +8714,10 @@ window.addEventListener('pageshow', function(ev) {
       }
       if (apresentacaoId) {
         var ov = document.getElementById('formularioApresentacaoPublicOverlay');
+        if (ov) ov.style.display = 'block';
+      }
+      if (novoMembroId) {
+        var ov = document.getElementById('formularioNovoMembroPublicOverlay');
         if (ov) ov.style.display = 'block';
       }
       if (conviteLiderId) {

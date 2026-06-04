@@ -744,24 +744,18 @@
 
         <!-- Formulários (admin) -->
         <section class="view" data-view="formularios">
-          <section class="filters-row">
-            <div class="filters-card cadastro-link-box">
-              <div class="cadastro-link-content">
-                <span class="cadastro-link-label">Link formulário <strong>Novos Membros</strong>:</span>
-                <input type="text" id="formularioMembroLinkInput" class="cadastro-link-input" readonly>
-                <button type="button" class="btn btn-primary btn-sm" id="btnCopiarLinkFormularioMembro">Copiar link</button>
-              </div>
+          <div class="table-card">
+            <div class="chart-header"><h2>Eventos — Novos Membros</h2></div>
+            <p class="auth-subtitle">Cadastro de novos membros e potenciais voluntários. Eventos: <span id="eventosNovoMembroCount" class="list-count">(0)</span> · Preenchidos: <span id="formulariosNovoMembroTotalCount" class="list-count">(0)</span></p>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Data</th><th>Nome</th><th>Status</th><th>Preenchidos</th><th>Link público</th><th>E-mail inscritos</th><th>Ação</th></tr></thead>
+                <tbody id="eventosNovoMembroBody"></tbody>
+              </table>
             </div>
-            <div class="filters-card cadastro-link-box">
-              <div class="cadastro-link-content">
-                <span class="cadastro-link-label">Exportar inscrições:</span>
-                <button type="button" class="btn btn-ghost btn-sm" id="btnExportFormularioMembroCsv">Novos Membros (CSV)</button>
-                <span class="cadastro-link-label" style="margin-left:12px">Preenchidos:</span>
-                <span id="formulariosMembroCount" class="list-count">(0)</span>
-              </div>
-            </div>
-          </section>
-          <section class="filters-row" style="margin-top:8px">
+            <button type="button" class="btn btn-primary btn-sm" id="btnNovoEventoNovoMembro" style="margin-top:12px">➕ Novo evento de novos membros</button>
+          </div>
+          <section class="filters-row" style="margin-top:16px">
             <div class="filters-card cadastro-link-box">
               <div class="cadastro-link-content">
                 <span class="cadastro-link-label">Link formulário <strong>Consolidação</strong> (acolhimento):</span>
@@ -1246,7 +1240,39 @@
     </div>
   </div>
 
-  <!-- Formulário público: Novos Membros -->
+  <!-- Formulário público: Novos Membros (por evento) -->
+  <div id="formularioNovoMembroPublicOverlay" class="auth-overlay cadastro-overlay public-form-page" style="display: none;">
+    <div class="auth-card cadastro-card">
+      <div class="auth-header">
+        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <p class="auth-subtitle" id="formularioNovoMembroEventLabel">Novos Membros</p>
+      </div>
+      <form id="formularioNovoMembroForm" class="auth-form cadastro-form">
+        <div class="form-group"><label for="formNovoMembroNome">Nome completo</label><input type="text" id="formNovoMembroNome" placeholder="Nome completo" required></div>
+        <div class="form-row">
+          <div class="form-group"><label for="formNovoMembroCelular">Celular / WhatsApp</label><input type="tel" id="formNovoMembroCelular" placeholder="(11) 99999-9999" maxlength="16" required></div>
+          <div class="form-group"><label for="formNovoMembroIdade">Idade</label><input type="number" id="formNovoMembroIdade" min="1" max="120" placeholder="Ex: 28"></div>
+        </div>
+        <div class="form-group"><label for="formNovoMembroEndereco">Endereço</label><input type="text" id="formNovoMembroEndereco" placeholder="Rua, número, bairro, cidade"></div>
+        <div class="form-group"><label for="formNovoMembroEmail">E-mail</label><input type="email" id="formNovoMembroEmail" placeholder="seu@email.com" required></div>
+        <div class="form-row">
+          <div class="form-group"><label for="formNovoMembroEstadoCivil">Estado civil</label><select id="formNovoMembroEstadoCivil"><option value="">Selecione</option><option value="Solteiro(a)">Solteiro(a)</option><option value="Casado(a)">Casado(a)</option><option value="Divorciado(a)">Divorciado(a)</option><option value="Viúvo(a)">Viúvo(a)</option><option value="União estável">União estável</option></select></div>
+          <div class="form-group"><label for="formNovoMembroBatizado">É batizado?</label><select id="formNovoMembroBatizado"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        </div>
+        <div class="form-group"><label for="formNovoMembroTempoIgreja">Há quanto tempo frequenta a igreja?</label><select id="formNovoMembroTempoIgreja"><option value="">Selecione</option><option value="Menos de 1 mês">Menos de 1 mês</option><option value="1 a 3 meses">1 a 3 meses</option><option value="3 a 6 meses">3 a 6 meses</option><option value="6 a 12 meses">6 a 12 meses</option><option value="1 a 2 anos">1 a 2 anos</option><option value="Mais de 2 anos">Mais de 2 anos</option></select></div>
+        <div class="form-group"><label for="formNovoMembroInteresseServir">Tem interesse em servir na igreja?</label><select id="formNovoMembroInteresseServir"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <div class="form-group" id="formNovoMembroMinisteriosWrap" style="display:none">
+          <label>Ministérios de interesse <span class="form-hint">(até 3)</span></label>
+          <div id="formNovoMembroMinisteriosList" class="checkbox-list"></div>
+        </div>
+        <p id="formularioNovoMembroError" class="auth-error"></p>
+        <p id="formularioNovoMembroSuccess" class="auth-success" style="display: none;"></p>
+        <button type="submit" class="btn btn-primary" id="btnFormularioNovoMembroSubmit">Enviar</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Formulário público legado: Novos Membros (link único — descontinuado) -->
   <div id="formularioMembroOverlay" class="auth-overlay cadastro-overlay public-form-page" style="display: none;">
     <div class="auth-card cadastro-card">
       <div class="auth-header">
@@ -1815,6 +1841,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.15"></script>
+  <script defer src="app.js?v=1.6.17"></script>
 </body>
 </html>
