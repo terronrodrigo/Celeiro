@@ -162,9 +162,6 @@ export async function sendEscalaLembreteEmailsForIgreja({
 
   const upcomingEscalas = await pgListEscalasByDataYmd(igrejaId, cultoDataYmd, { ativoOnly: true });
   if (!upcomingEscalas.length) {
-    if (!force) {
-      await pgMarkEscalaLembreteEnviado(igrejaId, tipo, cultoDataYmd, 0);
-    }
     return { sent: 0, failed: 0, total: 0, skipped: true, reason: 'no_escalas' };
   }
 

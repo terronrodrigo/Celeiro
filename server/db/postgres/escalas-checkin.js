@@ -91,8 +91,7 @@ export async function pgListEscalas(igrejaId, {
     sql += " AND (dados->>'ativo')::boolean IS DISTINCT FROM FALSE";
   }
   if (futureOnly) {
-    // Compara como YMD em Brasília (TZ fixa no fuso do servidor): pega o início do dia hoje.
-    sql += " AND (dados->>'data')::timestamptz >= (CURRENT_DATE AT TIME ZONE 'America/Sao_Paulo')";
+    sql += ` AND (dados->>'data')::date >= (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date`;
   }
   // Smart sort: futuras (asc), depois passadas (desc).
   sql += `
@@ -166,7 +165,10 @@ export function filterNextPerCulto(items, todayYmdArg = null) {
   const seenCultos = new Set();
   const out = [];
   for (const it of items) {
-    const ymd = it?.data instanceof Date ? it.data.toISOString().slice(0, 10) : (typeof it?.data === 'string' ? it.data.slice(0, 10) : null);
+    const raw = it?.data;
+    const ymd = typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}/.test(raw)
+      ? raw.slice(0, 10)
+      : escalaDataToYMD(raw);
     const cultoId = it?.cultoRecorrenteId ? String(it.cultoRecorrenteId) : null;
     const isFuture = ymd && ymd >= todayYmd;
     if (!cultoId) {
@@ -1014,12 +1016,30 @@ export async function pgAutoCloseEscalasVencidas(igrejaId) {
   let fechadas = 0;
   for (const row of rows) {
     const ymd = escalaDataToYMD(row.dados?.data);
-    if (ymd && ymd <= hoje) {
+    if (ymd && ymd < hoje) {
       await pgUpdateEscala(row.id, igrejaId, { ativo: false });
       fechadas += 1;
     }
   }
   return fechadas;
+}
+
+/** Reabre escalas do dia que foram fechadas antes da hora (corrige auto-close legado). */
+export async function pgReabrirEscalasDoDia(igrejaId = null) {
+  const hoje = getHojeDateString();
+  const params = [hoje];
+  let sql = `
+    UPDATE escalas
+    SET dados = jsonb_set(COALESCE(dados, '{}'::jsonb), '{ativo}', 'true'::jsonb, true)
+    WHERE (dados->>'data')::date = $1::date
+      AND (dados->>'ativo')::boolean IS FALSE`;
+  if (igrejaId) {
+    params.push(igrejaId);
+    sql += ` AND igreja_id = $${params.length}`;
+  }
+  sql += ' RETURNING id';
+  const { rows } = await getPostgresPool().query(sql, params);
+  return rows.length;
 }
 
 export async function pgCreateCheckin({
@@ -1169,6 +1189,27 @@ export async function pgListMeusCheckins(igrejaId, email, eventoIds) {
     [igrejaId, eventoIds, String(email).toLowerCase()],
   );
   return new Map(rows.map((r) => [String(r.evento_id), { id: r.id, timestampMs: r.timestamp_ms }]));
+}
+
+/** Escalas em que o voluntário tem candidatura (inclui inativas — ex.: culto de hoje). */
+export async function pgListEscalasByCandidaturaEmail(igrejaId, email, { fromYmd = null } = {}) {
+  const em = String(email || '').trim().toLowerCase();
+  if (!em || !igrejaId) return [];
+  const params = [igrejaId, em];
+  let dateFilter = '';
+  if (fromYmd) {
+    params.push(String(fromYmd).slice(0, 10));
+    dateFilter = ` AND (e.dados->>'data')::date >= $${params.length}::date`;
+  }
+  const { rows } = await getPostgresPool().query(
+    `SELECT DISTINCT ON (e.id) e.id, e.igreja_id, e.dados, e.created_at
+     FROM escalas e
+     INNER JOIN candidaturas c ON c.escala_id = e.id AND c.igreja_id = e.igreja_id
+     WHERE e.igreja_id = $1 AND LOWER(c.dados->>'email') = $2${dateFilter}
+     ORDER BY e.id, (e.dados->>'data')::timestamptz ASC NULLS LAST`,
+    params,
+  );
+  return rows.map(mapEscalaRow);
 }
 
 /**

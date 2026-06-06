@@ -61,7 +61,9 @@ import {
   pgDeleteEscala, pgBulkDeleteEscalas, pgGetEscalaInscricaoStatus, pgSetEscalaInscricaoStatus,
   pgCountAprovadosByMinisterio, pgAutoLinkEscalasOrfas, pgFindEscalaByEventoCheckin,
   pgListAcompanhamentoEscala, pgBackfillCheckinCandidaturas, pgAutoMarcarFaltas,
+  pgListEscalasByCandidaturaEmail,
   pgListMinhasCandidaturasParaEscalas, pgFindEventosCheckinByIds, pgListMeusCheckins,
+  pgReabrirEscalasDoDia,
   pgClearEventoAberturaEmailEnviado,
   pgClearEscalaLembreteEnviado,
   pgWasEscalaLembreteEnviado,
@@ -2025,6 +2027,46 @@ async function buildCultoMapForEscalas(igrejaId, escalas) {
     if (culto) map.set(id, culto);
   }));
   return map;
+}
+
+async function sendCandidaturaAprovacaoEmailPg(candidaturaPg, req) {
+  const apiKey = (process.env.RESEND_API_KEY || '').trim();
+  if (!apiKey || !candidaturaPg?.email) return false;
+  const escala = await pgFindEscalaById(candidaturaPg.escalaId, req.tenantIgrejaId);
+  const slug = req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG;
+  const base = (process.env.APP_URL || '').replace(/\/$/, '')
+    || `${req.protocol}://${req.get('host')}`;
+  const appBase = base || 'https://voluntariosceleirosp.com';
+  const checkinUrl = escala?.eventoCheckinId
+    ? `${appBase}?checkin=${encodeURIComponent(escala.eventoCheckinId)}&igreja=${encodeURIComponent(slug)}`
+    : appBase;
+  const resend = new Resend(apiKey);
+  const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+  const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
+  const nomeDisplay = (candidaturaPg.nome || '').trim() || 'voluntário(a)';
+  const escalaNome = escala?.nome || 'Escala';
+  await resend.emails.send({
+    from, to: candidaturaPg.email, reply_to: replyTo,
+    subject: `Participação confirmada — ${escalaNome}`,
+    html: `<!DOCTYPE html><html lang="pt-BR"><body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0"><tr><td align="center">
+  <table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+    <tr><td style="background:#1a1a2e;padding:32px 40px;text-align:center">
+      <h1 style="margin:0;font-size:22px;color:#fff">Equipe de Voluntários</h1>
+    </td></tr>
+    <tr><td style="padding:40px">
+      <p style="font-size:16px;color:#374151">Olá, <strong>${nomeDisplay}</strong>!</p>
+      <p style="font-size:16px;color:#374151">Sua participação foi <strong>confirmada</strong> na escala <strong>${escalaNome}</strong> (ministério: ${candidaturaPg.ministerio || '—'}).</p>
+      <p style="font-size:15px;color:#374151">No dia do culto, você pode confirmar presença direto pelo link:</p>
+      <p style="margin:24px 0;text-align:center">
+        <a href="${checkinUrl}" style="display:inline-block;background:#f59e0b;color:#1a1a2e;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700">Fazer check-in</a>
+      </p>
+      <p style="font-size:14px;color:#6b7280">Se preferir, abra a plataforma e vá em "Escalas" para acompanhar.</p>
+    </td></tr>
+  </table>
+</td></tr></table></body></html>`,
+  });
+  return true;
 }
 
 async function enrichEscalasCandidatura(igrejaId, escalas) {
@@ -5092,7 +5134,21 @@ app.post('/api/candidaturas/bulk-status', requireAuth, resolveTenant, async (req
           }
         }
       }
+      const candidaturasBefore = status === 'aprovado'
+        ? await Promise.all(idList.map((id) => pgFindCandidaturaById(id, req.tenantIgrejaId)))
+        : [];
       const modified = await pgBulkUpdateCandidaturaStatus(idList, req.tenantIgrejaId, status, { aprovadoPor: req.userId });
+      if (status === 'aprovado') {
+        for (const c of candidaturasBefore) {
+          if (!c || c.status === 'aprovado' || !c.email || c.emailEnviado) continue;
+          try {
+            await sendCandidaturaAprovacaoEmailPg(c, req);
+            await pgUpdateCandidaturaStatus(c._id, req.tenantIgrejaId, 'aprovado', { emailEnviado: true });
+          } catch (mailErr) {
+            console.warn('Falha ao enviar email de aprovação em lote (PG):', mailErr?.message || mailErr);
+          }
+        }
+      }
       invalidateCache();
       return res.json({ ok: true, modified });
     }
@@ -6095,47 +6151,11 @@ app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, 
       invalidateCache();
       // Email de confirmação ao aprovar (Fase 5: agora com deep-link de check-in).
       if (status === 'aprovado' && !candidaturaPg.emailEnviado && candidaturaPg.email) {
-        const apiKey = (process.env.RESEND_API_KEY || '').trim();
-        if (apiKey) {
-          try {
-            const escala = await pgFindEscalaById(candidaturaPg.escalaId, req.tenantIgrejaId);
-            const slug = req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG;
-            const base = (process.env.APP_URL || '').replace(/\/$/, '')
-              || `${req.protocol}://${req.get('host')}`;
-            const appBase = base || 'https://voluntariosceleirosp.com';
-            const checkinUrl = escala?.eventoCheckinId
-              ? `${appBase}?checkin=${encodeURIComponent(escala.eventoCheckinId)}&igreja=${encodeURIComponent(slug)}`
-              : appBase;
-            const resend = new Resend(apiKey);
-            const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
-            const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
-            const nomeDisplay = (candidaturaPg.nome || '').trim() || 'voluntário(a)';
-            const escalaNome = escala?.nome || 'Escala';
-            await resend.emails.send({
-              from, to: candidaturaPg.email, reply_to: replyTo,
-              subject: `Participação confirmada — ${escalaNome}`,
-              html: `<!DOCTYPE html><html lang="pt-BR"><body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0"><tr><td align="center">
-  <table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
-    <tr><td style="background:#1a1a2e;padding:32px 40px;text-align:center">
-      <h1 style="margin:0;font-size:22px;color:#fff">Equipe de Voluntários</h1>
-    </td></tr>
-    <tr><td style="padding:40px">
-      <p style="font-size:16px;color:#374151">Olá, <strong>${nomeDisplay}</strong>!</p>
-      <p style="font-size:16px;color:#374151">Sua participação foi <strong>confirmada</strong> na escala <strong>${escalaNome}</strong> (ministério: ${candidaturaPg.ministerio || '—'}).</p>
-      <p style="font-size:15px;color:#374151">No dia do culto, você pode confirmar presença direto pelo link:</p>
-      <p style="margin:24px 0;text-align:center">
-        <a href="${checkinUrl}" style="display:inline-block;background:#f59e0b;color:#1a1a2e;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700">Fazer check-in</a>
-      </p>
-      <p style="font-size:14px;color:#6b7280">Se preferir, abra a plataforma e vá em "Escalas" para acompanhar.</p>
-    </td></tr>
-  </table>
-</td></tr></table></body></html>`,
-            });
-            await pgUpdateCandidaturaStatus(req.params.id, req.tenantIgrejaId, status, { aprovadoPor: req.userId, emailEnviado: true });
-          } catch (mailErr) {
-            console.warn('Falha ao enviar email de aprovação (PG):', mailErr?.message || mailErr);
-          }
+        try {
+          await sendCandidaturaAprovacaoEmailPg(candidaturaPg, req);
+          await pgUpdateCandidaturaStatus(req.params.id, req.tenantIgrejaId, status, { aprovadoPor: req.userId, emailEnviado: true });
+        } catch (mailErr) {
+          console.warn('Falha ao enviar email de aprovação (PG):', mailErr?.message || mailErr);
         }
       }
       return res.json(updatedPg);
@@ -6503,18 +6523,28 @@ app.get('/api/me/cultos', requireAuth, resolveTenant, async (req, res) => {
     }
 
     // PostgreSQL: lista próximas escalas (1 por culto recorrente), e cruza com:
-    //  - candidatura do usuário (se houver)
-    //  - evento_checkin vinculado
-    //  - check-in já feito no evento
-    const escalasAll = await pgListEscalas(req.tenantIgrejaId, {
+    const hoje = getHojeDateString();
+    const escalasAbertas = await pgListEscalas(req.tenantIgrejaId, {
       ativoOnly: true,
       futureOnly: true,
       nextPerCultoOnly: true,
       limit: 200,
     });
+    const escalasComCandidatura = await pgListEscalasByCandidaturaEmail(req.tenantIgrejaId, email, { fromYmd: hoje });
+    const escalaById = new Map();
+    for (const e of escalasAbertas) escalaById.set(String(e._id), e);
+    for (const e of escalasComCandidatura) {
+      if (!escalaById.has(String(e._id))) escalaById.set(String(e._id), e);
+    }
+    const escalasAll = [...escalaById.values()].sort((a, b) => {
+      const da = escalaDataToYMD(a.data) || '';
+      const db = escalaDataToYMD(b.data) || '';
+      return da.localeCompare(db);
+    });
     const escalaIds = escalasAll.map((e) => String(e._id));
     if (!escalaIds.length) return res.json({ itens: [] });
 
+    const cultoMap = await buildCultoMapForEscalas(req.tenantIgrejaId, escalasAll);
     const candByEscalaId = await pgListMinhasCandidaturasParaEscalas(req.tenantIgrejaId, email, escalaIds);
 
     const evtIds = [...new Set(escalasAll.map((e) => e.eventoCheckinId).filter(Boolean))];
@@ -6549,6 +6579,9 @@ app.get('/api/me/cultos', requireAuth, resolveTenant, async (req, res) => {
         situacao = 'aprovada';
       }
 
+      const culto = escala.cultoRecorrenteId ? cultoMap.get(escala.cultoRecorrenteId) : null;
+      const candidaturaAberta = isEscalaAbertaParaCandidatura(escala, culto, hoje);
+
       return {
         escalaId: String(escala._id),
         escalaNome: escala.nome || '',
@@ -6566,6 +6599,7 @@ app.get('/api/me/cultos', requireAuth, resolveTenant, async (req, res) => {
         compareceu: !!checkin,
         checkinId: checkin?.id || null,
         situacao,
+        candidaturaAberta,
       };
     });
 
@@ -6708,6 +6742,8 @@ async function start() {
         if (f > 0) console.log(`✅ Auto-marca falta: ${f} candidatura(s) marcadas após fim_checkin.`);
         const v = await pgBackfillVoluntariosFromCheckins();
         if (v > 0) console.log(`✅ Backfill voluntarios←checkins: ${v} pessoa(s) adicionada(s) ao catálogo.`);
+        const reopened = await pgReabrirEscalasDoDia();
+        if (reopened > 0) console.log(`✅ Escalas do dia reabertas: ${reopened}.`);
       } catch (err) {
         console.error('Migração escala↔checkin↔candidatura falhou:', err.message || err);
       }

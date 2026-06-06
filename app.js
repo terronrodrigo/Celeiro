@@ -5786,8 +5786,13 @@ function renderMeusCultos(itens) {
         cta = '<span style="color:var(--text-muted);font-size:.88em">A liderança vai revisar sua inscrição.</span>';
         break;
       case 'aberta-nao-inscrita':
-        badge = '<span class="status-badge" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1">Aberta para inscrição</span>';
-        cta = `<button type="button" class="btn btn-primary btn-me-inscrever" data-escala-id="${escapeAttr(it.escalaId)}">Me inscrever</button>`;
+        if (it.candidaturaAberta === false) {
+          badge = '<span class="status-badge" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1">Inscrições encerradas</span>';
+          cta = '<span style="color:var(--text-muted);font-size:.88em">As inscrições para este culto não estão abertas.</span>';
+        } else {
+          badge = '<span class="status-badge" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1">Aberta para inscrição</span>';
+          cta = `<button type="button" class="btn btn-primary btn-me-inscrever" data-escala-id="${escapeAttr(it.escalaId)}">Me inscrever</button>`;
+        }
         break;
       case 'presente':
         badge = '<span class="status-badge" style="background:#dcfce7;color:#166534;border:1px solid #86efac">Presente</span>';
