@@ -549,6 +549,18 @@ function requireMasterAdmin(req, res, next) {
   next();
 }
 
+/** Master admin ou admin global (superadmin) — migração Mongo→Postgres. */
+function requireMigrationAdmin(req, res, next) {
+  const role = String(req.userRole || '').toLowerCase();
+  const email = (req.userEmail || '').toString().trim().toLowerCase();
+  const isMaster = MASTER_ADMIN_EMAIL && email === MASTER_ADMIN_EMAIL;
+  const isGlobal = req.authIsGlobalAdmin === true && role === 'admin';
+  if (!isMaster && !isGlobal) {
+    return res.status(403).json({ error: 'Acesso negado. Apenas superadmin pode migrar dados.' });
+  }
+  next();
+}
+
 function requireAdminOrLider(req, res, next) {
   if (req.userRole !== 'admin' && req.userRole !== 'lider') {
     return res.status(403).json({ error: 'Acesso negado. Apenas administradores ou líderes de ministério.' });
@@ -4675,8 +4687,8 @@ app.delete('/api/users/:id', requireAuth, requireMasterAdmin, async (req, res) =
   }
 });
 
-// GET /api/admin/migrate-mongo-to-pg/status — conexão Mongo + Postgres (master admin)
-app.get('/api/admin/migrate-mongo-to-pg/status', requireAuth, requireMasterAdmin, async (req, res) => {
+// GET /api/admin/migrate-mongo-to-pg/status — conexão Mongo + Postgres (superadmin)
+app.get('/api/admin/migrate-mongo-to-pg/status', requireAuth, requireMigrationAdmin, async (req, res) => {
   try {
     res.json(await getMongoMigrationStatus());
   } catch (err) {
@@ -4686,12 +4698,12 @@ app.get('/api/admin/migrate-mongo-to-pg/status', requireAuth, requireMasterAdmin
 });
 
 // GET /api/admin/migrate-mongo-to-pg/progress — etapa atual da migração (master admin)
-app.get('/api/admin/migrate-mongo-to-pg/progress', requireAuth, requireMasterAdmin, (req, res) => {
+app.get('/api/admin/migrate-mongo-to-pg/progress', requireAuth, requireMigrationAdmin, (req, res) => {
   res.json(getMigrationProgress());
 });
 
 // POST /api/admin/migrate-mongo-to-pg/test — testa leitura Mongo + Postgres (master admin)
-app.post('/api/admin/migrate-mongo-to-pg/test', requireAuth, resolveTenant, requireMasterAdmin, async (req, res) => {
+app.post('/api/admin/migrate-mongo-to-pg/test', requireAuth, resolveTenant, requireMigrationAdmin, async (req, res) => {
   try {
     const allIgrejas = req.body?.allIgrejas === true;
     const igrejaSlug = (req.body?.igrejaSlug || req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
@@ -4704,7 +4716,7 @@ app.post('/api/admin/migrate-mongo-to-pg/test', requireAuth, resolveTenant, requ
 });
 
 // POST /api/admin/migrate-mongo-to-pg — copia dados Mongo → PostgreSQL (master admin)
-app.post('/api/admin/migrate-mongo-to-pg', requireAuth, resolveTenant, requireMasterAdmin, async (req, res) => {
+app.post('/api/admin/migrate-mongo-to-pg', requireAuth, resolveTenant, requireMigrationAdmin, async (req, res) => {
   try {
     if (!isPostgres()) return sendError(res, 503, 'PostgreSQL não disponível.');
     const dryRun = req.query.dry === '1' || req.query.dry === 'true' || req.body?.dryRun === true;

@@ -319,6 +319,11 @@ const resetPasswordCard = document.getElementById('resetPasswordCard');
 const setupLinkWrap = document.getElementById('setupLinkWrap');
 const mustChangePasswordCard = document.getElementById('mustChangePasswordCard');
 
+function canShowMongoMigrateUi() {
+  const isAdmin = normalizeAuthRole(authRole) === 'admin';
+  return !!(authToken && authVerified && isAdmin && (authIsMasterAdmin || authIsGlobalAdmin));
+}
+
 function updateAuthUi() {
   const isLogged = Boolean(authToken);
   const isVoluntario = String(authRole || '').toLowerCase() === 'voluntario';
@@ -410,8 +415,8 @@ function updateAuthUi() {
   const brdidSection = document.getElementById('brdidVerificacaoSection');
   if (brdidSection) brdidSection.style.display = isLogged && isAdmin ? '' : 'none';
   const mongoMigrateSection = document.getElementById('mongoMigrateSection');
-  if (mongoMigrateSection) mongoMigrateSection.style.display = isLogged && authIsMasterAdmin ? '' : 'none';
-  if (isLogged && authIsMasterAdmin) void refreshMongoMigrateStatus();
+  if (mongoMigrateSection) mongoMigrateSection.style.display = canShowMongoMigrateUi() ? '' : 'none';
+  if (canShowMongoMigrateUi()) void refreshMongoMigrateStatus();
   void refreshIgrejaSelector();
 }
 
@@ -7969,7 +7974,7 @@ document.getElementById('btnCopiarLinkFormularioMembro')?.addEventListener('clic
 
 async function refreshMongoMigrateStatus() {
   const statusEl = document.getElementById('mongoMigrateStatus');
-  if (!statusEl || !authToken || !authIsMasterAdmin) return;
+  if (!statusEl || !canShowMongoMigrateUi()) return;
   statusEl.textContent = 'Verificando...';
   try {
     const r = await authFetch(`${API_BASE}/api/admin/migrate-mongo-to-pg/status`);
@@ -8071,7 +8076,7 @@ function formatMongoPreflightReport(data) {
 document.getElementById('mongoMigrateAllIgrejas')?.addEventListener('change', invalidateMongoPreflight);
 
 document.getElementById('btnMongoMigrateTest')?.addEventListener('click', async () => {
-  if (!authToken || !authIsMasterAdmin) return;
+  if (!canShowMongoMigrateUi()) return;
   const { allIgrejas, igrejaSlug } = getMongoMigrateOptions();
   const btnTest = document.getElementById('btnMongoMigrateTest');
   const resultEl = document.getElementById('mongoMigrateResult');
@@ -8171,7 +8176,7 @@ function startMongoMigratePoll(onComplete) {
 }
 
 document.getElementById('btnMongoMigrate')?.addEventListener('click', async () => {
-  if (!authToken || !authIsMasterAdmin) return;
+  if (!canShowMongoMigrateUi()) return;
   if (!mongoMigratePreflightToken) {
     window.alert('Execute primeiro o teste de acesso aos dados (botão "1. Testar acesso").');
     return;
