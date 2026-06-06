@@ -21,7 +21,7 @@ import FormularioNovoMembro from '../models/FormularioNovoMembro.js';
 import RoleHistory from '../models/RoleHistory.js';
 import { ensureMongoConnection, pingMongo, isPostgres } from '../db/connection.js';
 import { getPostgresPool } from '../db/postgres/init.js';
-import { pgFindIgrejaBySlug, pgUpsertUserWithPasswordHash } from '../db/postgres/repos.js';
+import { pgFindIgrejaBySlug } from '../db/postgres/repos.js';
 import { escalaDataToYMD } from './brasilia.js';
 
 let migrationRunning = false;
@@ -166,23 +166,22 @@ async function migrateUsers(mongoIgrejaId, pgIgrejaId, minMap, dryRun) {
       continue;
     }
     if (!u.senha) { inc(counts, 'skipped'); continue; }
-    const { created } = await pgUpsertUserWithPasswordHash({
-      email,
-      nome: u.nome,
-      senhaHash: u.senha,
-      role: u.role || 'voluntario',
-      igrejaId: pgIgrejaId,
-      ministerioIds,
-      mustChangePassword: !!u.mustChangePassword,
-      ativo: u.ativo !== false,
-    });
+    const id = oid(u._id);
+    await getPostgresPool().query(
+      `INSERT INTO users (id, email, nome, senha, role, igreja_id, ministerio_ids, ativo, must_change_password)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)`,
+      [
+        id, email, u.nome, u.senha, u.role || 'voluntario', pgIgrejaId,
+        JSON.stringify(ministerioIds), u.ativo !== false, !!u.mustChangePassword,
+      ],
+    );
     if (u.whatsapp || u.fotoUrl) {
       await getPostgresPool().query(
         'UPDATE users SET whatsapp = COALESCE($3, whatsapp), foto_url = COALESCE($4, foto_url) WHERE igreja_id = $1 AND LOWER(email) = $2',
         [pgIgrejaId, email, u.whatsapp || null, u.fotoUrl || null],
       ).catch(() => {});
     }
-    inc(counts, created ? 'created' : 'updated');
+    inc(counts, 'created');
   }
   return counts;
 }
@@ -517,22 +516,99 @@ async function migrateFormularioPorEvento(Model, table, mongoIgrejaId, pgIgrejaI
   return counts;
 }
 
-async function migrateRoleHistory(mongoIgrejaId, pgIgrejaId, minMap, dryRun) {
+/** Mongo User._id → PostgreSQL users.id (por e-mail ou id já migrado). */
+async function buildUserIdMap(mongoIgrejaId, pgIgrejaId) {
+  const map = new Map();
+  const pool = getPostgresPool();
+  const mongoUsers = await User.find({ igrejaId: mongoIgrejaId }).select('_id email').lean();
+  for (const u of mongoUsers) {
+    const mongoKey = String(u._id);
+    const email = String(u.email || '').trim().toLowerCase();
+    if (!email) continue;
+    const { rows: byEmail } = await pool.query(
+      'SELECT id FROM users WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
+      [pgIgrejaId, email],
+    );
+    if (byEmail[0]?.id) {
+      map.set(mongoKey, byEmail[0].id);
+      continue;
+    }
+    const { rows: byId } = await pool.query('SELECT id FROM users WHERE id = $1 LIMIT 1', [mongoKey]);
+    if (byId[0]?.id) map.set(mongoKey, byId[0].id);
+  }
+  return map;
+}
+
+async function resolvePgUserId(mongoUserId, pgIgrejaId, userIdMap, cache) {
+  if (!mongoUserId) return null;
+  const key = String(mongoUserId);
+  if (cache.has(key)) return cache.get(key);
+  if (userIdMap.has(key)) {
+    cache.set(key, userIdMap.get(key));
+    return userIdMap.get(key);
+  }
+  const pool = getPostgresPool();
+  const { rows: byId } = await pool.query('SELECT id FROM users WHERE id = $1 LIMIT 1', [key]);
+  if (byId[0]?.id) {
+    cache.set(key, byId[0].id);
+    return byId[0].id;
+  }
+  const mu = await User.findById(mongoUserId).select('email igrejaId').lean();
+  if (!mu?.email) {
+    cache.set(key, null);
+    return null;
+  }
+  const email = String(mu.email).trim().toLowerCase();
+  let pgId = null;
+  if (mu.igrejaId) {
+    const ig = await Igreja.findById(mu.igrejaId).select('slug').lean();
+    const pgIg = ig ? await pgFindIgrejaBySlug(ig.slug) : null;
+    if (pgIg?._id) {
+      const { rows } = await pool.query(
+        'SELECT id FROM users WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
+        [pgIg._id, email],
+      );
+      pgId = rows[0]?.id || null;
+    }
+  } else {
+    const { rows } = await pool.query(
+      'SELECT id FROM users WHERE igreja_id IS NULL AND LOWER(email) = $1 LIMIT 1',
+      [email],
+    );
+    pgId = rows[0]?.id || null;
+  }
+  cache.set(key, pgId);
+  return pgId;
+}
+
+async function migrateRoleHistory(mongoIgrejaId, pgIgrejaId, minMap, userIdMap, dryRun) {
   const counts = emptyCounts();
   const list = await RoleHistory.find({ igrejaId: mongoIgrejaId }).lean();
+  const userResolveCache = new Map();
   for (const h of list) {
-    if (dryRun) { inc(counts, 'created'); continue; }
+    const pgUserId = await resolvePgUserId(h.userId, pgIgrejaId, userIdMap, userResolveCache);
+    if (!pgUserId) {
+      inc(counts, 'skipped');
+      continue;
+    }
+    if (dryRun) {
+      inc(counts, 'created');
+      continue;
+    }
+    const changedByPg = h.changedBy
+      ? await resolvePgUserId(h.changedBy, pgIgrejaId, userIdMap, userResolveCache)
+      : null;
     const dados = {
       fromRole: h.fromRole || '',
       toRole: h.toRole || '',
       ministerioId: minMap.get(String(h.ministerioId)) || oid(h.ministerioId),
-      changedBy: oid(h.changedBy),
+      changedBy: changedByPg,
     };
     await getPostgresPool().query(
       `INSERT INTO role_history (id, igreja_id, user_id, dados, created_at)
        VALUES ($1, $2, $3, $4::jsonb, COALESCE($5, NOW()))
-       ON CONFLICT (id) DO UPDATE SET dados = EXCLUDED.dados`,
-      [oid(h._id), pgIgrejaId, oid(h.userId), JSON.stringify(dados), h.createdAt || null],
+       ON CONFLICT (id) DO UPDATE SET dados = EXCLUDED.dados, user_id = EXCLUDED.user_id`,
+      [oid(h._id), pgIgrejaId, pgUserId, JSON.stringify(dados), h.createdAt || null],
     );
     inc(counts, 'updated');
   }
@@ -549,8 +625,13 @@ async function migrateOneIgreja(slug, dryRun, tick) {
   const minMap = await buildMinisterioMap(mongoIgreja._id, pgIgrejaId);
   const mid = mongoIgreja._id;
 
+  let userIdMap = new Map();
   const steps = [
-    ['users', 'usuários', () => migrateUsers(mid, pgIgrejaId, minMap, dryRun)],
+    ['users', 'usuários', async () => {
+      const r = await migrateUsers(mid, pgIgrejaId, minMap, dryRun);
+      userIdMap = await buildUserIdMap(mid, pgIgrejaId);
+      return r;
+    }],
     ['voluntarios', 'voluntários', () => migrateVoluntarios(mid, pgIgrejaId, dryRun)],
     ['eventosCheckin', 'eventos de check-in', () => migrateEventosCheckin(mid, pgIgrejaId, dryRun)],
     ['escalas', 'escalas', () => migrateEscalas(mid, pgIgrejaId, dryRun)],
@@ -563,7 +644,7 @@ async function migrateOneIgreja(slug, dryRun, tick) {
     ['formularioBatismo', 'formulários batismo', () => migrateFormularioPorEvento(FormularioBatismo, 'formulario_batismo', mid, pgIgrejaId, dryRun)],
     ['formularioApresentacao', 'formulários apresentação', () => migrateFormularioPorEvento(FormularioApresentacao, 'formulario_apresentacao', mid, pgIgrejaId, dryRun)],
     ['formularioNovoMembro', 'formulários novo membro', () => migrateFormularioPorEvento(FormularioNovoMembro, 'formulario_novo_membro', mid, pgIgrejaId, dryRun)],
-    ['roleHistory', 'histórico de perfis', () => migrateRoleHistory(mid, pgIgrejaId, minMap, dryRun)],
+    ['roleHistory', 'histórico de perfis', () => migrateRoleHistory(mid, pgIgrejaId, minMap, userIdMap, dryRun)],
   ];
 
   const result = { slug, pgIgrejaId, dryRun };
