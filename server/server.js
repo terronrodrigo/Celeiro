@@ -1978,21 +1978,37 @@ app.get('/api/checkins/ministerio', requireAuth, resolveTenant, async (req, res)
   }
 });
 
-// Líder ou admin com ministérios: histórico de participação (escalas + check-ins)
+// Líder ou admin: histórico de participação (escalas + check-ins)
 app.get('/api/historico/ministerio', requireAuth, resolveTenant, async (req, res) => {
   try {
-    const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length
-      ? req.userMinisterioNomes.map(String).map((s) => s.trim()).filter(Boolean)
-      : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
-    if (nomes.length === 0) {
-      return res.status(403).json({ error: 'Acesso apenas para líderes de ministério.' });
-    }
     if (!isPostgres()) {
       return res.status(503).json({ error: 'Histórico disponível apenas com PostgreSQL.' });
     }
+    const isAdmin = req.userRole === 'admin';
     const ministerioFiltro = req.query.ministerio ? String(req.query.ministerio).trim() : '';
     const sort = req.query.sort ? String(req.query.sort).trim() : 'escala';
-    const data = await pgHistoricoMinisterio(req.tenantIgrejaId, nomes, {
+
+    let scopeNomes = [];
+    let ministeriosDisponiveis = [];
+
+    if (isAdmin) {
+      const list = await pgListMinisterios(req.tenantIgrejaId);
+      ministeriosDisponiveis = list
+        .map((m) => String(m.nome || '').trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+      scopeNomes = ministeriosDisponiveis;
+    } else {
+      scopeNomes = req.userMinisterioNomes && req.userMinisterioNomes.length
+        ? req.userMinisterioNomes.map(String).map((s) => s.trim()).filter(Boolean)
+        : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
+      if (scopeNomes.length === 0) {
+        return res.status(403).json({ error: 'Acesso apenas para líderes de ministério.' });
+      }
+      ministeriosDisponiveis = scopeNomes;
+    }
+
+    const data = await pgHistoricoMinisterio(req.tenantIgrejaId, scopeNomes, {
       ministerioFiltro: ministerioFiltro || undefined,
       sort,
     });
@@ -2000,7 +2016,7 @@ app.get('/api/historico/ministerio', requireAuth, resolveTenant, async (req, res
       ...v,
       ultimoCheckin: v.ultimoCheckinMs != null ? formatDatePtBr(v.ultimoCheckinMs) : null,
     }));
-    res.json({ ...data, voluntarios });
+    res.json({ ...data, ministeriosDisponiveis, voluntarios });
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao carregar histórico do ministério.');

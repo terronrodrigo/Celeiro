@@ -402,7 +402,7 @@ function updateAuthUi() {
   const navAdminCheckinMin = document.getElementById('navAdminCheckinMinisterio');
   if (navAdminCheckinMin) navAdminCheckinMin.style.display = isLogged && isAdmin && hasMinisterios ? '' : 'none';
   const navAdminHistorico = document.getElementById('navAdminHistorico');
-  if (navAdminHistorico) navAdminHistorico.style.display = isLogged && isAdmin && hasMinisterios ? '' : 'none';
+  if (navAdminHistorico) navAdminHistorico.style.display = isLogged && isAdmin ? '' : 'none';
   // Mesma regra de setView(): busca por nome/email na view Voluntários para admin e líderes (não só admin).
   if (searchBox) {
     const showSearch = isLogged && (isAdmin || isLider || authRole === 'lider') && currentView === 'voluntarios';
@@ -901,7 +901,7 @@ const VIEW_META = {
   'cultos-recorrentes': { title: 'Cultos recorrentes', subtitle: 'Escalas e check-ins gerados automaticamente por dia da semana (horário de Brasília).', role: 'admin' },
   checkin: { title: 'Check-in', subtitle: 'Registros por data e ministério.', role: 'admin' },
   'checkin-ministerio': { title: 'Check-ins do ministério', subtitle: 'Acompanhe confirmações de presença nos ministérios sob sua liderança (você pode liderar mais de um).', role: 'lider' },
-  historico: { title: 'Histórico', subtitle: 'Participação dos voluntários: escalas aprovadas, check-ins e taxa de presença nos ministérios sob sua liderança.', role: 'lider' },
+  historico: { title: 'Histórico', subtitle: 'Participação dos voluntários por ministério: escalas aprovadas, check-ins e taxa de presença.', role: 'admin' },
   perfil: { title: 'Meu perfil', subtitle: 'Seus dados de cadastro.', role: 'voluntario' },
   'checkin-hoje': { title: 'Check-in do dia', subtitle: 'Confirme presença no culto de hoje.', role: 'voluntario' },
   'meus-checkins': { title: 'Meus check-ins', subtitle: 'Suas escalas aprovadas, check-ins e taxa de presença.', role: 'voluntario' },
@@ -947,8 +947,9 @@ function setView(view, options) {
     const perfilForLider = (view === 'perfil' && isLider);
     const perfilForAdmin = (view === 'perfil' && isAdmin);
     const liderViewAllowed = (authRole === 'lider' || isLider) && authRole !== 'admin' && LIDER_VIEWS.includes(view);
+    const historicoViewAllowed = view === 'historico' && (isAdmin || authRole === 'lider' || isLider);
     const volViewAllowed = isVol && VOLUNTARIO_VIEWS.includes(view);
-    const match = allowed.includes(view) && (roleMatch || liderViewAllowed || volViewAllowed || perfilForLider || perfilForAdmin);
+    const match = allowed.includes(view) && (roleMatch || liderViewAllowed || historicoViewAllowed || volViewAllowed || perfilForLider || perfilForAdmin);
     item.classList.toggle('active', match);
   });
   if (pageTitle) {
@@ -959,6 +960,10 @@ function setView(view, options) {
   if (pageSubtitle) {
     if (view === 'escalas' && isVol) {
       pageSubtitle.textContent = 'Veja cultos disponíveis, inscreva-se e faça check-in.';
+    } else if (view === 'historico' && isAdmin) {
+      pageSubtitle.textContent = 'Filtre por ministério para ver escalas aprovadas, check-ins e taxa de presença.';
+    } else if (view === 'historico' && (authRole === 'lider' || isLider)) {
+      pageSubtitle.textContent = 'Participação dos voluntários nos ministérios sob sua liderança.';
     } else {
       pageSubtitle.textContent = (meta && meta.subtitle) || '';
     }
@@ -1708,15 +1713,21 @@ async function fetchHistoricoMinisterio() {
     renderHistoricoMinisterio();
     const filterWrap = document.getElementById('historicoMinisterioFilterWrap');
     const filterSelect = document.getElementById('historicoMinisterioFilter');
-    const ministerios = Array.isArray(data.ministerios) ? data.ministerios : [];
-    const leaderMins = (authMinisterioNomes && authMinisterioNomes.length)
-      ? authMinisterioNomes
-      : (authMinisterioNome ? [authMinisterioNome] : ministerios);
-    const showFilter = leaderMins.length > 1;
+    const isAdminRole = authRole === 'admin';
+    const ministeriosCatalogo = Array.isArray(data.ministeriosDisponiveis) && data.ministeriosDisponiveis.length
+      ? data.ministeriosDisponiveis
+      : (Array.isArray(data.ministerios) ? data.ministerios : []);
+    const leaderMins = isAdminRole
+      ? ministeriosCatalogo
+      : ((authMinisterioNomes && authMinisterioNomes.length)
+        ? authMinisterioNomes
+        : (authMinisterioNome ? [authMinisterioNome] : ministeriosCatalogo));
+    const showFilter = isAdminRole ? leaderMins.length > 0 : leaderMins.length > 1;
     if (filterWrap) filterWrap.style.display = showFilter ? '' : 'none';
     if (filterSelect && showFilter) {
       const currentVal = filterSelect.value || minVal || '';
-      filterSelect.innerHTML = '<option value="">Todos os ministérios</option>'
+      const todosLabel = isAdminRole ? 'Todos os ministérios' : 'Todos os meus ministérios';
+      filterSelect.innerHTML = `<option value="">${escapeHtml(todosLabel)}</option>`
         + leaderMins.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
       if (currentVal && leaderMins.includes(currentVal)) filterSelect.value = currentVal;
     }
