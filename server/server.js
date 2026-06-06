@@ -109,6 +109,7 @@ import {
 } from './db/postgres/cultos-recorrentes.js';
 import { DIAS_SEMANA, formatDataPtBr } from './lib/brasilia.js';
 import { buildWaMeUrl, buildMensagemAprovacaoEscala, phoneToWaMeDigits } from './lib/whatsapp-links.js';
+import { runMongoToPgMigration, getMongoMigrationStatus, getMigrationProgress, runMongoMigrationPreflight } from './lib/mongo-to-pg-migrate.js';
 import { isValidEntityId } from './lib/ids.js';
 import { filterCandidaturasForLider, voluntarioMatchesLiderMinisterios, normalizeVoluntarioMinisteriosPatch, splitVoluntarioMinisterios } from './lib/ministerio-match.js';
 import { enrichCandidaturasForPanel } from './lib/candidatura-enrich.js';
@@ -4671,6 +4672,51 @@ app.delete('/api/users/:id', requireAuth, requireMasterAdmin, async (req, res) =
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao excluir usuário.');
+  }
+});
+
+// GET /api/admin/migrate-mongo-to-pg/status — conexão Mongo + Postgres (master admin)
+app.get('/api/admin/migrate-mongo-to-pg/status', requireAuth, requireMasterAdmin, async (req, res) => {
+  try {
+    res.json(await getMongoMigrationStatus());
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao verificar status da migração.');
+  }
+});
+
+// GET /api/admin/migrate-mongo-to-pg/progress — etapa atual da migração (master admin)
+app.get('/api/admin/migrate-mongo-to-pg/progress', requireAuth, requireMasterAdmin, (req, res) => {
+  res.json(getMigrationProgress());
+});
+
+// POST /api/admin/migrate-mongo-to-pg/test — testa leitura Mongo + Postgres (master admin)
+app.post('/api/admin/migrate-mongo-to-pg/test', requireAuth, resolveTenant, requireMasterAdmin, async (req, res) => {
+  try {
+    const allIgrejas = req.body?.allIgrejas === true;
+    const igrejaSlug = (req.body?.igrejaSlug || req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
+    const result = await runMongoMigrationPreflight({ igrejaSlug, allIgrejas });
+    res.json(result);
+  } catch (err) {
+    console.error('migrate-mongo-to-pg/test:', err);
+    sendError(res, 500, err.message || 'Erro no teste de acesso aos dados.');
+  }
+});
+
+// POST /api/admin/migrate-mongo-to-pg — copia dados Mongo → PostgreSQL (master admin)
+app.post('/api/admin/migrate-mongo-to-pg', requireAuth, resolveTenant, requireMasterAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'PostgreSQL não disponível.');
+    const dryRun = req.query.dry === '1' || req.query.dry === 'true' || req.body?.dryRun === true;
+    const allIgrejas = req.body?.allIgrejas === true;
+    const igrejaSlug = (req.body?.igrejaSlug || req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
+    const preflightToken = (req.body?.preflightToken || '').toString().trim();
+    const result = await runMongoToPgMigration({ igrejaSlug, allIgrejas, dryRun, preflightToken });
+    invalidateCache();
+    res.json(result);
+  } catch (err) {
+    console.error('migrate-mongo-to-pg:', err);
+    sendError(res, 500, err.message || 'Erro na migração MongoDB → PostgreSQL.');
   }
 });
 

@@ -88,3 +88,17 @@ export async function initDatabase() {
     );
   }
 }
+
+/** Conecta ao Mongo sob demanda (ex.: migração quando o boot falhou por IP whitelist). */
+export async function ensureMongoConnection() {
+  const mongoUri = (process.env.MONGODB_URI || '').trim();
+  if (!mongoUri) {
+    throw new Error('MONGODB_URI não configurado no servidor.');
+  }
+  if (mongoose.connection.readyState === 1) {
+    mongoConnected = true;
+    return;
+  }
+  await mongoose.connect(mongoUri);
+  mongoConnected = true;
+}

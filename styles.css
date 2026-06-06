@@ -2349,3 +2349,45 @@ body {
   font-size: 0.85rem;
   color: var(--text-muted);
 }
+
+/* Botão de migração Mongo → Postgres com barra de progresso */
+.btn-migrate-progress {
+  position: relative;
+  overflow: hidden;
+  min-width: 11rem;
+  isolation: isolate;
+}
+
+.btn-migrate-progress:disabled {
+  opacity: 1;
+  cursor: wait;
+}
+
+.btn-migrate-progress__fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  background: rgba(255, 255, 255, 0.22);
+  transition: width 0.35s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.btn-migrate-progress.is-running .btn-migrate-progress__fill {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.btn-migrate-progress.is-done .btn-migrate-progress__fill {
+  background: rgba(34, 197, 94, 0.35);
+}
+
+.btn-migrate-progress.is-error .btn-migrate-progress__fill {
+  background: rgba(239, 68, 68, 0.35);
+}
+
+.btn-migrate-progress__label {
+  position: relative;
+  z-index: 1;
+}

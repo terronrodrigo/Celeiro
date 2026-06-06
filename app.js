@@ -409,6 +409,9 @@ function updateAuthUi() {
   if (cadastroLinkSection) cadastroLinkSection.style.display = isLogged && isAdmin ? '' : 'none';
   const brdidSection = document.getElementById('brdidVerificacaoSection');
   if (brdidSection) brdidSection.style.display = isLogged && isAdmin ? '' : 'none';
+  const mongoMigrateSection = document.getElementById('mongoMigrateSection');
+  if (mongoMigrateSection) mongoMigrateSection.style.display = isLogged && authIsMasterAdmin ? '' : 'none';
+  if (isLogged && authIsMasterAdmin) void refreshMongoMigrateStatus();
   void refreshIgrejaSelector();
 }
 
@@ -6920,6 +6923,7 @@ document.getElementById('topIgrejaSelect')?.addEventListener('change', async () 
   const sel = document.getElementById('topIgrejaSelect');
   if (!sel) return;
   persistIgrejaSlugToStorage(sel.value);
+  if (!document.getElementById('mongoMigrateAllIgrejas')?.checked) invalidateMongoPreflight();
   const viewKeep = currentView || 'resumo';
   clearTenantScopedData();
   showLoading(true);
@@ -7961,6 +7965,268 @@ document.getElementById('btnCopiarLinkFormularioMembro')?.addEventListener('clic
     const btn = document.getElementById('btnCopiarLinkFormularioMembro');
     if (btn) { const t = btn.textContent; btn.textContent = 'Copiado!'; setTimeout(() => { btn.textContent = t; }, 2000); }
   }).catch(() => prompt('Copie o link:', url));
+});
+
+async function refreshMongoMigrateStatus() {
+  const statusEl = document.getElementById('mongoMigrateStatus');
+  if (!statusEl || !authToken || !authIsMasterAdmin) return;
+  statusEl.textContent = 'Verificando...';
+  try {
+    const r = await authFetch(`${API_BASE}/api/admin/migrate-mongo-to-pg/status`);
+    const data = await r.json();
+    if (!r.ok) {
+      statusEl.textContent = data.error || 'Erro ao verificar';
+      return;
+    }
+    const parts = [];
+    parts.push(data.postgresReady ? 'Postgres OK' : 'Postgres indisponível');
+    if (!data.mongodbUriConfigured) parts.push('MONGODB_URI não configurado no Railway');
+    else if (data.mongoConnected) parts.push('Mongo conectado');
+    else parts.push(`Mongo: ${data.mongoError || 'sem conexão'}`);
+    if (data.migrationRunning) parts.push('migração em andamento…');
+    statusEl.textContent = `(${parts.join(' · ')})`;
+    if (data.progress?.running) updateMongoMigrateProgressUI(data.progress);
+  } catch (_) {
+    statusEl.textContent = '(erro ao verificar status)';
+  }
+}
+
+let mongoMigratePollTimer = null;
+let mongoMigratePreflightToken = null;
+
+function getMongoMigrateOptions() {
+  return {
+    dryRun: !!document.getElementById('mongoMigrateDryRun')?.checked,
+    allIgrejas: !!document.getElementById('mongoMigrateAllIgrejas')?.checked,
+    igrejaSlug: getTenantSlugForLinks() || 'celeiro-sp',
+  };
+}
+
+function invalidateMongoPreflight() {
+  mongoMigratePreflightToken = null;
+  const btnContinue = document.getElementById('btnMongoMigrate');
+  const badge = document.getElementById('mongoMigratePreflightBadge');
+  if (btnContinue) {
+    btnContinue.disabled = true;
+    btnContinue.title = 'Execute o teste de acesso antes';
+  }
+  if (badge) {
+    badge.style.display = 'none';
+    badge.textContent = '';
+  }
+}
+
+function applyMongoPreflightSuccess(data) {
+  mongoMigratePreflightToken = data.preflightToken || null;
+  const btnContinue = document.getElementById('btnMongoMigrate');
+  const badge = document.getElementById('mongoMigratePreflightBadge');
+  if (btnContinue) {
+    btnContinue.disabled = !mongoMigratePreflightToken;
+    btnContinue.title = mongoMigratePreflightToken
+      ? 'Teste OK — clique para migrar'
+      : 'Teste sem dados ou com erro — corrija antes de continuar';
+  }
+  if (badge && mongoMigratePreflightToken) {
+    badge.style.display = 'inline';
+    const min = Math.floor((data.preflightExpiresInSec || 1800) / 60);
+    badge.textContent = `✓ Teste OK · válido por ${min} min`;
+  }
+}
+
+function formatMongoPreflightReport(data) {
+  const lines = [];
+  lines.push(data.message || '');
+  lines.push('');
+  lines.push(`Mongo ping: ${data.mongoPingMs}ms · Postgres ping: ${data.postgresPingMs}ms`);
+  lines.push(`Postgres: ${data.postgresIgrejasAtivas} igreja(s) ativa(s) · Admins globais no Mongo: ${data.globalAdmins ?? 0}`);
+  lines.push(`Total estimado a migrar: ${data.grandTotal ?? 0} registro(s)`);
+  lines.push('');
+  for (const g of (data.igrejas || [])) {
+    lines.push(`── ${g.nome || g.slug} (${g.slug}) ${g.ok === false ? '✗ ERRO' : '✓'}`);
+    if (g.error) {
+      lines.push(`   Erro: ${g.error}`);
+      continue;
+    }
+    lines.push(`   Postgres: ${g.postgresReady ? 'igreja cadastrada' : 'igreja será criada na migração'}`);
+    const c = g.counts || {};
+    lines.push(`   users ${c.users ?? 0} · voluntários ${c.voluntarios ?? 0} · check-ins ${c.checkins ?? 0} · escalas ${c.escalas ?? 0} · candidaturas ${c.candidaturas ?? 0}`);
+    lines.push(`   eventos check-in ${c.eventosCheckin ?? 0} · formulários ${(c.formularioMembro ?? 0) + (c.formularioBatismo ?? 0) + (c.formularioApresentacao ?? 0) + (c.formularioNovoMembro ?? 0) + (c.formularioConsolidacao ?? 0)}`);
+    if (g.samples?.user) lines.push(`   amostra user: ${g.samples.user.email} (${g.samples.user.role})`);
+    if (g.samples?.voluntario) lines.push(`   amostra voluntário: ${g.samples.voluntario.email}`);
+    if (g.samples?.checkin) lines.push(`   amostra check-in: ${g.samples.checkin.email} · ${g.samples.checkin.ministerio || '-'}`);
+    for (const w of (g.warnings || [])) lines.push(`   ⚠ ${w}`);
+    lines.push('');
+  }
+  if ((data.errors || []).length) {
+    lines.push('Erros:');
+    data.errors.forEach((e) => lines.push(`  • ${e}`));
+  }
+  if (data.ready && data.preflightToken) {
+    lines.push('');
+    lines.push('→ Acesso verificado. Clique em "2. Continuar migração" para prosseguir.');
+  }
+  return lines.join('\n');
+}
+
+document.getElementById('mongoMigrateAllIgrejas')?.addEventListener('change', invalidateMongoPreflight);
+
+document.getElementById('btnMongoMigrateTest')?.addEventListener('click', async () => {
+  if (!authToken || !authIsMasterAdmin) return;
+  const { allIgrejas, igrejaSlug } = getMongoMigrateOptions();
+  const btnTest = document.getElementById('btnMongoMigrateTest');
+  const resultEl = document.getElementById('mongoMigrateResult');
+  invalidateMongoPreflight();
+  resetMongoMigrateProgressUI();
+  if (btnTest) btnTest.disabled = true;
+  if (resultEl) {
+    resultEl.style.display = 'block';
+    resultEl.textContent = 'Testando acesso ao MongoDB e contando registros…';
+  }
+  try {
+    const r = await authFetch(`${API_BASE}/api/admin/migrate-mongo-to-pg/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ allIgrejas, igrejaSlug }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Erro no teste');
+    if (resultEl) resultEl.textContent = formatMongoPreflightReport(data);
+    if (data.ready && data.preflightToken) {
+      applyMongoPreflightSuccess(data);
+    } else {
+      invalidateMongoPreflight();
+    }
+    await refreshMongoMigrateStatus();
+  } catch (e) {
+    invalidateMongoPreflight();
+    if (resultEl) resultEl.textContent = e.message || 'Erro no teste de acesso';
+  } finally {
+    if (btnTest) btnTest.disabled = false;
+  }
+});
+
+function stopMongoMigratePoll() {
+  if (mongoMigratePollTimer) {
+    clearInterval(mongoMigratePollTimer);
+    mongoMigratePollTimer = null;
+  }
+}
+
+function resetMongoMigrateProgressUI() {
+  const btn = document.getElementById('btnMongoMigrate');
+  const fill = document.getElementById('mongoMigrateProgressFill');
+  const label = document.getElementById('btnMongoMigrateLabel');
+  const text = document.getElementById('mongoMigrateProgressText');
+  if (btn) {
+    btn.classList.remove('is-running', 'is-done', 'is-error');
+    btn.disabled = false;
+  }
+  if (fill) fill.style.width = '0%';
+  if (label) label.textContent = '2. Continuar migração';
+  if (text) {
+    text.style.display = 'none';
+    text.textContent = '';
+  }
+}
+
+function updateMongoMigrateProgressUI(p) {
+  const btn = document.getElementById('btnMongoMigrate');
+  const fill = document.getElementById('mongoMigrateProgressFill');
+  const label = document.getElementById('btnMongoMigrateLabel');
+  const text = document.getElementById('mongoMigrateProgressText');
+  const pct = Math.max(0, Math.min(100, Number(p?.percent) || 0));
+  if (fill) fill.style.width = `${pct}%`;
+  if (label) {
+    if (p?.running) label.textContent = `${pct}% · migrando…`;
+    else if (p?.error) label.textContent = 'Erro na migração';
+    else if (p?.done) label.textContent = 'Concluído';
+    else label.textContent = '2. Continuar migração';
+  }
+  if (text && (p?.stage || p?.step)) {
+    text.style.display = 'inline';
+    const stepTxt = p.totalSteps ? ` (${p.step}/${p.totalSteps})` : '';
+    text.textContent = `${p.stage || ''}${stepTxt}`;
+  }
+  if (btn) {
+    btn.classList.toggle('is-running', !!p?.running);
+    btn.classList.toggle('is-done', !!p?.done && !p?.error);
+    btn.classList.toggle('is-error', !!p?.error);
+    if (p?.running) btn.disabled = true;
+  }
+}
+
+function startMongoMigratePoll(onComplete) {
+  stopMongoMigratePoll();
+  mongoMigratePollTimer = setInterval(async () => {
+    try {
+      const r = await authFetch(`${API_BASE}/api/admin/migrate-mongo-to-pg/progress`);
+      const p = await r.json();
+      updateMongoMigrateProgressUI(p);
+      if (p.done || p.error) {
+        stopMongoMigratePoll();
+        if (typeof onComplete === 'function') onComplete(p);
+      }
+    } catch (_) { /* ignora falha pontual de poll */ }
+  }, 400);
+}
+
+document.getElementById('btnMongoMigrate')?.addEventListener('click', async () => {
+  if (!authToken || !authIsMasterAdmin) return;
+  if (!mongoMigratePreflightToken) {
+    window.alert('Execute primeiro o teste de acesso aos dados (botão "1. Testar acesso").');
+    return;
+  }
+  const { dryRun, allIgrejas, igrejaSlug } = getMongoMigrateOptions();
+  const action = dryRun ? 'simular' : 'executar';
+  const scope = allIgrejas ? 'todas as igrejas' : `igreja "${igrejaSlug}"`;
+  if (!window.confirm(`Confirma ${action} a migração MongoDB → PostgreSQL para ${scope}?\n\n${dryRun ? 'Modo simulação: nada será gravado.' : 'ATENÇÃO: os dados serão copiados para o PostgreSQL. Depois você poderá desativar o MongoDB.'}`)) return;
+  const btn = document.getElementById('btnMongoMigrate');
+  const resultEl = document.getElementById('mongoMigrateResult');
+  resetMongoMigrateProgressUI();
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('is-running');
+  }
+  updateMongoMigrateProgressUI({ running: true, percent: 0, stage: 'Iniciando…', step: 0, totalSteps: 0 });
+  if (resultEl) resultEl.style.display = 'block';
+  startMongoMigratePoll(null);
+  try {
+    const r = await authFetch(`${API_BASE}/api/admin/migrate-mongo-to-pg`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun, allIgrejas, igrejaSlug, preflightToken: mongoMigratePreflightToken }),
+    });
+    const data = await r.json();
+    stopMongoMigratePoll();
+    if (!r.ok) throw new Error(data.error || 'Erro na migração');
+    updateMongoMigrateProgressUI({
+      running: false,
+      done: true,
+      percent: 100,
+      stage: data.message || 'Concluído',
+    });
+    if (resultEl) {
+      resultEl.textContent = `${data.message || 'Concluído'}\n\n${JSON.stringify(data, null, 2)}`;
+    }
+    invalidateMongoPreflight();
+    await refreshMongoMigrateStatus();
+    if (!dryRun) {
+      clearTenantScopedData();
+      await fetchAllData();
+    }
+  } catch (e) {
+    stopMongoMigratePoll();
+    updateMongoMigrateProgressUI({
+      running: false,
+      done: true,
+      error: e.message || 'Erro',
+      percent: 100,
+      stage: e.message || 'Erro na migração',
+    });
+    if (resultEl) resultEl.textContent = e.message || 'Erro na migração';
+  } finally {
+    if (btn) btn.disabled = !mongoMigratePreflightToken;
+  }
 });
 
 document.getElementById('btnVerCodigoWhatsApp')?.addEventListener('click', async () => {
