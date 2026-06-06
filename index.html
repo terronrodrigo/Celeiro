@@ -69,6 +69,10 @@
           <span class="nav-icon">✅</span>
           <span>Meus ministérios</span>
         </a>
+        <a href="#" class="nav-item" data-view="historico" id="navAdminHistorico" style="display: none;">
+          <span class="nav-icon">📊</span>
+          <span>Histórico</span>
+        </a>
         <p class="nav-section-label">Escalas</p>
         <a href="#" class="nav-item" data-view="escalas-criar">
           <span class="nav-icon">➕</span>
@@ -93,6 +97,10 @@
         <a href="#" class="nav-item active" data-view="checkin-ministerio">
           <span class="nav-icon">✅</span>
           <span>Check-ins do ministério</span>
+        </a>
+        <a href="#" class="nav-item" data-view="historico">
+          <span class="nav-icon">📊</span>
+          <span>Histórico</span>
         </a>
         <a href="#" class="nav-item" data-view="escalas">
           <span class="nav-icon">📋</span>
@@ -1062,6 +1070,28 @@
         <!-- Voluntário: Histórico próprio de check-ins -->
         <section class="view" data-view="meus-checkins">
           <p id="checkinRecebidoMsg" class="checkin-recebido-msg" style="display: none;" role="status"></p>
+          <section class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Cultos em escala</span></div>
+              <div class="kpi-value" id="meuHistoricoCultosEscala">0</div>
+              <div class="kpi-footer">cultos com escala aprovada</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Vezes na escala</span></div>
+              <div class="kpi-value" id="meuHistoricoVezesEscala">0</div>
+              <div class="kpi-footer">candidaturas aprovadas</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Check-ins realizados</span></div>
+              <div class="kpi-value" id="meuHistoricoCheckins">0</div>
+              <div class="kpi-footer">presenças confirmadas</div>
+            </div>
+            <div class="kpi-card" id="meuHistoricoTaxaPresencaCard">
+              <div class="kpi-header"><span class="kpi-label">Taxa de presença</span></div>
+              <div class="kpi-value" id="meuHistoricoTaxaPresenca">—</div>
+              <div class="kpi-footer">check-ins ÷ escalas aprovadas</div>
+            </div>
+          </section>
           <div class="table-card">
             <div class="chart-header"><h2>Meus check-ins <span id="meusCheckinsCount" class="list-count">(0)</span></h2></div>
             <div class="table-wrapper">
@@ -1117,6 +1147,76 @@
                 <span id="checkinMinisterioListCount">0</span> check-ins
                 <span id="checkinMinisterioRange" class="list-range"></span>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnVerMaisCheckinMinisterio" style="display: none;">Ver mais</button>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <!-- Líder: Histórico de participação do ministério -->
+        <section class="view" data-view="historico">
+          <section class="filters-row">
+            <div class="filters-card">
+              <div class="filters-left">
+                <div class="form-group compact" id="historicoMinisterioFilterWrap" style="display: none;">
+                  <label for="historicoMinisterioFilter">Ministério</label>
+                  <select id="historicoMinisterioFilter">
+                    <option value="">Todos os ministérios</option>
+                  </select>
+                </div>
+                <div class="form-group compact">
+                  <label for="historicoMinisterioSort">Ordenar</label>
+                  <select id="historicoMinisterioSort">
+                    <option value="escala">Escalas aprovadas (maior)</option>
+                    <option value="checkin">Check-ins (maior)</option>
+                    <option value="nome">Nome (A–Z)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="filters-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshHistoricoMinisterio">Atualizar</button>
+              </div>
+            </div>
+          </section>
+          <section class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Cultos</span></div>
+              <div class="kpi-value" id="historicoCultos">0</div>
+              <div class="kpi-footer">eventos com participação no ministério</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Cadastrados</span></div>
+              <div class="kpi-value" id="historicoVoluntariosCadastrados">0</div>
+              <div class="kpi-footer">voluntários ativos no ministério</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Já participaram</span></div>
+              <div class="kpi-value" id="historicoVoluntariosParticiparam">0</div>
+              <div class="kpi-footer">com escala aprovada ou check-in</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Com check-in</span></div>
+              <div class="kpi-value" id="historicoVoluntariosComCheckin">0</div>
+              <div class="kpi-footer">voluntários que confirmaram presença</div>
+            </div>
+          </section>
+          <section class="charts-row">
+            <div class="table-card chart-main">
+              <div class="chart-header"><h2>Voluntários do ministério <span id="historicoVoluntariosCount" class="list-count">(0)</span></h2></div>
+              <div class="table-wrapper">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Nome</th>
+                      <th>Email</th>
+                      <th>Status</th>
+                      <th>Escalas (aprovadas)</th>
+                      <th>Check-ins</th>
+                      <th>Taxa presença</th>
+                      <th>Último check-in</th>
+                    </tr>
+                  </thead>
+                  <tbody id="historicoMinisterioBody"></tbody>
+                </table>
               </div>
             </div>
           </section>
@@ -1877,6 +1977,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.26"></script>
+  <script defer src="app.js?v=1.6.28"></script>
 </body>
 </html>

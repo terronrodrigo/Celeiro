@@ -132,6 +132,8 @@ import {
   getPostgresPool,
   pgAttachParticipacaoStats, computePerfilCheckinGap, pgApplyCheckinComplemento,
 } from './db/postgres/operational-data.js';
+import { pgHistoricoMinisterio } from './db/postgres/historico-ministerio.js';
+import { pgHistoricoVoluntario } from './db/postgres/historico-voluntario.js';
 import {
   pgFindConviteByToken, pgUpsertConviteLider, pgListConvitesLider,
   pgIncrementConviteUso, conviteLiderValido,
@@ -1973,6 +1975,63 @@ app.get('/api/checkins/ministerio', requireAuth, resolveTenant, async (req, res)
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao carregar check-ins do ministério.');
+  }
+});
+
+// Líder ou admin com ministérios: histórico de participação (escalas + check-ins)
+app.get('/api/historico/ministerio', requireAuth, resolveTenant, async (req, res) => {
+  try {
+    const nomes = req.userMinisterioNomes && req.userMinisterioNomes.length
+      ? req.userMinisterioNomes.map(String).map((s) => s.trim()).filter(Boolean)
+      : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
+    if (nomes.length === 0) {
+      return res.status(403).json({ error: 'Acesso apenas para líderes de ministério.' });
+    }
+    if (!isPostgres()) {
+      return res.status(503).json({ error: 'Histórico disponível apenas com PostgreSQL.' });
+    }
+    const ministerioFiltro = req.query.ministerio ? String(req.query.ministerio).trim() : '';
+    const sort = req.query.sort ? String(req.query.sort).trim() : 'escala';
+    const data = await pgHistoricoMinisterio(req.tenantIgrejaId, nomes, {
+      ministerioFiltro: ministerioFiltro || undefined,
+      sort,
+    });
+    const voluntarios = (data.voluntarios || []).map((v) => ({
+      ...v,
+      ultimoCheckin: v.ultimoCheckinMs != null ? formatDatePtBr(v.ultimoCheckinMs) : null,
+    }));
+    res.json({ ...data, voluntarios });
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao carregar histórico do ministério.');
+  }
+});
+
+// Voluntário ou líder: histórico pessoal de escalas e check-ins
+app.get('/api/historico/meu', requireAuth, resolveTenant, async (req, res) => {
+  try {
+    const email = (req.userEmail || '').toString().trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: 'Email do usuário não disponível.' });
+    }
+    if (!isPostgres()) {
+      return res.json({
+        resumo: {
+          cultosEmEscala: 0,
+          vezesEscalaAprovado: 0,
+          vezesEscalaInscricao: 0,
+          vezesCheckin: 0,
+          cultosComCheckin: 0,
+          taxaPresenca: null,
+          ultimoCheckin: null,
+        },
+      });
+    }
+    const data = await pgHistoricoVoluntario(req.tenantIgrejaId, email);
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    sendError(res, 500, err.message || 'Erro ao carregar histórico pessoal.');
   }
 });
 

@@ -401,6 +401,8 @@ function updateAuthUi() {
   if (navVoluntario) navVoluntario.style.display = isLogged && isVoluntario ? 'flex' : 'none';
   const navAdminCheckinMin = document.getElementById('navAdminCheckinMinisterio');
   if (navAdminCheckinMin) navAdminCheckinMin.style.display = isLogged && isAdmin && hasMinisterios ? '' : 'none';
+  const navAdminHistorico = document.getElementById('navAdminHistorico');
+  if (navAdminHistorico) navAdminHistorico.style.display = isLogged && isAdmin && hasMinisterios ? '' : 'none';
   // Mesma regra de setView(): busca por nome/email na view Voluntários para admin e líderes (não só admin).
   if (searchBox) {
     const showSearch = isLogged && (isAdmin || isLider || authRole === 'lider') && currentView === 'voluntarios';
@@ -431,7 +433,7 @@ function clearUserContent() {
   eventoSelecionadoHoje = null;
   selectedEmails.clear();
   currentView = '';
-  ['eventos-checkin', 'cultos-recorrentes', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'].forEach(v => setViewLoading(v, false));
+  ['eventos-checkin', 'cultos-recorrentes', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'historico', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'].forEach(v => setViewLoading(v, false));
   const perfilFields = [perfilNome, perfilEmail, perfilNascimento, perfilWhatsapp, perfilPais, perfilEstado, perfilCidade, perfilEvangelico, perfilIgreja, perfilTempoIgreja, perfilVoluntarioIgreja, perfilHorasSemana, perfilAreas, perfilTestemunho];
   perfilFields.forEach(el => { if (el) el.value = ''; });
   renderPerfilMinisteriosCheckboxes([]);
@@ -529,6 +531,9 @@ function clearTenantScopedData() {
   usersList = [];
   checkinsMinisterio = [];
   checkinMinisterioResumo = {};
+  historicoMinisterio = [];
+  historicoMinisterioResumo = {};
+  historicoMeuResumo = {};
   escalasList = [];
   selectedEscalaIds.clear();
   escalaAtiva = null;
@@ -820,7 +825,7 @@ function prefetchAllCheckinsForKpis() {
 }
 
 const ADMIN_ONLY_VIEWS = ['ministros', 'usuarios', 'eventos-checkin', 'cultos-recorrentes', 'checkin', 'escalas-criar'];
-const LIDER_VIEWS = ['checkin-ministerio', 'perfil', 'meus-checkins', 'escalas'];
+const LIDER_VIEWS = ['checkin-ministerio', 'perfil', 'meus-checkins', 'escalas', 'historico'];
 const VOLUNTARIO_VIEWS = ['perfil', 'checkin-hoje', 'meus-checkins', 'escalas'];
 
 let currentView = '';
@@ -833,6 +838,10 @@ let conviteLiderToken = '';
 let usersList = [];
 let checkinsMinisterio = [];
 let checkinMinisterioResumo = {};
+let historicoMinisterio = [];
+let historicoMinisterioResumo = {};
+let historicoMinisterioSort = 'escala';
+let historicoMeuResumo = {};
 let escalasList = [];
 let selectedEscalaIds = new Set();
 let escalaAtiva = null;
@@ -892,9 +901,10 @@ const VIEW_META = {
   'cultos-recorrentes': { title: 'Cultos recorrentes', subtitle: 'Escalas e check-ins gerados automaticamente por dia da semana (horário de Brasília).', role: 'admin' },
   checkin: { title: 'Check-in', subtitle: 'Registros por data e ministério.', role: 'admin' },
   'checkin-ministerio': { title: 'Check-ins do ministério', subtitle: 'Acompanhe confirmações de presença nos ministérios sob sua liderança (você pode liderar mais de um).', role: 'lider' },
+  historico: { title: 'Histórico', subtitle: 'Participação dos voluntários: escalas aprovadas, check-ins e taxa de presença nos ministérios sob sua liderança.', role: 'lider' },
   perfil: { title: 'Meu perfil', subtitle: 'Seus dados de cadastro.', role: 'voluntario' },
   'checkin-hoje': { title: 'Check-in do dia', subtitle: 'Confirme presença no culto de hoje.', role: 'voluntario' },
-  'meus-checkins': { title: 'Meus check-ins', subtitle: 'Histórico de presenças.', role: 'voluntario' },
+  'meus-checkins': { title: 'Meus check-ins', subtitle: 'Suas escalas aprovadas, check-ins e taxa de presença.', role: 'voluntario' },
   'escalas-criar': { title: 'Criar escalas', subtitle: 'Crie e edite escalas, copie links de candidatura.', role: 'admin' },
   escalas: { title: 'Escala', subtitle: 'Candidatos e aprovação de voluntários.', role: 'admin' },
   formularios: { title: 'Formulários', subtitle: 'Novos membros, consolidação, batismo e apresentação de bebês.', role: 'admin' },
@@ -958,7 +968,7 @@ function setView(view, options) {
   if (view === 'checkin') resetCheckinsListPage();
   if (view === 'checkin-ministerio') resetCheckinsMinisterioListPage();
   if (!options.skipFetch) {
-    const viewsWithFetch = ['eventos-checkin', 'cultos-recorrentes', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'];
+    const viewsWithFetch = ['eventos-checkin', 'cultos-recorrentes', 'checkin-hoje', 'meus-checkins', 'perfil', 'ministros', 'usuarios', 'checkin-ministerio', 'historico', 'resumo', 'voluntarios', 'escalas', 'escalas-criar', 'formularios'];
     viewsWithFetch.forEach(v => setViewLoading(v, false)); // Limpa loading de todas as views primeiro
     if (view === 'eventos-checkin') runWithTimeout('eventos-checkin', () => fetchEventosCheckin());
     else if (view === 'cultos-recorrentes') runWithTimeout('cultos-recorrentes', () => fetchCultosRecorrentes());
@@ -969,6 +979,7 @@ function setView(view, options) {
     else if (view === 'ministros') runWithTimeout('ministros', () => fetchMinistros());
     else if (view === 'usuarios') runWithTimeout('usuarios', () => fetchUsers());
     else if (view === 'checkin-ministerio') runWithTimeout('checkin-ministerio', () => fetchCheckinsMinisterio());
+    else if (view === 'historico') runWithTimeout('historico', () => fetchHistoricoMinisterio());
     else if (view === 'escalas-criar') runWithTimeout('escalas-criar', () => fetchEscalasCriar());
     else if (view === 'escalas') runWithTimeout('escalas', () => fetchEscalas());
     if (view === 'voluntarios' && Array.isArray(voluntarios) && voluntarios.length > 0) {
@@ -1670,6 +1681,86 @@ function renderCheckinsMinisterio() {
     btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email'), { checkinsList: checkinsMinisterio }));
   });
   updateCheckinMinisterioRangeAndMore(total, shown);
+}
+
+async function fetchHistoricoMinisterio() {
+  if (!authToken) return;
+  try {
+    const params = new URLSearchParams();
+    const minVal = document.getElementById('historicoMinisterioFilter')?.value;
+    if (minVal) params.set('ministerio', minVal);
+    const sortVal = document.getElementById('historicoMinisterioSort')?.value || historicoMinisterioSort;
+    if (sortVal) params.set('sort', sortVal);
+    const r = await authFetch(`${API_BASE}/api/historico/ministerio?${params.toString()}`);
+    if (!r.ok) {
+      if (currentView !== 'historico') return;
+      historicoMinisterio = [];
+      historicoMinisterioResumo = {};
+      renderHistoricoMinisterio();
+      const body = document.getElementById('historicoMinisterioBody');
+      if (body) body.innerHTML = '<tr><td colspan="7">Sem permissão ou sem ministério.</td></tr>';
+      return;
+    }
+    const data = await r.json();
+    historicoMinisterio = data.voluntarios || [];
+    historicoMinisterioResumo = data.resumo || {};
+    if (currentView !== 'historico') return;
+    renderHistoricoMinisterio();
+    const filterWrap = document.getElementById('historicoMinisterioFilterWrap');
+    const filterSelect = document.getElementById('historicoMinisterioFilter');
+    const ministerios = Array.isArray(data.ministerios) ? data.ministerios : [];
+    const leaderMins = (authMinisterioNomes && authMinisterioNomes.length)
+      ? authMinisterioNomes
+      : (authMinisterioNome ? [authMinisterioNome] : ministerios);
+    const showFilter = leaderMins.length > 1;
+    if (filterWrap) filterWrap.style.display = showFilter ? '' : 'none';
+    if (filterSelect && showFilter) {
+      const currentVal = filterSelect.value || minVal || '';
+      filterSelect.innerHTML = '<option value="">Todos os ministérios</option>'
+        + leaderMins.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+      if (currentVal && leaderMins.includes(currentVal)) filterSelect.value = currentVal;
+    }
+  } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
+  finally { setViewLoading('historico', false); }
+}
+
+function renderHistoricoMinisterio() {
+  const resumo = historicoMinisterioResumo || {};
+  const cultosEl = document.getElementById('historicoCultos');
+  const cadEl = document.getElementById('historicoVoluntariosCadastrados');
+  const partEl = document.getElementById('historicoVoluntariosParticiparam');
+  const ckEl = document.getElementById('historicoVoluntariosComCheckin');
+  const countEl = document.getElementById('historicoVoluntariosCount');
+  const bodyEl = document.getElementById('historicoMinisterioBody');
+  if (cultosEl) cultosEl.textContent = resumo.cultos ?? 0;
+  if (cadEl) cadEl.textContent = resumo.voluntariosCadastrados ?? 0;
+  if (partEl) partEl.textContent = resumo.voluntariosParticiparam ?? 0;
+  if (ckEl) ckEl.textContent = resumo.voluntariosComCheckin ?? 0;
+  const list = Array.isArray(historicoMinisterio) ? historicoMinisterio : [];
+  if (countEl) countEl.textContent = `(${list.length})`;
+  if (!bodyEl) return;
+  if (!list.length) {
+    bodyEl.innerHTML = '<tr><td colspan="7">Nenhum voluntário encontrado para o filtro selecionado.</td></tr>';
+    return;
+  }
+  bodyEl.innerHTML = list.map((v) => {
+    const email = (v.email || '').toLowerCase().trim();
+    const statusLabel = v.ativo === false ? 'Inativo' : 'Ativo';
+    const taxa = v.taxaPresenca != null ? `${v.taxaPresenca}%` : '—';
+    const ultimo = v.ultimoCheckin || '—';
+    return `<tr>
+      <td><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(v.nome || '—')}</button></td>
+      <td><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(v.email || '—')}</button></td>
+      <td>${escapeHtml(statusLabel)}</td>
+      <td>${escapeHtml(String(v.vezesEscalaAprovado ?? 0))}</td>
+      <td>${escapeHtml(String(v.vezesCheckin ?? 0))}</td>
+      <td>${escapeHtml(taxa)}</td>
+      <td>${escapeHtml(ultimo)}</td>
+    </tr>`;
+  }).join('');
+  bodyEl.querySelectorAll('.link-voluntario').forEach((btn) => {
+    btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email')));
+  });
 }
 
 function exportCheckinsMinisterioCsv() {
@@ -3177,13 +3268,47 @@ async function confirmarCheckinDesdePerfil() {
   }
 }
 
+function renderHistoricoMeuKpis(resumo) {
+  const r = resumo || historicoMeuResumo || {};
+  const cultosEl = document.getElementById('meuHistoricoCultosEscala');
+  const vezesEl = document.getElementById('meuHistoricoVezesEscala');
+  const checkinsEl = document.getElementById('meuHistoricoCheckins');
+  const taxaEl = document.getElementById('meuHistoricoTaxaPresenca');
+  const taxaCard = document.getElementById('meuHistoricoTaxaPresencaCard');
+  if (cultosEl) cultosEl.textContent = r.cultosEmEscala ?? 0;
+  if (vezesEl) vezesEl.textContent = r.vezesEscalaAprovado ?? 0;
+  if (checkinsEl) checkinsEl.textContent = r.vezesCheckin ?? 0;
+  if (taxaEl) taxaEl.textContent = r.taxaPresenca != null ? `${r.taxaPresenca}%` : '—';
+  if (taxaCard) taxaCard.style.display = (r.vezesEscalaAprovado > 0) ? '' : 'none';
+}
+
+async function fetchHistoricoMeu() {
+  if (!authToken) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/historico/meu`);
+    if (!r.ok) return;
+    const data = await r.json();
+    historicoMeuResumo = data.resumo || {};
+    if (currentView !== 'meus-checkins') return;
+    renderHistoricoMeuKpis(historicoMeuResumo);
+  } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
+}
+
 async function fetchMeusCheckins() {
   if (!authToken) return;
   try {
-    const r = await authFetch(`${API_BASE}/api/checkins`);
-    if (!r.ok) return;
-    const data = await r.json();
+    const [rCheckins, rHistorico] = await Promise.all([
+      authFetch(`${API_BASE}/api/checkins`),
+      authFetch(`${API_BASE}/api/historico/meu`),
+    ]);
     if (currentView !== 'meus-checkins') return;
+    if (rHistorico.ok) {
+      const hist = await rHistorico.json();
+      historicoMeuResumo = hist.resumo || {};
+      renderHistoricoMeuKpis(historicoMeuResumo);
+    }
+    if (!rCheckins.ok) return;
+    const data = await rCheckins.json();
     const list = data.checkins || [];
     const countEl = document.getElementById('meusCheckinsCount');
     if (countEl) countEl.textContent = `(${list.length})`;
@@ -3203,7 +3328,6 @@ async function fetchMeusCheckins() {
       }
     }
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
-  finally { setViewLoading('meus-checkins', false); }
 }
 
 async function fetchAllData() {
@@ -7608,6 +7732,12 @@ document.getElementById('btnExportCheckinMinisterio')?.addEventListener('click',
 document.getElementById('checkinMinisterioData')?.addEventListener('change', () => {
   resetCheckinsMinisterioListPage();
   fetchCheckinsMinisterio();
+});
+document.getElementById('btnRefreshHistoricoMinisterio')?.addEventListener('click', () => fetchHistoricoMinisterio());
+document.getElementById('historicoMinisterioFilter')?.addEventListener('change', () => fetchHistoricoMinisterio());
+document.getElementById('historicoMinisterioSort')?.addEventListener('change', () => {
+  historicoMinisterioSort = document.getElementById('historicoMinisterioSort')?.value || 'escala';
+  fetchHistoricoMinisterio();
 });
 document.getElementById('btnExportCheckinsCsv')?.addEventListener('click', () => exportCheckinsCsv());
 document.getElementById('btnExportFormularioMembroCsv')?.addEventListener('click', () => exportFormularioMembroCsv());
