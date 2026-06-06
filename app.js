@@ -933,8 +933,18 @@ function setView(view, options) {
     const match = allowed.includes(view) && (roleMatch || liderViewAllowed || volViewAllowed || perfilForLider || perfilForAdmin);
     item.classList.toggle('active', match);
   });
-  if (pageTitle) pageTitle.textContent = (meta && meta.title) || 'Voluntários · Celeiro São Paulo';
-  if (pageSubtitle) pageSubtitle.textContent = (meta && meta.subtitle) || '';
+  if (pageTitle) {
+    pageTitle.textContent = (view === 'escalas' && isVol)
+      ? 'Escalas'
+      : ((meta && meta.title) || 'Voluntários · Celeiro São Paulo');
+  }
+  if (pageSubtitle) {
+    if (view === 'escalas' && isVol) {
+      pageSubtitle.textContent = 'Veja cultos disponíveis, inscreva-se e faça check-in.';
+    } else {
+      pageSubtitle.textContent = (meta && meta.subtitle) || '';
+    }
+  }
   if (searchBox) searchBox.style.display = (isAdmin || isLider || authRole === 'lider') && view === 'voluntarios' ? 'flex' : 'none';
   if (view === 'voluntarios') voluntariosPageOffset = 0;
   if (view === 'checkin') resetCheckinsListPage();
