@@ -4455,21 +4455,37 @@ async function fetchResumoGlobal() {
 }
 
 function renderResumoGlobal(data) {
-  const p = data?.pessoas || { voluntarios: 0, soCheckin: 0, total: 0 };
-  const c = data?.checkins || { ontem: 0, semana: 0, mes: 0, serie7d: [] };
-  const pm = data?.presencaMedia || { taxa: null, baseEscalas: 0 };
+  const p = data?.pessoas || { voluntarios: 0, soCheckin: 0, total: 0, comEscala: 0, comCheckin: 0 };
+  const c = data?.checkins || { ultimoCulto: 0, semana: 0, mes: 0, serie7d: [], ultimoCultoInfo: null };
+  const pm = data?.presencaMedia || { taxa: null, baseEscalas: 0, aprovados: 0, presentes: 0 };
   const top = Array.isArray(data?.topMinisterios) ? data.topMinisterios : [];
   const f = data?.formularios || { membros: 0, consolidacao: 0, batismo: 0, apresentacao: 0 };
 
   const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   setTxt('resumoPessoasTotal', p.total);
-  setTxt('resumoPessoasVoluntarios', p.voluntarios);
-  setTxt('resumoPessoasSoCheckin', p.soCheckin);
-  setTxt('resumoCkOntem', c.ontem);
+  setTxt('resumoPessoasVoluntarios', p.voluntarios + (p.soCheckin || 0));
+  setTxt('resumoPessoasComEscala', p.comEscala || 0);
+  setTxt('resumoPessoasComCheckin', p.comCheckin || 0);
+
+  const ult = c.ultimoCultoInfo;
+  if (ult) {
+    setTxt('resumoCkUltimoCulto', c.ultimoCulto ?? 0);
+    const d = ult.data ? formatEscalaDateOnly(ult.data) : '';
+    setTxt('resumoCkUltimoCultoNome', `${ult.label || 'Culto'}${d ? ` · ${d}` : ''}`);
+  } else {
+    setTxt('resumoCkUltimoCulto', '—');
+    setTxt('resumoCkUltimoCultoNome', 'Nenhum culto encerrado ainda');
+  }
   setTxt('resumoCkSemana', c.semana);
   setTxt('resumoCkMes', c.mes);
+
   setTxt('resumoPresencaTaxa', pm.taxa != null ? `${pm.taxa}%` : '—');
-  setTxt('resumoPresencaBase', pm.baseEscalas || 0);
+  if (pm.taxa != null && pm.baseEscalas > 0) {
+    setTxt('resumoPresencaDetalhe', `${pm.presentes || 0} presentes de ${pm.aprovados || 0} aprovados · ${pm.baseEscalas} escala(s) no mês`);
+  } else {
+    setTxt('resumoPresencaDetalhe', 'Média de aprovados que fizeram check-in (escalas encerradas no mês)');
+  }
+
   const fTotal = (f.membros || 0) + (f.consolidacao || 0) + (f.batismo || 0) + (f.apresentacao || 0);
   setTxt('resumoFormTotal', fTotal);
   setTxt('resumoFormMembros', f.membros || 0);
@@ -4494,13 +4510,12 @@ function renderResumoGlobal(data) {
                 <div style="height:100%;width:${pct}%;background:#f59e0b"></div>
               </div>
             </div>
-            <div style="font-weight:700;color:#1a1a2e;min-width:36px;text-align:right">${t.total}</div>
+            <div style="font-weight:700;color:#1a1a2e;min-width:36px;text-align:right" title="check-ins">${t.total}</div>
           </div>`;
       }).join('');
     }
   }
 
-  // Série 7d — chart simples de barras (lazy load do Chart.js)
   renderResumoCheckins7d(c.serie7d || []);
 }
 
@@ -4528,7 +4543,7 @@ async function renderResumoCheckins7d(serie) {
   });
 }
 
-/** Widget no resumo (Fase 5) — chama /api/dashboard/escala-em-destaque */
+/** Widget no resumo — cultos de hoje/amanhã + check-ins abertos */
 async function fetchEscalaEmDestaque() {
   const wrap = document.getElementById('escalaDestaqueWidget');
   if (!wrap || !authToken) return;
@@ -4536,40 +4551,65 @@ async function fetchEscalaEmDestaque() {
     const r = await authFetch(`${API_BASE}/api/dashboard/escala-em-destaque`);
     if (!r.ok) { wrap.innerHTML = ''; return; }
     const data = await r.json().catch(() => ({}));
-    if (!data?.escala) { wrap.innerHTML = ''; return; }
-    const totals = data.totals || { aprovados: 0, presentes: 0, faltaram: 0, pendentes: 0 };
-    const dataLabel = formatEscalaDateOnly(data.escala.data || '');
+    const itens = Array.isArray(data?.itens) ? data.itens : (data?.escala ? [data] : []);
+    if (!itens.length) { wrap.innerHTML = ''; return; }
+
     const sitMap = {
-      'em-aberto': ['#dcfce7', '#166534', 'Check-in aberto agora'],
-      'futura':    ['#fef3c7', '#92400e', 'Próxima escala'],
-      'passada':   ['#f1f5f9', '#475569', 'Última escala'],
+      'em-aberto': ['#dcfce7', '#166534', 'Check-in aberto'],
+      'futura': ['#fef3c7', '#92400e', 'Próximo culto'],
+      'passada': ['#f1f5f9', '#475569', 'Encerrado'],
     };
-    const [bg, fg, label] = sitMap[data.situacao] || sitMap.futura;
-    const taxa = totals.aprovados > 0 ? Math.round((totals.presentes / totals.aprovados) * 100) : 0;
     const tile = (l, v, c) => `
-      <div style="background:#fff;border:1px solid var(--border-color);border-radius:8px;padding:10px 14px;flex:1 1 110px;min-width:110px">
-        <div style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">${l}</div>
-        <div style="font-size:1.35rem;font-weight:700;color:${c}">${v}</div>
+      <div style="background:var(--surface-elevated,#fff);border:1px solid var(--border-color);border-radius:8px;padding:8px 10px;flex:1 1 72px;min-width:72px">
+        <div style="font-size:.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">${l}</div>
+        <div style="font-size:1.1rem;font-weight:700;color:${c}">${v}</div>
       </div>`;
-    wrap.innerHTML = `
-      <div class="filters-card" style="border-left:4px solid ${fg};cursor:pointer" id="escalaDestaqueClick" title="Abrir esta escala">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px">
-          <div>
-            <span style="display:inline-block;background:${bg};color:${fg};border:1px solid ${fg};padding:2px 8px;border-radius:6px;font-size:.78rem;font-weight:600">${label}</span>
-            <h3 style="font-size:1.05rem;margin:8px 0 2px">${escapeHtml(data.escala.nome || '—')}</h3>
-            <div style="color:var(--text-muted);font-size:.88rem">${escapeHtml(dataLabel)}</div>
+
+    const diaLabel = (ymd, hoje, amanha) => {
+      if (ymd === hoje) return 'Hoje';
+      if (ymd === amanha) return 'Amanhã';
+      return formatEscalaDateOnly(ymd);
+    };
+
+    const cards = itens.map((item) => {
+      const totals = item.totals || { aprovados: 0, presentes: 0, faltaram: 0, pendentes: 0, taxa: 0 };
+      const taxa = totals.taxa ?? (totals.aprovados > 0 ? Math.round((totals.presentes / totals.aprovados) * 100) : 0);
+      const [bg, fg, sitLabel] = sitMap[item.situacao] || sitMap.futura;
+      const ymd = item.ymd || escalaDataToYMD(item.escala?.data);
+      const when = diaLabel(ymd, data.hoje, data.amanha);
+      const dataLabel = item.escala?.data ? formatEscalaDateOnly(item.escala.data) : '';
+      return `
+        <div class="filters-card escala-destaque-card" style="border-left:4px solid ${fg};cursor:pointer;margin-bottom:10px" data-escala-id="${escapeHtml(String(item.escala?._id || ''))}" title="Abrir escala">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+            <div>
+              <span style="display:inline-block;background:${bg};color:${fg};border:1px solid ${fg};padding:2px 8px;border-radius:6px;font-size:.72rem;font-weight:600;margin-right:6px">${sitLabel}</span>
+              <span style="font-size:.72rem;color:var(--text-muted);font-weight:600">${escapeHtml(when)}</span>
+              <h3 style="font-size:1rem;margin:6px 0 2px">${escapeHtml(item.escala?.nome || '—')}</h3>
+              <div style="color:var(--text-muted);font-size:.85rem">${escapeHtml(dataLabel)}</div>
+            </div>
+            <div style="color:var(--text-muted);font-size:.82rem">Presença: <strong style="color:#166534">${taxa}%</strong></div>
           </div>
-          <div style="color:var(--text-muted);font-size:.85rem">Taxa de presença: <strong style="color:#166534">${taxa}%</strong></div>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${tile('Aprovados', totals.aprovados, '#1a1a2e')}
-          ${tile('Presentes', totals.presentes, '#166534')}
-          ${tile('Faltaram', totals.faltaram, '#991b1b')}
-          ${tile('Aguardando', totals.pendentes, '#3730a3')}
-        </div>
-      </div>`;
-    document.getElementById('escalaDestaqueClick')?.addEventListener('click', () => {
-      setView('escalas', { escalaId: data.escala._id });
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${tile('Aprovados', totals.aprovados, '#1a1a2e')}
+            ${tile('Presentes', totals.presentes, '#166534')}
+            ${tile('Faltaram', totals.faltaram, '#991b1b')}
+            ${tile('Aguardando', totals.pendentes, '#3730a3')}
+          </div>
+        </div>`;
+    }).join('');
+
+    wrap.innerHTML = `
+      <div style="margin-bottom:8px">
+        <h2 style="font-size:1.05rem;margin:0 0 4px">Cultos · hoje e amanhã</h2>
+        <p class="auth-subtitle" style="margin:0">Check-ins abertos e próximas escalas</p>
+      </div>
+      ${cards}`;
+
+    wrap.querySelectorAll('.escala-destaque-card').forEach((el) => {
+      el.addEventListener('click', () => {
+        const id = el.getAttribute('data-escala-id');
+        if (id) setView('escalas', { escalaId: id });
+      });
     });
   } catch (_) {
     wrap.innerHTML = '';

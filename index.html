@@ -364,32 +364,33 @@
             <div class="kpi-card">
               <div class="kpi-header"><span class="kpi-label">Pessoas na plataforma</span></div>
               <div class="kpi-value" id="resumoPessoasTotal">—</div>
-              <div class="kpi-footer">
-                <span id="resumoPessoasVoluntarios">0</span> voluntários ·
-                <span id="resumoPessoasSoCheckin">0</span> só check-in
+              <div class="kpi-footer" id="resumoPessoasFooter">
+                <span id="resumoPessoasVoluntarios">0</span> cadastrados ·
+                <span id="resumoPessoasComEscala">0</span> em escala ·
+                <span id="resumoPessoasComCheckin">0</span> com check-in
               </div>
             </div>
             <div class="kpi-card">
-              <div class="kpi-header"><span class="kpi-label">Check-ins ontem</span></div>
-              <div class="kpi-value" id="resumoCkOntem">—</div>
+              <div class="kpi-header"><span class="kpi-label" id="resumoCkLabel">Check-ins · último culto</span></div>
+              <div class="kpi-value" id="resumoCkUltimoCulto">—</div>
               <div class="kpi-footer">
-                Semana: <span id="resumoCkSemana">0</span> ·
-                Mês: <span id="resumoCkMes">0</span>
+                <span id="resumoCkUltimoCultoNome">—</span><br>
+                Semana: <span id="resumoCkSemana">0</span> · Mês: <span id="resumoCkMes">0</span>
               </div>
             </div>
             <div class="kpi-card">
-              <div class="kpi-header"><span class="kpi-label">Taxa de presença</span></div>
+              <div class="kpi-header"><span class="kpi-label">Taxa de presença (mês)</span></div>
               <div class="kpi-value" id="resumoPresencaTaxa">—</div>
-              <div class="kpi-footer"><span id="resumoPresencaBase">0</span> últimas escalas encerradas</div>
+              <div class="kpi-footer"><span id="resumoPresencaDetalhe">—</span></div>
             </div>
             <div class="kpi-card">
               <div class="kpi-header"><span class="kpi-label">Formulários (mês)</span></div>
               <div class="kpi-value" id="resumoFormTotal">—</div>
-              <div class="kpi-footer">
-                M:<span id="resumoFormMembros">0</span>
-                · C:<span id="resumoFormConsolidacao">0</span>
-                · B:<span id="resumoFormBatismo">0</span>
-                · A:<span id="resumoFormApresentacao">0</span>
+              <div class="kpi-footer" style="line-height:1.45">
+                Membros: <span id="resumoFormMembros">0</span> ·
+                Consolidação: <span id="resumoFormConsolidacao">0</span><br>
+                Batismo: <span id="resumoFormBatismo">0</span> ·
+                Apresentação: <span id="resumoFormApresentacao">0</span>
               </div>
             </div>
           </section>
@@ -397,13 +398,19 @@
           <!-- Série 7d + Top ministérios -->
           <section class="charts-row">
             <div class="chart-card chart-main">
-              <div class="chart-header"><h2>Check-ins · últimos 7 dias</h2></div>
+              <div class="chart-header">
+                <h2>Check-ins · últimos 7 dias</h2>
+                <p class="auth-subtitle" style="margin:4px 0 0">Total de presenças registradas por dia</p>
+              </div>
               <div class="chart-container">
                 <canvas id="resumoCheckins7dChart"></canvas>
               </div>
             </div>
             <div class="chart-card chart-side">
-              <div class="chart-header"><h2>Top ministérios (mês)</h2></div>
+              <div class="chart-header">
+                <h2>Ministérios mais ativos</h2>
+                <p class="auth-subtitle" style="margin:4px 0 0">Check-ins por ministério neste mês</p>
+              </div>
               <div class="chart-container" id="resumoTopMinisteriosBox" style="padding:8px 12px;display:flex;flex-direction:column;gap:8px"></div>
             </div>
           </section>
@@ -1870,6 +1877,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.25"></script>
+  <script defer src="app.js?v=1.6.26"></script>
 </body>
 </html>

@@ -6407,7 +6407,7 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
     const ig = req.tenantIgrejaId;
 
     // 1) Pessoas: voluntários cadastrados + emails de check-in fora do catálogo
-    const [{ rows: vRows }, { rows: scRows }] = await Promise.all([
+    const [{ rows: vRows }, { rows: scRows }, { rows: escRows }, { rows: ckPRows }] = await Promise.all([
       pool.query('SELECT COUNT(*)::int AS n FROM voluntarios WHERE igreja_id = $1 AND ativo = TRUE', [ig]),
       pool.query(
         `SELECT COUNT(*)::int AS n FROM (
@@ -6421,11 +6421,49 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
          ) t`,
         [ig],
       ),
+      pool.query(
+        `SELECT COUNT(*)::int AS n FROM (
+           SELECT DISTINCT LOWER(c.dados->>'email') AS em
+           FROM candidaturas c
+           WHERE c.igreja_id = $1 AND COALESCE(c.dados->>'email', '') <> ''
+         ) t`,
+        [ig],
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS n FROM (
+           SELECT DISTINCT LOWER(ch.email) AS em
+           FROM checkins ch
+           WHERE ch.igreja_id = $1 AND ch.email IS NOT NULL AND ch.email <> ''
+         ) t`,
+        [ig],
+      ),
     ]);
     const voluntariosN = vRows[0]?.n || 0;
     const soCheckinN = scRows[0]?.n || 0;
+    const comEscalaN = escRows[0]?.n || 0;
+    const comCheckinN = ckPRows[0]?.n || 0;
 
-    // 2) Check-ins: ontem, semana, mês, série dos últimos 7 dias (Brasília)
+    // 2) Check-ins: último culto encerrado, semana, mês, série 7d
+    const { rows: ultimoEvtRows } = await pool.query(
+      `SELECT ec.id, ec.label, ec.data,
+              COUNT(ck.id)::int AS total
+       FROM eventos_checkin ec
+       LEFT JOIN checkins ck ON ck.evento_id = ec.id AND ck.igreja_id = ec.igreja_id
+       WHERE ec.igreja_id = $1
+         AND ec.fim_checkin IS NOT NULL
+         AND ec.fim_checkin < NOW()
+       GROUP BY ec.id, ec.label, ec.data, ec.fim_checkin
+       ORDER BY ec.fim_checkin DESC
+       LIMIT 1`,
+      [ig],
+    );
+    const ultimoCulto = ultimoEvtRows[0]
+      ? {
+          label: (ultimoEvtRows[0].label || 'Culto').trim(),
+          data: ultimoEvtRows[0].data,
+          total: ultimoEvtRows[0].total || 0,
+        }
+      : null;
     const { rows: ckAggRows } = await pool.query(
       `WITH d AS (
          SELECT (timestamp_ms / 1000) AS ts_sec FROM checkins
@@ -6442,6 +6480,7 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
     const ckOntem = Number(ckAggRows[0]?.ontem || 0);
     const ckSemana = Number(ckAggRows[0]?.semana || 0);
     const ckMes = Number(ckAggRows[0]?.mes || 0);
+    const ckUltimoCulto = ultimoCulto?.total ?? 0;
 
     const { rows: serieRows } = await pool.query(
       `WITH dias AS (
@@ -6464,15 +6503,16 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
     );
     const serie7d = serieRows.map((r) => ({ ymd: r.ymd, total: r.total }));
 
-    // 3) Presença média (últimas 4 escalas encerradas com evento_checkin vinculado)
+    // 3) Presença média — escalas encerradas no mês (aprovados que fizeram check-in)
     const { rows: presencaRows } = await pool.query(
       `WITH ult AS (
          SELECT e.id AS escala_id, ec.id AS evento_id, ec.fim_checkin
          FROM escalas e
          JOIN eventos_checkin ec ON ec.id = (e.dados->>'eventoCheckinId')
-         WHERE e.igreja_id = $1 AND ec.fim_checkin IS NOT NULL AND ec.fim_checkin < NOW()
-         ORDER BY ec.fim_checkin DESC
-         LIMIT 4
+         WHERE e.igreja_id = $1
+           AND ec.fim_checkin IS NOT NULL
+           AND ec.fim_checkin < NOW()
+           AND ec.fim_checkin >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')
        ), agg AS (
          SELECT u.escala_id, u.evento_id,
            (SELECT COUNT(*) FROM candidaturas c WHERE c.escala_id = u.escala_id AND c.igreja_id = $1 AND c.dados->>'status' = 'aprovado') AS aprov,
@@ -6524,14 +6564,24 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
         voluntarios: voluntariosN,
         soCheckin: soCheckinN,
         total: voluntariosN + soCheckinN,
+        comEscala: comEscalaN,
+        comCheckin: comCheckinN,
       },
       checkins: {
         ontem: ckOntem,
+        ultimoCulto: ckUltimoCulto,
+        ultimoCultoInfo: ultimoCulto,
         semana: ckSemana,
         mes: ckMes,
         serie7d,
       },
-      presencaMedia: { taxa, baseEscalas: presBase },
+      presencaMedia: {
+        taxa,
+        baseEscalas: presBase,
+        aprovados: presAprov,
+        presentes: presPres,
+        periodo: 'mês',
+      },
       topMinisterios,
       formularios: {
         membros: (m1.rows[0]?.n || 0) + (m1b.rows[0]?.n || 0),
@@ -6543,74 +6593,100 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
   } catch (err) { console.error(err); sendError(res, 500, err.message || 'Erro ao montar resumo.'); }
 });
 
-// GET /api/dashboard/escala-em-destaque — widget do resumo (Fase 5)
-// Devolve a "escala em destaque" para admin/líder:
-//   - se houver escala futura com check-in aberto agora → mostra ela
-//   - senão, próxima escala futura
-//   - senão, última escala encerrada
-// Em todos os casos: { escala, totals, situacao: 'em-aberto'|'futura'|'passada' }
+// GET /api/dashboard/escala-em-destaque — cultos de hoje/amanhã + check-in aberto (widget Resumo)
 app.get('/api/dashboard/escala-em-destaque', requireAuth, resolveTenant, async (req, res) => {
   try {
-    if (!isPostgres()) return res.json({ escala: null, totals: null, situacao: null });
+    if (!isPostgres()) return res.json({ itens: [], escala: null, totals: null, situacao: null });
     const isAdmin = req.userRole === 'admin';
     const isLider = req.userRole === 'lider';
-    if (!isAdmin && !isLider) return res.json({ escala: null, totals: null, situacao: null });
+    if (!isAdmin && !isLider) return res.json({ itens: [], escala: null, totals: null, situacao: null });
 
-    const escalas = await pgListEscalas(req.tenantIgrejaId, {
+    const ig = req.tenantIgrejaId;
+    const hoje = getHojeDateString();
+    const amanha = addDaysYmd(hoje, 1);
+
+    const escalas = await pgListEscalas(ig, {
       ativoOnly: false,
       futureOnly: false,
       nextPerCultoOnly: false,
-      limit: 50,
+      limit: 80,
     });
-    if (!escalas.length) return res.json({ escala: null, totals: null, situacao: null });
+    if (!escalas.length) return res.json({ itens: [], escala: null, totals: null, situacao: null });
 
     const agora = Date.now();
     const evtIds = [...new Set(escalas.map((e) => e.eventoCheckinId).filter(Boolean))];
-    const evtById = await pgFindEventosCheckinByIds(req.tenantIgrejaId, evtIds);
+    const evtById = await pgFindEventosCheckinByIds(ig, evtIds);
 
-    // Ordena: 1º com check-in aberto agora (data hoje + janela), 2º próximas futuras, 3º últimas passadas
-    const comJanela = escalas
-      .map((e) => {
-        const evt = e.eventoCheckinId ? evtById.get(e.eventoCheckinId) : null;
-        const inicio = evt?.inicioCheckin ? new Date(evt.inicioCheckin).getTime() : null;
-        const fim = evt?.fimCheckin ? new Date(evt.fimCheckin).getTime() : null;
-        const aberto = !!(evt && evt.ativo && (!inicio || agora >= inicio) && (!fim || agora <= fim));
-        const futura = e.data && new Date(e.data).getTime() >= agora - 12 * 3600 * 1000;
-        return { escala: e, evt, aberto, futura, ts: e.data ? new Date(e.data).getTime() : 0 };
-      });
-    let alvo = comJanela.find((x) => x.aberto)
-      || comJanela.filter((x) => x.futura).sort((a, b) => a.ts - b.ts)[0]
-      || comJanela.filter((x) => !x.futura).sort((a, b) => b.ts - a.ts)[0]
-      || null;
-    if (!alvo) return res.json({ escala: null, totals: null, situacao: null });
-
-    const itens = await pgListAcompanhamentoEscala(req.tenantIgrejaId, alvo.escala._id) || [];
-    let aprovados = 0; let presentes = 0; let faltaram = 0; let pendentes = 0;
-    const fim = alvo.evt?.fimCheckin ? new Date(alvo.evt.fimCheckin).getTime() : null;
-    const encerrado = fim ? agora > fim : false;
-    for (const it of itens) {
-      if (it.status === 'aprovado') {
-        aprovados += 1;
-        if (it.compareceu) presentes += 1;
-        else if (encerrado) faltaram += 1;
-        else pendentes += 1;
+    async function totalsFor(escala, evt) {
+      const itens = await pgListAcompanhamentoEscala(ig, escala._id) || [];
+      let aprovados = 0; let presentes = 0; let faltaram = 0; let pendentes = 0;
+      const fim = evt?.fimCheckin ? new Date(evt.fimCheckin).getTime() : null;
+      const encerrado = fim ? agora > fim : false;
+      for (const it of itens) {
+        if (it.status === 'aprovado') {
+          aprovados += 1;
+          if (it.compareceu) presentes += 1;
+          else if (encerrado) faltaram += 1;
+          else pendentes += 1;
+        }
       }
+      const taxa = aprovados > 0 ? Math.round((presentes / aprovados) * 100) : 0;
+      return { aprovados, presentes, faltaram, pendentes, taxa };
     }
-    const situacao = alvo.aberto ? 'em-aberto' : (alvo.futura ? 'futura' : 'passada');
+
+    const mapped = [];
+    for (const e of escalas) {
+      const evt = e.eventoCheckinId ? evtById.get(e.eventoCheckinId) : null;
+      const ymd = escalaDataToYMD(e.data);
+      if (!ymd) continue;
+      const inicio = evt?.inicioCheckin ? new Date(evt.inicioCheckin).getTime() : null;
+      const fim = evt?.fimCheckin ? new Date(evt.fimCheckin).getTime() : null;
+      const aberto = !!(evt && evt.ativo && (!inicio || agora >= inicio) && (!fim || agora <= fim));
+      let situacao = 'passada';
+      if (aberto) situacao = 'em-aberto';
+      else if (ymd === hoje || ymd === amanha) situacao = 'futura';
+      else if (fim && agora <= fim) situacao = 'futura';
+      else if (ymd >= hoje) situacao = 'futura';
+      if (ymd !== hoje && ymd !== amanha && !aberto) continue;
+      const totals = await totalsFor(e, evt);
+      mapped.push({
+        escala: {
+          _id: e._id,
+          nome: e.nome,
+          data: e.data,
+          eventoCheckinId: e.eventoCheckinId,
+        },
+        evento: evt ? {
+          _id: evt._id,
+          label: evt.label,
+          inicioCheckin: evt.inicioCheckin,
+          fimCheckin: evt.fimCheckin,
+        } : null,
+        totals,
+        situacao,
+        ymd,
+        aberto,
+      });
+    }
+
+    mapped.sort((a, b) => {
+      const rank = (x) => (x.aberto ? 0 : x.ymd === hoje ? 1 : 2);
+      const ra = rank(a);
+      const rb = rank(b);
+      if (ra !== rb) return ra - rb;
+      return (a.ymd || '').localeCompare(b.ymd || '') || String(a.escala.nome || '').localeCompare(String(b.escala.nome || ''));
+    });
+
+    const itens = mapped.slice(0, 8);
+    const first = itens[0] || null;
     return res.json({
-      escala: {
-        _id: alvo.escala._id,
-        nome: alvo.escala.nome,
-        data: alvo.escala.data,
-        eventoCheckinId: alvo.escala.eventoCheckinId,
-      },
-      evento: alvo.evt ? {
-        _id: alvo.evt._id,
-        inicioCheckin: alvo.evt.inicioCheckin,
-        fimCheckin: alvo.evt.fimCheckin,
-      } : null,
-      totals: { aprovados, presentes, faltaram, pendentes },
-      situacao,
+      hoje,
+      amanha,
+      itens,
+      escala: first?.escala || null,
+      evento: first?.evento || null,
+      totals: first?.totals || null,
+      situacao: first?.situacao || null,
     });
   } catch (err) { console.error(err); sendError(res, 500, err.message || 'Erro no widget.'); }
 });
