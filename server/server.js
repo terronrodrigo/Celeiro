@@ -109,7 +109,7 @@ import {
 } from './db/postgres/cultos-recorrentes.js';
 import { DIAS_SEMANA, formatDataPtBr } from './lib/brasilia.js';
 import { buildWaMeUrl, buildMensagemAprovacaoEscala, phoneToWaMeDigits } from './lib/whatsapp-links.js';
-import { runMongoToPgMigration, getMongoMigrationStatus, getMigrationProgress, runMongoMigrationPreflight } from './lib/mongo-to-pg-migrate.js';
+import { runMongoToPgMigration, getMongoMigrationStatus, getMigrationProgress, runMongoMigrationPreflight, runPostgresValidationAudit } from './lib/mongo-to-pg-migrate.js';
 import { isValidEntityId } from './lib/ids.js';
 import { filterCandidaturasForLider, voluntarioMatchesLiderMinisterios, normalizeVoluntarioMinisteriosPatch, splitVoluntarioMinisterios } from './lib/ministerio-match.js';
 import { enrichCandidaturasForPanel } from './lib/candidatura-enrich.js';
@@ -4725,6 +4725,19 @@ app.post('/api/admin/migrate-mongo-to-pg/test', requireAuth, requireMigrationAdm
   } catch (err) {
     console.error('migrate-mongo-to-pg/test:', err);
     sendMigrationError(res, 500, err.message || 'Erro no teste de acesso aos dados.');
+  }
+});
+
+// POST /api/admin/migrate-mongo-to-pg/validate-pg — levantamento PostgreSQL vs Mongo (superadmin)
+app.post('/api/admin/migrate-mongo-to-pg/validate-pg', requireAuth, requireMigrationAdmin, async (req, res) => {
+  try {
+    const allIgrejas = req.body?.allIgrejas !== false;
+    const igrejaSlug = (req.body?.igrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
+    const result = await runPostgresValidationAudit({ igrejaSlug, allIgrejas });
+    res.json(result);
+  } catch (err) {
+    console.error('migrate-mongo-to-pg/validate-pg:', err);
+    sendMigrationError(res, 500, err.message || 'Erro ao validar PostgreSQL.');
   }
 });
 

@@ -150,7 +150,19 @@ async function migrateUsers(mongoIgrejaId, pgIgrejaId, minMap, dryRun) {
     if (!email) { inc(counts, 'skipped'); continue; }
     const ministerioIds = (u.ministerioIds || []).map((id) => minMap.get(String(id))).filter(Boolean);
     if (dryRun) {
-      inc(counts, 'created');
+      const { rows: existing } = await getPostgresPool().query(
+        'SELECT id FROM users WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
+        [pgIgrejaId, email],
+      );
+      inc(counts, existing.length ? 'skipped' : 'created');
+      continue;
+    }
+    const { rows: existing } = await getPostgresPool().query(
+      'SELECT id FROM users WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
+      [pgIgrejaId, email],
+    );
+    if (existing.length) {
+      inc(counts, 'skipped');
       continue;
     }
     if (!u.senha) { inc(counts, 'skipped'); continue; }
@@ -239,13 +251,32 @@ async function migrateVoluntarios(mongoIgrejaId, pgIgrejaId, dryRun) {
       perfilCheckinSkip: !!v.perfilCheckinSkip,
       perfilCheckinSkipAt: v.perfilCheckinSkipAt || null,
     };
-    if (dryRun) { inc(counts, 'created'); continue; }
+    if (dryRun) {
+      const { rows: existingDry } = await getPostgresPool().query(
+        'SELECT updated_at FROM voluntarios WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
+        [pgIgrejaId, email],
+      );
+      if (existingDry.length) {
+        const pgTs = existingDry[0].updated_at ? new Date(existingDry[0].updated_at).getTime() : 0;
+        const mongoTs = v.updatedAt ? new Date(v.updatedAt).getTime() : 0;
+        inc(counts, pgTs > mongoTs ? 'skipped' : 'updated');
+      } else {
+        inc(counts, 'created');
+      }
+      continue;
+    }
     const id = oid(v._id);
     const { rows: existing } = await getPostgresPool().query(
-      'SELECT id FROM voluntarios WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
+      'SELECT id, updated_at FROM voluntarios WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',
       [pgIgrejaId, email],
     );
     if (existing.length) {
+      const pgTs = existing[0].updated_at ? new Date(existing[0].updated_at).getTime() : 0;
+      const mongoTs = v.updatedAt ? new Date(v.updatedAt).getTime() : 0;
+      if (pgTs > mongoTs) {
+        inc(counts, 'skipped');
+        continue;
+      }
       await getPostgresPool().query(
         `UPDATE voluntarios SET nome = $3, dados = $4::jsonb, ativo = $5, fonte = $6, updated_at = NOW()
          WHERE id = $1 AND igreja_id = $2`,
@@ -768,6 +799,321 @@ export async function runMongoMigrationPreflight(opts = {}) {
         ? 'Conexão OK, mas nenhum dado encontrado no MongoDB.'
         : 'Acesso aos dados verificado. Você pode continuar a migração.',
   };
+}
+
+const PG_ENTITY_TABLES = [
+  ['users', 'users'],
+  ['voluntarios', 'voluntarios'],
+  ['eventosCheckin', 'eventos_checkin'],
+  ['checkins', 'checkins'],
+  ['escalas', 'escalas'],
+  ['candidaturas', 'candidaturas'],
+  ['eventosFormulario', 'eventos_formulario'],
+  ['formularioMembro', 'formulario_membro'],
+  ['formularioConsolidacao', 'formulario_consolidacao'],
+  ['formularioBatismo', 'formulario_batismo'],
+  ['formularioApresentacao', 'formulario_apresentacao'],
+  ['formularioNovoMembro', 'formulario_novo_membro'],
+  ['roleHistory', 'role_history'],
+];
+
+const MONGO_COUNT_KEYS = [
+  'users', 'voluntarios', 'eventosCheckin', 'checkins', 'escalas', 'candidaturas',
+  'escalaInscricoes', 'eventosFormulario', 'formularioMembro', 'formularioConsolidacao',
+  'formularioBatismo', 'formularioApresentacao', 'formularioNovoMembro', 'roleHistory',
+];
+
+async function countPgForIgreja(pool, pgIgrejaId) {
+  const counts = {};
+  for (const [key, table] of PG_ENTITY_TABLES) {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM ${table} WHERE igreja_id = $1`,
+      [pgIgrejaId],
+    );
+    counts[key] = rows[0]?.c ?? 0;
+  }
+  const { rows: insRows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM escala_inscricoes_por_ministerio eim
+     JOIN escalas e ON e.id = eim.escala_id WHERE e.igreja_id = $1`,
+    [pgIgrejaId],
+  );
+  counts.escalaInscricoes = insRows[0]?.c ?? 0;
+  counts.totalRecords = Object.values(counts).reduce((s, n) => s + (Number(n) || 0), 0);
+  return counts;
+}
+
+async function countPgGlobal(pool) {
+  const totals = {};
+  for (const [key, table] of PG_ENTITY_TABLES) {
+    const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM ${table}`);
+    totals[key] = rows[0]?.c ?? 0;
+  }
+  const { rows: insRows } = await pool.query('SELECT COUNT(*)::int AS c FROM escala_inscricoes_por_ministerio');
+  totals.escalaInscricoes = insRows[0]?.c ?? 0;
+  totals.grandTotal = Object.values(totals).reduce((s, n) => s + (Number(n) || 0), 0);
+
+  const orphans = {};
+  for (const [key, table] of PG_ENTITY_TABLES) {
+    if (key === 'users') continue;
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM ${table} t
+       WHERE NOT EXISTS (SELECT 1 FROM igrejas i WHERE i.id = t.igreja_id)`,
+    );
+    orphans[key] = rows[0]?.c ?? 0;
+  }
+  orphans.total = Object.values(orphans).reduce((s, n) => s + (Number(n) || 0), 0);
+
+  const { rows: recentRows } = await pool.query(`
+    SELECT
+      (SELECT COUNT(*)::int FROM checkins WHERE created_at >= NOW() - INTERVAL '28 days') AS checkins_28d,
+      (SELECT COUNT(*)::int FROM voluntarios WHERE updated_at >= NOW() - INTERVAL '28 days') AS voluntarios_28d,
+      (SELECT COUNT(*)::int FROM formulario_novo_membro WHERE created_at >= NOW() - INTERVAL '28 days') AS novo_membro_28d
+  `);
+
+  return {
+    totals,
+    orphans,
+    recent28Days: {
+      checkins: recentRows[0]?.checkins_28d ?? 0,
+      voluntarios: recentRows[0]?.voluntarios_28d ?? 0,
+      formularioNovoMembro: recentRows[0]?.novo_membro_28d ?? 0,
+    },
+  };
+}
+
+async function analyzePgMongoOverlap(pool, pgIgrejaId, mongoIgrejaId) {
+  const impact = {
+    pgOnlyVoluntarios: 0,
+    pgOnlyCheckins: 0,
+    overlapVoluntarios: 0,
+    pgNewerVoluntariosPreserved: 0,
+    mongoOnlyVoluntarios: 0,
+    mongoOnlyCheckins: 0,
+    samplesPgOnlyVoluntario: [],
+    samplesPgOnlyCheckin: [],
+  };
+
+  const { rows: pgVols } = await pool.query(
+    'SELECT LOWER(email) AS email, updated_at FROM voluntarios WHERE igreja_id = $1',
+    [pgIgrejaId],
+  );
+  const pgVolMap = new Map(pgVols.map((r) => [r.email, r.updated_at]));
+
+  const mongoVols = await Voluntario.find({ igrejaId: mongoIgrejaId }).select('email updatedAt').lean();
+  const mongoVolEmails = new Set();
+  for (const v of mongoVols) {
+    const email = String(v.email || '').trim().toLowerCase();
+    if (!email) continue;
+    mongoVolEmails.add(email);
+    if (pgVolMap.has(email)) {
+      impact.overlapVoluntarios += 1;
+      const pgTs = pgVolMap.get(email) ? new Date(pgVolMap.get(email)).getTime() : 0;
+      const mongoTs = v.updatedAt ? new Date(v.updatedAt).getTime() : 0;
+      if (pgTs > mongoTs) impact.pgNewerVoluntariosPreserved += 1;
+    } else {
+      impact.mongoOnlyVoluntarios += 1;
+    }
+  }
+  for (const [email] of pgVolMap) {
+    if (!mongoVolEmails.has(email)) {
+      impact.pgOnlyVoluntarios += 1;
+      if (impact.samplesPgOnlyVoluntario.length < 3) {
+        impact.samplesPgOnlyVoluntario.push(email);
+      }
+    }
+  }
+
+  const { rows: pgCkRows } = await pool.query(
+    'SELECT id, email, created_at FROM checkins WHERE igreja_id = $1',
+    [pgIgrejaId],
+  );
+  const pgCkIdSet = new Set(pgCkRows.map((r) => String(r.id)));
+  const mongoCkIds = new Set(
+    (await Checkin.find({ igrejaId: mongoIgrejaId }).select('_id').lean()).map((c) => oid(c._id)),
+  );
+  for (const row of pgCkRows) {
+    if (!mongoCkIds.has(String(row.id))) {
+      impact.pgOnlyCheckins += 1;
+      if (impact.samplesPgOnlyCheckin.length < 3) {
+        impact.samplesPgOnlyCheckin.push({
+          id: row.id,
+          email: row.email,
+          createdAt: row.created_at,
+        });
+      }
+    }
+  }
+  for (const mid of mongoCkIds) {
+    if (!pgCkIdSet.has(mid)) impact.mongoOnlyCheckins += 1;
+  }
+
+  return impact;
+}
+
+/**
+ * Levantamento PostgreSQL vs MongoDB — somente leitura, sem gravar nada.
+ * @param {{ igrejaSlug?: string, allIgrejas?: boolean }} opts
+ */
+export async function runPostgresValidationAudit(opts = {}) {
+  if (!isPostgres()) {
+    throw new Error('PostgreSQL não está disponível.');
+  }
+  if (migrationRunning) {
+    throw new Error('Aguarde a migração em andamento terminar antes de validar.');
+  }
+
+  const startedAt = Date.now();
+  const pool = getPostgresPool();
+  if (!pool) throw new Error('PostgreSQL não está disponível (pool nulo).');
+
+  let postgresPingMs = null;
+  const t0 = Date.now();
+  await pool.query('SELECT 1');
+  postgresPingMs = Date.now() - t0;
+
+  let mongoConnected = false;
+  let mongoPingMs = null;
+  let mongoError = null;
+  const hasUri = !!(process.env.MONGODB_URI || '').trim();
+  if (hasUri) {
+    try {
+      const tMongo = Date.now();
+      await pingMongo();
+      mongoPingMs = Date.now() - tMongo;
+      mongoConnected = true;
+    } catch (err) {
+      mongoError = err.message || String(err);
+    }
+  }
+
+  const global = await countPgGlobal(pool);
+  const { rows: pgIgrejas } = await pool.query(
+    'SELECT id, nome, slug, ativo FROM igrejas ORDER BY nome',
+  );
+
+  const slugEntries = mongoConnected
+    ? await resolveMigrationSlugs(opts)
+    : (opts.allIgrejas
+      ? pgIgrejas.filter((g) => g.ativo !== false).map((g) => ({ slug: g.slug, nome: g.nome }))
+      : [{ slug: String(opts.igrejaSlug || 'celeiro-sp').trim().toLowerCase() }]);
+
+  const igrejas = [];
+  const warnings = [];
+  let totalPgNewerPreserved = 0;
+  let totalPgOnlyRecords = 0;
+
+  if (global.orphans.total > 0) {
+    warnings.push(
+      `Registros órfãos (igreja_id inválido): ${global.orphans.total} — podem não aparecer na UI.`,
+    );
+  }
+
+  for (const entry of slugEntries) {
+    const pgIgreja = pgIgrejas.find((g) => g.slug === entry.slug);
+    const pgCounts = pgIgreja ? await countPgForIgreja(pool, pgIgreja.id) : emptyCountsLike();
+
+    let mongoCounts = null;
+    let impact = null;
+    let mongoNome = entry.nome || entry.slug;
+
+    if (mongoConnected) {
+      const mongoIgreja = entry.mongoDoc
+        || await Igreja.findOne({ slug: entry.slug }).lean();
+      if (!mongoIgreja) {
+        igrejas.push({
+          slug: entry.slug,
+          nome: entry.nome || entry.slug,
+          ok: false,
+          error: 'Igreja não encontrada no MongoDB',
+          pgCounts,
+          postgresReady: !!pgIgreja,
+        });
+        continue;
+      }
+      mongoNome = mongoIgreja.nome || mongoIgreja.slug;
+      const pre = await preflightOneIgreja(mongoIgreja);
+      mongoCounts = pre.counts;
+      if (pgIgreja) {
+        impact = await analyzePgMongoOverlap(pool, pgIgreja.id, mongoIgreja._id);
+        totalPgNewerPreserved += impact.pgNewerVoluntariosPreserved;
+        totalPgOnlyRecords += impact.pgOnlyVoluntarios + impact.pgOnlyCheckins;
+      }
+    }
+
+    igrejas.push({
+      slug: entry.slug,
+      nome: mongoNome,
+      ok: true,
+      postgresReady: !!pgIgreja,
+      pgIgrejaId: pgIgreja?.id || null,
+      pgCounts,
+      mongoCounts,
+      impact,
+    });
+  }
+
+  const pgHasData = global.totals.grandTotal > 0;
+  const mongoHasData = mongoConnected && igrejas.some((g) => {
+    const mc = g.mongoCounts;
+    return mc && MONGO_COUNT_KEYS.reduce((s, k) => s + (mc[k] || 0), 0) > 0;
+  });
+
+  const safeToMigrate = pgHasData
+    ? totalPgOnlyRecords >= 0
+    : true;
+
+  return {
+    ok: true,
+    postgresPingMs,
+    mongoConnected,
+    mongoPingMs,
+    mongoError,
+    mongodbUriConfigured: hasUri,
+    global,
+    igrejas,
+    warnings: [...new Set(warnings)],
+    migrationSafety: {
+      deletesData: false,
+      truncatesTables: false,
+      preservesPgOnlyRecords: true,
+      preservesPgNewerVoluntarios: true,
+      skipsExistingPgUsers: true,
+      pgOnlyRecordsEstimated: totalPgOnlyRecords,
+      pgNewerVoluntariosPreserved: totalPgNewerPreserved,
+      safeToMigrate,
+      notes: [
+        'A migração NUNCA apaga registros do PostgreSQL.',
+        'Voluntários/check-ins só existentes no Postgres são mantidos.',
+        'Voluntários no Postgres mais recentes que no Mongo não são sobrescritos.',
+        'Usuários já existentes no Postgres (mesmo e-mail) não são alterados.',
+        'Check-ins do Postgres com ID diferente do Mongo convivem com os migrados.',
+      ],
+    },
+    summary: {
+      pgHasOperationalData: pgHasData,
+      mongoHasHistoricalData: mongoHasData,
+      uiReadsPostgresOnly: true,
+      recommendation: !pgHasData && mongoHasData
+        ? 'PostgreSQL operacional vazio — migração do Mongo restaurará o painel.'
+        : pgHasData && mongoHasData
+          ? 'Ambos têm dados — migração complementa o Postgres sem apagar o que já existe.'
+          : pgHasData && !mongoHasData
+            ? 'Dados estão no PostgreSQL — não é necessário migrar do Mongo.'
+            : 'Nenhum dado operacional encontrado em Postgres nem Mongo.',
+    },
+    elapsedMs: Date.now() - startedAt,
+    message: pgHasData
+      ? `PostgreSQL contém ${global.totals.grandTotal} registro(s) operacionais.`
+      : 'PostgreSQL operacional vazio (apenas seed de igrejas/ministérios).',
+  };
+}
+
+function emptyCountsLike() {
+  const c = {};
+  for (const [key] of PG_ENTITY_TABLES) c[key] = 0;
+  c.escalaInscricoes = 0;
+  c.totalRecords = 0;
+  return c;
 }
 
 export async function getMongoMigrationStatus() {

@@ -8073,7 +8073,97 @@ function formatMongoPreflightReport(data) {
   return lines.join('\n');
 }
 
+function formatPostgresValidationReport(data) {
+  const lines = [];
+  lines.push(data.message || 'Validação PostgreSQL');
+  lines.push('');
+  lines.push(`Postgres ping: ${data.postgresPingMs}ms`);
+  if (data.mongodbUriConfigured) {
+    lines.push(data.mongoConnected
+      ? `Mongo ping: ${data.mongoPingMs}ms (comparação ativa)`
+      : `Mongo: ${data.mongoError || 'sem conexão'} (somente levantamento PG)`);
+  }
+  lines.push('');
+
+  const g = data.global || {};
+  const t = g.totals || {};
+  lines.push('── Totais PostgreSQL (todas as igrejas) ──');
+  lines.push(`voluntários ${t.voluntarios ?? 0} · check-ins ${t.checkins ?? 0} · users ${t.users ?? 0}`);
+  lines.push(`escalas ${t.escalas ?? 0} · candidaturas ${t.candidaturas ?? 0} · eventos check-in ${t.eventosCheckin ?? 0}`);
+  lines.push(`formulários ${(t.formularioMembro ?? 0) + (t.formularioBatismo ?? 0) + (t.formularioApresentacao ?? 0) + (t.formularioNovoMembro ?? 0) + (t.formularioConsolidacao ?? 0)}`);
+  lines.push(`TOTAL operacional: ${t.grandTotal ?? 0} registro(s)`);
+  if (g.recent28Days) {
+    lines.push(`Últimas 4 semanas: check-ins ${g.recent28Days.checkins ?? 0} · voluntários atualizados ${g.recent28Days.voluntarios ?? 0} · novos membros ${g.recent28Days.formularioNovoMembro ?? 0}`);
+  }
+  if (g.orphans?.total > 0) {
+    lines.push(`⚠ Órfãos (igreja_id inválido): ${g.orphans.total} registro(s)`);
+  }
+  lines.push('');
+
+  for (const ig of (data.igrejas || [])) {
+    lines.push(`── ${ig.nome || ig.slug} (${ig.slug}) ${ig.ok === false ? '✗' : '✓'}`);
+    if (ig.error) {
+      lines.push(`   Erro: ${ig.error}`);
+      continue;
+    }
+    const pc = ig.pgCounts || {};
+    const mc = ig.mongoCounts || {};
+    lines.push(`   PG: users ${pc.users ?? 0} · voluntários ${pc.voluntarios ?? 0} · check-ins ${pc.checkins ?? 0} · escalas ${pc.escalas ?? 0}`);
+    if (ig.mongoCounts) {
+      lines.push(`   Mongo: users ${mc.users ?? 0} · voluntários ${mc.voluntarios ?? 0} · check-ins ${mc.checkins ?? 0} · escalas ${mc.escalas ?? 0}`);
+    }
+    const imp = ig.impact;
+    if (imp) {
+      lines.push(`   Só no PG: ${imp.pgOnlyVoluntarios ?? 0} voluntário(s) · ${imp.pgOnlyCheckins ?? 0} check-in(s) (preservados na migração)`);
+      lines.push(`   Só no Mongo: ${imp.mongoOnlyVoluntarios ?? 0} voluntário(s) · ${imp.mongoOnlyCheckins ?? 0} check-in(s) (serão copiados)`);
+      if (imp.pgNewerVoluntariosPreserved > 0) {
+        lines.push(`   PG mais recente: ${imp.pgNewerVoluntariosPreserved} voluntário(s) não serão sobrescritos`);
+      }
+      if (imp.samplesPgOnlyVoluntario?.length) {
+        lines.push(`   amostra só-PG: ${imp.samplesPgOnlyVoluntario.join(', ')}`);
+      }
+    }
+    lines.push('');
+  }
+
+  const safety = data.migrationSafety || {};
+  lines.push('── Segurança da migração ──');
+  for (const note of (safety.notes || [])) lines.push(`• ${note}`);
+  if (data.summary?.recommendation) {
+    lines.push('');
+    lines.push(`→ ${data.summary.recommendation}`);
+  }
+  return lines.join('\n');
+}
+
 document.getElementById('mongoMigrateAllIgrejas')?.addEventListener('change', invalidateMongoPreflight);
+
+document.getElementById('btnMongoValidatePg')?.addEventListener('click', async () => {
+  if (!canShowMongoMigrateUi()) return;
+  const { allIgrejas, igrejaSlug } = getMongoMigrateOptions();
+  const btn = document.getElementById('btnMongoValidatePg');
+  const resultEl = document.getElementById('mongoMigrateResult');
+  if (btn) btn.disabled = true;
+  if (resultEl) {
+    resultEl.style.display = 'block';
+    resultEl.textContent = 'Validando PostgreSQL e comparando com MongoDB…';
+  }
+  try {
+    const r = await authFetch(`${API_BASE}/api/admin/migrate-mongo-to-pg/validate-pg`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ allIgrejas, igrejaSlug }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Erro na validação');
+    if (resultEl) resultEl.textContent = formatPostgresValidationReport(data);
+    await refreshMongoMigrateStatus();
+  } catch (e) {
+    if (resultEl) resultEl.textContent = e.message || 'Erro ao validar PostgreSQL';
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
 
 document.getElementById('btnMongoMigrateTest')?.addEventListener('click', async () => {
   if (!canShowMongoMigrateUi()) return;
@@ -8184,7 +8274,7 @@ document.getElementById('btnMongoMigrate')?.addEventListener('click', async () =
   const { dryRun, allIgrejas, igrejaSlug } = getMongoMigrateOptions();
   const action = dryRun ? 'simular' : 'executar';
   const scope = allIgrejas ? 'todas as igrejas' : `igreja "${igrejaSlug}"`;
-  if (!window.confirm(`Confirma ${action} a migração MongoDB → PostgreSQL para ${scope}?\n\n${dryRun ? 'Modo simulação: nada será gravado.' : 'ATENÇÃO: os dados serão copiados para o PostgreSQL. Depois você poderá desativar o MongoDB.'}`)) return;
+  if (!window.confirm(`Confirma ${action} a migração MongoDB → PostgreSQL para ${scope}?\n\n${dryRun ? 'Modo simulação: nada será gravado.' : 'A migração NÃO apaga dados do PostgreSQL.\nVoluntários/check-ins só no PG são preservados.\nVoluntários mais recentes no PG não são sobrescritos.\nUsuários já existentes no PG não são alterados.'}`)) return;
   const btn = document.getElementById('btnMongoMigrate');
   const resultEl = document.getElementById('mongoMigrateResult');
   resetMongoMigrateProgressUI();
