@@ -32,7 +32,7 @@ import { normalizarEstado, normalizarCidade } from './utils/normalize-locale.js'
 import { createWhatsAppHandler } from './whatsapp/handler.js';
 import { processBrdidWebhook, getLastVerification } from './brdid/whatsapp-verification.js';
 import { resolveTenant, tQ, publicIgrejaFromRequest, DEFAULT_IGREJA_SLUG, listIgrejasAtivas } from './tenant-context.js';
-import { initDatabase, isDbReady, isMongo, isPostgres, getDbMode } from './db/connection.js';
+import { initDatabase, isDbReady, isMongo, isPostgres, getDbMode, isMongoDecommissioned } from './db/connection.js';
 import { EMPTY_VOLUNTARIOS, EMPTY_ARRAY, emptyCheckinsPayload } from './db/stubs.js';
 import {
   resolveUserForEmailPasswordLogin,
@@ -110,6 +110,7 @@ import {
 import { DIAS_SEMANA, formatDataPtBr } from './lib/brasilia.js';
 import { buildWaMeUrl, buildMensagemAprovacaoEscala, phoneToWaMeDigits } from './lib/whatsapp-links.js';
 import { runMongoToPgMigration, getMongoMigrationStatus, getMigrationProgress, runMongoMigrationPreflight, runPostgresValidationAudit } from './lib/mongo-to-pg-migrate.js';
+import { getMongoDecommissionStatus, verifyMongoDecommissionReady, executeMongoDecommission } from './lib/mongo-decommission.js';
 import { isValidEntityId } from './lib/ids.js';
 import { filterCandidaturasForLider, voluntarioMatchesLiderMinisterios, normalizeVoluntarioMinisteriosPatch, splitVoluntarioMinisterios } from './lib/ministerio-match.js';
 import { enrichCandidaturasForPanel } from './lib/candidatura-enrich.js';
@@ -367,8 +368,9 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     db: getDbMode(),
-    mongodb: isMongo() ? 'connected' : 'disconnected',
+    mongodb: isMongoDecommissioned() ? 'decommissioned' : (isMongo() ? 'connected' : 'disconnected'),
     postgres: isPostgres() ? 'connected' : 'disconnected',
+    mongoDecommissioned: isMongoDecommissioned(),
   });
 });
 
@@ -572,6 +574,13 @@ function sendMigrationError(res, status, message) {
   }
   res.setHeader('x-request-id', requestId);
   return res.status(status).json({ error: msg, requestId });
+}
+
+function blockIfMongoDecommissioned(req, res, next) {
+  if (isMongoDecommissioned()) {
+    return sendMigrationError(res, 410, 'MongoDB desativado. A plataforma usa apenas PostgreSQL.');
+  }
+  next();
 }
 
 function requireAdminOrLider(req, res, next) {
@@ -4703,7 +4712,9 @@ app.delete('/api/users/:id', requireAuth, requireMasterAdmin, async (req, res) =
 // GET /api/admin/migrate-mongo-to-pg/status — conexão Mongo + Postgres (superadmin)
 app.get('/api/admin/migrate-mongo-to-pg/status', requireAuth, requireMigrationAdmin, async (req, res) => {
   try {
-    res.json(await getMongoMigrationStatus());
+    const status = await getMongoMigrationStatus();
+    const decommission = await getMongoDecommissionStatus();
+    res.json({ ...status, decommission });
   } catch (err) {
     console.error(err);
     sendMigrationError(res, 500, err.message || 'Erro ao verificar status da migração.');
@@ -4711,12 +4722,12 @@ app.get('/api/admin/migrate-mongo-to-pg/status', requireAuth, requireMigrationAd
 });
 
 // GET /api/admin/migrate-mongo-to-pg/progress — etapa atual da migração (superadmin)
-app.get('/api/admin/migrate-mongo-to-pg/progress', requireAuth, requireMigrationAdmin, (req, res) => {
+app.get('/api/admin/migrate-mongo-to-pg/progress', requireAuth, requireMigrationAdmin, blockIfMongoDecommissioned, (req, res) => {
   res.json(getMigrationProgress());
 });
 
 // POST /api/admin/migrate-mongo-to-pg/test — testa leitura Mongo + Postgres (superadmin)
-app.post('/api/admin/migrate-mongo-to-pg/test', requireAuth, requireMigrationAdmin, async (req, res) => {
+app.post('/api/admin/migrate-mongo-to-pg/test', requireAuth, requireMigrationAdmin, blockIfMongoDecommissioned, async (req, res) => {
   try {
     const allIgrejas = req.body?.allIgrejas === true;
     const igrejaSlug = (req.body?.igrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
@@ -4729,7 +4740,7 @@ app.post('/api/admin/migrate-mongo-to-pg/test', requireAuth, requireMigrationAdm
 });
 
 // POST /api/admin/migrate-mongo-to-pg/validate-pg — levantamento PostgreSQL vs Mongo (superadmin)
-app.post('/api/admin/migrate-mongo-to-pg/validate-pg', requireAuth, requireMigrationAdmin, async (req, res) => {
+app.post('/api/admin/migrate-mongo-to-pg/validate-pg', requireAuth, requireMigrationAdmin, blockIfMongoDecommissioned, async (req, res) => {
   try {
     const allIgrejas = req.body?.allIgrejas !== false;
     const igrejaSlug = (req.body?.igrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
@@ -4742,7 +4753,7 @@ app.post('/api/admin/migrate-mongo-to-pg/validate-pg', requireAuth, requireMigra
 });
 
 // POST /api/admin/migrate-mongo-to-pg — copia dados Mongo → PostgreSQL (superadmin)
-app.post('/api/admin/migrate-mongo-to-pg', requireAuth, requireMigrationAdmin, async (req, res) => {
+app.post('/api/admin/migrate-mongo-to-pg', requireAuth, requireMigrationAdmin, blockIfMongoDecommissioned, async (req, res) => {
   try {
     if (!isPostgres()) return sendMigrationError(res, 503, 'PostgreSQL não disponível.');
     const dryRun = req.query.dry === '1' || req.query.dry === 'true' || req.body?.dryRun === true;
@@ -4755,6 +4766,40 @@ app.post('/api/admin/migrate-mongo-to-pg', requireAuth, requireMigrationAdmin, a
   } catch (err) {
     console.error('migrate-mongo-to-pg:', err);
     sendMigrationError(res, 500, err.message || 'Erro na migração MongoDB → PostgreSQL.');
+  }
+});
+
+// GET /api/admin/mongo-decommission/status — Mongo desativado? (superadmin)
+app.get('/api/admin/mongo-decommission/status', requireAuth, requireMigrationAdmin, async (req, res) => {
+  try {
+    res.json(await getMongoDecommissionStatus());
+  } catch (err) {
+    console.error('mongo-decommission/status:', err);
+    sendMigrationError(res, 500, err.message || 'Erro ao verificar status do MongoDB.');
+  }
+});
+
+// POST /api/admin/mongo-decommission/verify — pré-check antes de desativar (superadmin)
+app.post('/api/admin/mongo-decommission/verify', requireAuth, requireMigrationAdmin, async (req, res) => {
+  try {
+    res.json(await verifyMongoDecommissionReady());
+  } catch (err) {
+    console.error('mongo-decommission/verify:', err);
+    sendMigrationError(res, 500, err.message || 'Erro na verificação.');
+  }
+});
+
+// POST /api/admin/mongo-decommission — desativa MongoDB na plataforma (superadmin)
+app.post('/api/admin/mongo-decommission', requireAuth, requireMigrationAdmin, async (req, res) => {
+  try {
+    const confirm = req.body?.confirm === true;
+    const email = (req.userEmail || '').toString().trim().toLowerCase();
+    const result = await executeMongoDecommission({ confirm, email });
+    invalidateCache();
+    res.json(result);
+  } catch (err) {
+    console.error('mongo-decommission:', err);
+    sendMigrationError(res, 500, err.message || 'Erro ao desativar MongoDB.');
   }
 });
 

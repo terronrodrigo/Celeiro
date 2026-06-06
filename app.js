@@ -7983,11 +7983,18 @@ async function refreshMongoMigrateStatus() {
       statusEl.textContent = data.error || 'Erro ao verificar';
       return;
     }
+    applyMongoDecommissionUi(data.decommission || { decommissioned: false });
     const parts = [];
     parts.push(data.postgresReady ? 'Postgres OK' : 'Postgres indisponível');
-    if (!data.mongodbUriConfigured) parts.push('MONGODB_URI não configurado no Railway');
-    else if (data.mongoConnected) parts.push('Mongo conectado');
-    else parts.push(`Mongo: ${data.mongoError || 'sem conexão'}`);
+    if (mongoDecommissioned) {
+      parts.push('Mongo desativado');
+    } else if (!data.mongodbUriConfigured) {
+      parts.push('MONGODB_URI não configurado no Railway');
+    } else if (data.mongoConnected) {
+      parts.push('Mongo conectado');
+    } else {
+      parts.push(`Mongo: ${data.mongoError || 'sem conexão'}`);
+    }
     if (data.migrationRunning) parts.push('migração em andamento…');
     statusEl.textContent = `(${parts.join(' · ')})`;
     if (data.progress?.running) updateMongoMigrateProgressUI(data.progress);
@@ -7998,6 +8005,35 @@ async function refreshMongoMigrateStatus() {
 
 let mongoMigratePollTimer = null;
 let mongoMigratePreflightToken = null;
+let mongoDecommissioned = false;
+
+function applyMongoDecommissionUi(decommission) {
+  mongoDecommissioned = !!decommission?.decommissioned;
+  const tools = document.getElementById('mongoMigrateTools');
+  const badge = document.getElementById('mongoDecommissionBadge');
+  const title = document.getElementById('mongoMigrateSectionTitle');
+  const btnOff = document.getElementById('btnDesativarMongo');
+  if (tools) tools.style.display = mongoDecommissioned ? 'none' : 'flex';
+  if (btnOff) btnOff.style.display = mongoDecommissioned ? 'none' : '';
+  if (title) {
+    title.textContent = mongoDecommissioned
+      ? 'Banco de dados:'
+      : 'Migração MongoDB → PostgreSQL:';
+  }
+  if (badge) {
+    if (mongoDecommissioned) {
+      const at = decommission?.info?.at;
+      const when = at ? new Date(at).toLocaleString('pt-BR') : '';
+      badge.style.display = 'inline';
+      badge.textContent = when
+        ? `✓ MongoDB desativado · ${when}`
+        : '✓ MongoDB desativado — PostgreSQL exclusivo';
+    } else {
+      badge.style.display = 'none';
+      badge.textContent = '';
+    }
+  }
+}
 
 function getMongoMigrateOptions() {
   return {
@@ -8136,10 +8172,86 @@ function formatPostgresValidationReport(data) {
   return lines.join('\n');
 }
 
+function formatDecommissionVerifyReport(data) {
+  const lines = [];
+  lines.push(data.message || '');
+  lines.push('');
+  if (data.pgGrandTotal != null) {
+    lines.push(`PostgreSQL: ${data.pgGrandTotal} registro(s) operacionais`);
+  }
+  if ((data.errors || []).length) {
+    lines.push('');
+    lines.push('Bloqueios:');
+    data.errors.forEach((e) => lines.push(`  ✗ ${e}`));
+  }
+  if ((data.warnings || []).length) {
+    lines.push('');
+    lines.push('Avisos:');
+    data.warnings.forEach((w) => lines.push(`  ⚠ ${w}`));
+  }
+  if (data.ready) {
+    lines.push('');
+    lines.push('→ Pode desativar o MongoDB. A plataforma passará a usar só PostgreSQL.');
+  }
+  return lines.join('\n');
+}
+
 document.getElementById('mongoMigrateAllIgrejas')?.addEventListener('change', invalidateMongoPreflight);
 
+document.getElementById('btnDesativarMongo')?.addEventListener('click', async () => {
+  if (!canShowMongoMigrateUi() || mongoDecommissioned) return;
+  const btn = document.getElementById('btnDesativarMongo');
+  const resultEl = document.getElementById('mongoMigrateResult');
+  if (btn) btn.disabled = true;
+  if (resultEl) {
+    resultEl.style.display = 'block';
+    resultEl.textContent = 'Verificando se o PostgreSQL está completo…';
+  }
+  try {
+    const rVerify = await authFetch(`${API_BASE}/api/admin/mongo-decommission/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const verify = await rVerify.json();
+    if (!rVerify.ok) throw new Error(verify.error || 'Erro na verificação');
+    if (resultEl) resultEl.textContent = formatDecommissionVerifyReport(verify);
+    if (!verify.ready) return;
+    const ok = window.confirm(
+      'Desativar MongoDB nesta plataforma?\n\n'
+      + '• Todos os dados passam a ser lidos/gravados só no PostgreSQL\n'
+      + '• Migração e conexão Mongo serão bloqueadas\n'
+      + '• Recomendado: remova MONGODB_URI do Railway depois\n\n'
+      + 'Esta ação é reversível apenas manualmente no banco.',
+    );
+    if (!ok) return;
+    const r = await authFetch(`${API_BASE}/api/admin/mongo-decommission`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Erro ao desativar MongoDB');
+    const lines = [
+      data.message || 'MongoDB desativado.',
+      '',
+      ...(data.railwaySteps || []).map((s, i) => `${i + 1}. Railway: ${s}`),
+    ];
+    if (resultEl) resultEl.textContent = lines.join('\n');
+    applyMongoDecommissionUi({ decommissioned: true, info: data.info });
+    invalidateMongoPreflight();
+    await refreshMongoMigrateStatus();
+    clearTenantScopedData();
+    await fetchAllData();
+  } catch (e) {
+    if (resultEl) resultEl.textContent = e.message || 'Erro ao desativar MongoDB';
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
 document.getElementById('btnMongoValidatePg')?.addEventListener('click', async () => {
-  if (!canShowMongoMigrateUi()) return;
+  if (!canShowMongoMigrateUi() || mongoDecommissioned) return;
   const { allIgrejas, igrejaSlug } = getMongoMigrateOptions();
   const btn = document.getElementById('btnMongoValidatePg');
   const resultEl = document.getElementById('mongoMigrateResult');
@@ -8166,7 +8278,7 @@ document.getElementById('btnMongoValidatePg')?.addEventListener('click', async (
 });
 
 document.getElementById('btnMongoMigrateTest')?.addEventListener('click', async () => {
-  if (!canShowMongoMigrateUi()) return;
+  if (!canShowMongoMigrateUi() || mongoDecommissioned) return;
   const { allIgrejas, igrejaSlug } = getMongoMigrateOptions();
   const btnTest = document.getElementById('btnMongoMigrateTest');
   const resultEl = document.getElementById('mongoMigrateResult');
@@ -8266,7 +8378,7 @@ function startMongoMigratePoll(onComplete) {
 }
 
 document.getElementById('btnMongoMigrate')?.addEventListener('click', async () => {
-  if (!canShowMongoMigrateUi()) return;
+  if (!canShowMongoMigrateUi() || mongoDecommissioned) return;
   if (!mongoMigratePreflightToken) {
     window.alert('Execute primeiro o teste de acesso aos dados (botão "1. Testar acesso").');
     return;

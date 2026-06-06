@@ -249,6 +249,8 @@ export async function initPostgres(connectionString) {
   await migrateAuthSessionsSchema();
   await pgPurgeExpiredAuthSessions().catch(() => {});
   await seedIfEmpty();
+  const { migratePlatformSettingsSchema } = await import('./platform-settings.js');
+  await migratePlatformSettingsSchema();
   return pool;
 }
 

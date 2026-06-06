@@ -6,8 +6,31 @@ import mongoose from 'mongoose';
 import { initPostgres, isPostgresReady, getPostgresPool } from './postgres/init.js';
 
 let mongoConnected = false;
+let mongoDecommissioned = false;
+
+export function isMongoDecommissioned() {
+  if (mongoDecommissioned) return true;
+  if ((process.env.MONGO_DECOMMISSIONED || '').trim().toLowerCase() === 'true') return true;
+  return false;
+}
+
+export function setMongoDecommissionedFlag(value) {
+  mongoDecommissioned = !!value;
+}
+
+export async function loadMongoDecommissionFlag() {
+  if (!isPostgresReady()) return;
+  try {
+    const { pgIsMongoDecommissioned } = await import('./postgres/platform-settings.js');
+    mongoDecommissioned = await pgIsMongoDecommissioned();
+    if (mongoDecommissioned) {
+      console.log('ℹ️ MongoDB desativado nesta plataforma — modo PostgreSQL exclusivo.');
+    }
+  } catch (_) { /* schema ainda não criado */ }
+}
 
 export function isMongo() {
+  if (isMongoDecommissioned()) return false;
   return mongoConnected && mongoose.connection.readyState === 1;
 }
 
@@ -47,6 +70,7 @@ function shouldUsePostgres() {
 }
 
 function shouldUseMongo() {
+  if (isMongoDecommissioned()) return false;
   const mode = (process.env.DB_PROVIDER || 'auto').trim().toLowerCase();
   if (mode === 'postgres') return false;
   return !!(process.env.MONGODB_URI || '').trim();
@@ -60,6 +84,7 @@ export async function initDatabase() {
     try {
       await initPostgres(pgUrl);
       console.log('✅ PostgreSQL conectado (Railway)');
+      await loadMongoDecommissionFlag();
     } catch (err) {
       console.error('❌ PostgreSQL erro:', err.message || err);
       if ((process.env.DB_PROVIDER || '').toLowerCase() === 'postgres') throw err;
@@ -67,7 +92,9 @@ export async function initDatabase() {
   }
 
   const mongoUriConfigured = !!mongoUri;
-  if (mongoUriConfigured && (process.env.DB_PROVIDER || '').trim().toLowerCase() === 'postgres') {
+  if (mongoUriConfigured && isMongoDecommissioned()) {
+    console.log('ℹ️ MONGODB_URI ignorado — MongoDB desativado nesta plataforma.');
+  } else if (mongoUriConfigured && (process.env.DB_PROVIDER || '').trim().toLowerCase() === 'postgres') {
     console.log('ℹ️ MONGODB_URI definido — MongoDB conecta sob demanda (migração).');
   }
 
@@ -96,6 +123,9 @@ export async function initDatabase() {
 
 /** Conecta ao Mongo sob demanda (ex.: migração quando o boot falhou por IP whitelist). */
 export async function ensureMongoConnection() {
+  if (isMongoDecommissioned()) {
+    throw new Error('MongoDB desativado nesta plataforma. Todos os dados usam PostgreSQL.');
+  }
   const mongoUri = (process.env.MONGODB_URI || '').trim();
   if (!mongoUri) {
     throw new Error('MONGODB_URI não configurado no Railway.');
