@@ -66,6 +66,11 @@ export async function initDatabase() {
     }
   }
 
+  const mongoUriConfigured = !!mongoUri;
+  if (mongoUriConfigured && (process.env.DB_PROVIDER || '').trim().toLowerCase() === 'postgres') {
+    console.log('ℹ️ MONGODB_URI definido — MongoDB conecta sob demanda (migração).');
+  }
+
   if (shouldUseMongo() && mongoUri) {
     try {
       await mongoose.connect(mongoUri);
@@ -96,25 +101,43 @@ export async function ensureMongoConnection() {
     throw new Error('MONGODB_URI não configurado no Railway.');
   }
   const state = mongoose.connection.readyState;
-  if (state === 1) {
+  if (state === 1 && mongoose.connection.db) {
     mongoConnected = true;
     return;
   }
-  if (state === 2) {
+  if (state === 1 || state === 2) {
     await mongoose.connection.asPromise();
-    mongoConnected = true;
-    return;
+    if (mongoose.connection.db) {
+      mongoConnected = true;
+      return;
+    }
   }
   await mongoose.connect(mongoUri);
+  await mongoose.connection.asPromise();
+  if (!mongoose.connection.db) {
+    throw new Error('MongoDB: falha ao obter database após connect. Verifique MONGODB_URI.');
+  }
   mongoConnected = true;
+}
+
+function resolveMongoDb() {
+  if (mongoose.connection.db) return mongoose.connection.db;
+  try {
+    const client = mongoose.connection.getClient?.();
+    if (client) {
+      const dbName = mongoose.connection.name || undefined;
+      return client.db(dbName);
+    }
+  } catch (_) { /* ignore */ }
+  return null;
 }
 
 /** Ping no Mongo após conexão garantida. */
 export async function pingMongo() {
   await ensureMongoConnection();
-  const db = mongoose.connection.db;
+  const db = resolveMongoDb();
   if (!db) {
-    throw new Error('MongoDB conectou mas o database não ficou disponível. Verifique MONGODB_URI.');
+    throw new Error('MongoDB: database indisponível após conexão. Verifique MONGODB_URI e Network Access no Atlas.');
   }
-  await db.admin().ping();
+  await db.command({ ping: 1 });
 }

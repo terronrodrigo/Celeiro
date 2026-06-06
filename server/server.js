@@ -6444,7 +6444,7 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
        WHERE igreja_id = $1
          AND timestamp_ms IS NOT NULL
          AND (to_timestamp(timestamp_ms / 1000) AT TIME ZONE 'America/Sao_Paulo') >= date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo')
-       GROUP BY nome
+       GROUP BY 1
        ORDER BY total DESC
        LIMIT 5`,
       [ig],
