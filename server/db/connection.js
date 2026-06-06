@@ -93,12 +93,28 @@ export async function initDatabase() {
 export async function ensureMongoConnection() {
   const mongoUri = (process.env.MONGODB_URI || '').trim();
   if (!mongoUri) {
-    throw new Error('MONGODB_URI não configurado no servidor.');
+    throw new Error('MONGODB_URI não configurado no Railway.');
   }
-  if (mongoose.connection.readyState === 1) {
+  const state = mongoose.connection.readyState;
+  if (state === 1) {
+    mongoConnected = true;
+    return;
+  }
+  if (state === 2) {
+    await mongoose.connection.asPromise();
     mongoConnected = true;
     return;
   }
   await mongoose.connect(mongoUri);
   mongoConnected = true;
+}
+
+/** Ping no Mongo após conexão garantida. */
+export async function pingMongo() {
+  await ensureMongoConnection();
+  const db = mongoose.connection.db;
+  if (!db) {
+    throw new Error('MongoDB conectou mas o database não ficou disponível. Verifique MONGODB_URI.');
+  }
+  await db.admin().ping();
 }

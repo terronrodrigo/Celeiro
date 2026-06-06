@@ -2,7 +2,6 @@
  * Migração MongoDB → PostgreSQL por igreja (slug).
  * Idempotente: upsert por id Mongo (_id.toString()) quando possível.
  */
-import mongoose from 'mongoose';
 import { randomUUID } from 'crypto';
 import Igreja from '../models/Igreja.js';
 import Ministerio from '../models/Ministerio.js';
@@ -20,7 +19,7 @@ import FormularioBatismo from '../models/FormularioBatismo.js';
 import FormularioApresentacao from '../models/FormularioApresentacao.js';
 import FormularioNovoMembro from '../models/FormularioNovoMembro.js';
 import RoleHistory from '../models/RoleHistory.js';
-import { ensureMongoConnection, isPostgres } from '../db/connection.js';
+import { ensureMongoConnection, pingMongo, isPostgres } from '../db/connection.js';
 import { getPostgresPool } from '../db/postgres/init.js';
 import { pgFindIgrejaBySlug, pgUpsertUserWithPasswordHash } from '../db/postgres/repos.js';
 import { escalaDataToYMD } from './brasilia.js';
@@ -676,18 +675,13 @@ export async function runMongoMigrationPreflight(opts = {}) {
   }
 
   const startedAt = Date.now();
-  await ensureMongoConnection();
-
-  let mongoPingMs = null;
-  try {
-    const t0 = Date.now();
-    await mongoose.connection.db.admin().ping();
-    mongoPingMs = Date.now() - t0;
-  } catch (err) {
-    throw new Error(`MongoDB conectou mas falhou no ping: ${err.message || err}`);
-  }
+  await pingMongo();
+  const mongoPingMs = Date.now() - startedAt;
 
   const pool = getPostgresPool();
+  if (!pool) {
+    throw new Error('PostgreSQL não está disponível (pool nulo).');
+  }
   let postgresPingMs = null;
   try {
     const t0 = Date.now();
@@ -783,7 +777,7 @@ export async function getMongoMigrationStatus() {
   let mongoError = null;
   if (hasUri) {
     try {
-      await ensureMongoConnection();
+      await pingMongo();
       mongoOk = true;
     } catch (err) {
       mongoError = err.message || String(err);
@@ -816,7 +810,7 @@ export async function runMongoToPgMigration(opts = {}) {
   migrationRunning = true;
   const dryRun = !!opts.dryRun;
   try {
-    await ensureMongoConnection();
+    await pingMongo();
 
     let slugs = [];
     if (opts.allIgrejas) {

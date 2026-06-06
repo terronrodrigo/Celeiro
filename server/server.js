@@ -555,10 +555,23 @@ function requireMigrationAdmin(req, res, next) {
   const email = (req.userEmail || '').toString().trim().toLowerCase();
   const isMaster = MASTER_ADMIN_EMAIL && email === MASTER_ADMIN_EMAIL;
   const isGlobal = req.authIsGlobalAdmin === true && role === 'admin';
-  if (!isMaster && !isGlobal) {
+  const isGlobalLegacy = role === 'admin' && !req.authIgrejaIdStr;
+  if (!isMaster && !isGlobal && !isGlobalLegacy) {
     return res.status(403).json({ error: 'Acesso negado. Apenas superadmin pode migrar dados.' });
   }
   next();
+}
+
+/** Erros de migração são visíveis ao superadmin (não mascarar em produção). */
+function sendMigrationError(res, status, message) {
+  const requestId = res?.req?._requestId || crypto.randomBytes(4).toString('hex');
+  const msg = String(message || 'Erro na migração').trim();
+  if (status >= 500) {
+    const route = res?.req ? `${res.req.method} ${res.req.originalUrl || res.req.url}` : 'unknown';
+    console.error(`[migration ${requestId}] ${status} ${route}: ${msg}`);
+  }
+  res.setHeader('x-request-id', requestId);
+  return res.status(status).json({ error: msg, requestId });
 }
 
 function requireAdminOrLider(req, res, next) {
@@ -4693,42 +4706,42 @@ app.get('/api/admin/migrate-mongo-to-pg/status', requireAuth, requireMigrationAd
     res.json(await getMongoMigrationStatus());
   } catch (err) {
     console.error(err);
-    sendError(res, 500, err.message || 'Erro ao verificar status da migração.');
+    sendMigrationError(res, 500, err.message || 'Erro ao verificar status da migração.');
   }
 });
 
-// GET /api/admin/migrate-mongo-to-pg/progress — etapa atual da migração (master admin)
+// GET /api/admin/migrate-mongo-to-pg/progress — etapa atual da migração (superadmin)
 app.get('/api/admin/migrate-mongo-to-pg/progress', requireAuth, requireMigrationAdmin, (req, res) => {
   res.json(getMigrationProgress());
 });
 
-// POST /api/admin/migrate-mongo-to-pg/test — testa leitura Mongo + Postgres (master admin)
-app.post('/api/admin/migrate-mongo-to-pg/test', requireAuth, resolveTenant, requireMigrationAdmin, async (req, res) => {
+// POST /api/admin/migrate-mongo-to-pg/test — testa leitura Mongo + Postgres (superadmin)
+app.post('/api/admin/migrate-mongo-to-pg/test', requireAuth, requireMigrationAdmin, async (req, res) => {
   try {
     const allIgrejas = req.body?.allIgrejas === true;
-    const igrejaSlug = (req.body?.igrejaSlug || req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
+    const igrejaSlug = (req.body?.igrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
     const result = await runMongoMigrationPreflight({ igrejaSlug, allIgrejas });
     res.json(result);
   } catch (err) {
     console.error('migrate-mongo-to-pg/test:', err);
-    sendError(res, 500, err.message || 'Erro no teste de acesso aos dados.');
+    sendMigrationError(res, 500, err.message || 'Erro no teste de acesso aos dados.');
   }
 });
 
-// POST /api/admin/migrate-mongo-to-pg — copia dados Mongo → PostgreSQL (master admin)
-app.post('/api/admin/migrate-mongo-to-pg', requireAuth, resolveTenant, requireMigrationAdmin, async (req, res) => {
+// POST /api/admin/migrate-mongo-to-pg — copia dados Mongo → PostgreSQL (superadmin)
+app.post('/api/admin/migrate-mongo-to-pg', requireAuth, requireMigrationAdmin, async (req, res) => {
   try {
-    if (!isPostgres()) return sendError(res, 503, 'PostgreSQL não disponível.');
+    if (!isPostgres()) return sendMigrationError(res, 503, 'PostgreSQL não disponível.');
     const dryRun = req.query.dry === '1' || req.query.dry === 'true' || req.body?.dryRun === true;
     const allIgrejas = req.body?.allIgrejas === true;
-    const igrejaSlug = (req.body?.igrejaSlug || req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
+    const igrejaSlug = (req.body?.igrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
     const preflightToken = (req.body?.preflightToken || '').toString().trim();
     const result = await runMongoToPgMigration({ igrejaSlug, allIgrejas, dryRun, preflightToken });
     invalidateCache();
     res.json(result);
   } catch (err) {
     console.error('migrate-mongo-to-pg:', err);
-    sendError(res, 500, err.message || 'Erro na migração MongoDB → PostgreSQL.');
+    sendMigrationError(res, 500, err.message || 'Erro na migração MongoDB → PostgreSQL.');
   }
 });
 
