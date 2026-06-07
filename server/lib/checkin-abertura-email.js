@@ -1,27 +1,13 @@
-import QRCode from 'qrcode';
 import { Resend } from 'resend';
 import { formatDataPtBr, escalaDataToYMD } from './brasilia.js';
 import { buildCheckinPublicUrl } from './checkin-public-url.js';
-import { generateCheckinQrDataUrl } from './checkin-qrcode.js';
+import { generateCheckinQrEmailBuffer, CHECKIN_QR_EMAIL_CID } from './checkin-qrcode.js';
 import { pgListVoluntarios } from '../db/postgres/operational-data.js';
 import { pgFindIgrejaById } from '../db/postgres/repos.js';
 import {
   pgListEventosCheckinAberturaEmailPendentes,
   pgTryClaimEventoAberturaEmail,
 } from '../db/postgres/escalas-checkin.js';
-
-async function buildCheckinEmailQrDataUrl(checkinUrl, opts = {}) {
-  try {
-    return await generateCheckinQrDataUrl(checkinUrl, opts);
-  } catch (e) {
-    console.warn('checkin abertura QR estilizado falhou, usando QR simples:', e?.message || e);
-    return QRCode.toDataURL(checkinUrl, {
-      width: 400,
-      margin: 2,
-      errorCorrectionLevel: 'H',
-    });
-  }
-}
 
 function horarioCheckinLabel(evento) {
   const hin = (evento.horarioInicio || '').trim();
@@ -38,7 +24,6 @@ export function buildCheckinAberturaEmailHtml({
   eventoDataLabel,
   horarioTexto,
   checkinUrl,
-  qrDataUrl,
   igrejaNome,
 }) {
   const n = (nome || '').trim() || 'voluntário(a)';
@@ -60,9 +45,10 @@ export function buildCheckinAberturaEmailHtml({
       <a href="${checkinUrl}" style="display:inline-block;background:#f59e0b;color:#1a1a2e;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:16px;">Fazer check-in agora</a>
     </p>
     <p style="margin:0 0 8px;text-align:center;font-size:13px;color:#9ca3af;">Ou escaneie o QR code:</p>
-    <p style="margin:0 0 20px;text-align:center;">
-      <img src="${qrDataUrl}" width="220" height="220" alt="QR code check-in" style="display:inline-block;border:1px solid #e5e7eb;border-radius:8px;padding:8px;background:#fff;">
-    </p>
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr><td align="center" style="padding:0 0 20px;">
+      <img src="cid:${CHECKIN_QR_EMAIL_CID}" width="280" height="280" alt="QR code check-in"
+        style="display:block;margin:0 auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;background:#fff;max-width:280px;height:auto;">
+    </td></tr></table>
     <p style="margin:0;font-size:13px;color:#9ca3af;word-break:break-all;text-align:center;">${checkinUrl}</p>
   </td></tr>
   <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:18px 36px;text-align:center;">
@@ -90,11 +76,7 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
   const ymd = escalaDataToYMD(evento.data);
   const eventoDataLabel = ymd ? formatDataPtBr(ymd) : '';
   const eventoLabel = (evento.label || '').trim() || `Culto ${eventoDataLabel}`;
-  const qrDataUrl = await buildCheckinEmailQrDataUrl(checkinUrl, {
-    size: 400,
-    title: eventoLabel,
-    subtitle: eventoDataLabel ? `Check-in · ${eventoDataLabel}` : 'Check-in de presença',
-  });
+  const qrBuffer = await generateCheckinQrEmailBuffer(checkinUrl);
   const horarioTexto = horarioCheckinLabel(evento);
 
   let ev = evento;
@@ -138,9 +120,14 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
           eventoDataLabel,
           horarioTexto,
           checkinUrl,
-          qrDataUrl,
           igrejaNome: igreja?.nome,
         }),
+        attachments: [{
+          filename: 'checkin-qrcode.png',
+          content: qrBuffer,
+          contentType: 'image/png',
+          contentId: CHECKIN_QR_EMAIL_CID,
+        }],
       });
       if (error) {
         failed += 1;

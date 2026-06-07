@@ -163,7 +163,21 @@ export async function generateCheckinQrPng(url, opts = {}) {
     .toBuffer();
 }
 
-export async function generateCheckinQrDataUrl(url, opts = {}) {
-  const buf = await generateCheckinQrPng(url, opts);
-  return `data:image/png;base64,${buf.toString('base64')}`;
+const CHECKIN_QR_EMAIL_CID = 'checkin-qr';
+
+/**
+ * QR compacto só para email (sem card/logo) — menor e legível em clientes de email.
+ */
+export async function generateCheckinQrEmailBuffer(url) {
+  const target = (url || '').trim();
+  if (!target) throw new Error('URL do check-in é obrigatória.');
+  return QRCode.toBuffer(target, {
+    type: 'png',
+    width: 280,
+    margin: 2,
+    errorCorrectionLevel: 'H',
+    color: { dark: INK, light: '#ffffff' },
+  });
 }
+
+export { CHECKIN_QR_EMAIL_CID };
