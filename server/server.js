@@ -79,6 +79,8 @@ import { sendCheckinAberturaEmailsForEvento, runCheckinAberturaEmailJob } from '
 import {
   runEscalaLembreteEmailJob,
   sendEscalaLembreteEmailsForIgreja,
+  sendEscalaAberturaEmailsCustom,
+  previewEscalaAberturaEmail,
   getCultoDataYmdForLembrete,
   resolveEscalaLembreteTipoForToday,
   resolveEscalaLembreteTipoForCulto,
@@ -5570,6 +5572,79 @@ app.post('/api/escalas/enviar-lembrete', requireAuth, resolveTenant, requireAdmi
   } catch (err) {
     console.error('escalas/enviar-lembrete:', err?.message || err);
     sendError(res, 500, err.message || 'Erro ao enviar lembretes.');
+  }
+});
+
+// POST /api/escalas/email-abertura/preview — contagem de destinatários (escalas selecionadas)
+app.post('/api/escalas/email-abertura/preview', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const body = req.body || {};
+    const escalaIds = Array.isArray(body.escalaIds)
+      ? body.escalaIds.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+    if (!escalaIds.length) return sendError(res, 400, 'Selecione ao menos uma escala.');
+    const destinatarios = body.destinatarios === 'ativos' ? 'ativos' : 'todos';
+    const preview = await previewEscalaAberturaEmail(req.tenantIgrejaId, { escalaIds, destinatarios });
+    res.json(preview);
+  } catch (err) {
+    console.error('escalas/email-abertura/preview:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao calcular destinatários.');
+  }
+});
+
+// POST /api/escalas/email-abertura — email de abertura para escalas selecionadas
+app.post('/api/escalas/email-abertura', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const body = req.body || {};
+    const escalaIds = Array.isArray(body.escalaIds)
+      ? body.escalaIds.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+    if (!escalaIds.length) return sendError(res, 400, 'Selecione ao menos uma escala.');
+    if (escalaIds.length > 20) return sendError(res, 400, 'Máximo de 20 escalas por envio.');
+    const destinatarios = body.destinatarios === 'ativos' ? 'ativos' : 'todos';
+    const mensagem = String(body.mensagem || '').trim().slice(0, 4000);
+    if (!(process.env.RESEND_API_KEY || '').trim()) {
+      return sendError(res, 503, 'RESEND_API_KEY não configurada.');
+    }
+    const preview = await previewEscalaAberturaEmail(req.tenantIgrejaId, { escalaIds, destinatarios });
+    if (!preview.escalas.some((e) => e.ativo)) {
+      return sendError(res, 400, 'Nenhuma das escalas selecionadas está ativa (inscrições abertas).');
+    }
+    if (!preview.totalSelecionado) {
+      return sendError(res, 400, destinatarios === 'ativos'
+        ? 'Nenhum voluntário ativo (escala ou check-in nos últimos 180 dias) encontrado.'
+        : 'Nenhum voluntário cadastrado encontrado.');
+    }
+    const igrejaId = req.tenantIgrejaId;
+    const appBase = resolveAppBaseUrl(req);
+    res.json({
+      ok: true,
+      started: true,
+      total: preview.totalSelecionado,
+      totalTodos: preview.totalTodos,
+      totalAtivos: preview.totalAtivos,
+      destinatarios,
+      escalas: preview.escalas.length,
+      message: 'Envio iniciado em segundo plano.',
+    });
+    sendEscalaAberturaEmailsCustom({
+      igrejaId,
+      escalaIds,
+      mensagem,
+      destinatarios,
+      appBase,
+    })
+      .then((r) => {
+        console.log(`✉️ email-abertura escalas: ${r.sent || 0}/${r.total || 0} enviado(s).`);
+      })
+      .catch((err) => {
+        console.error('escalas/email-abertura background:', err?.message || err);
+      });
+  } catch (err) {
+    console.error('escalas/email-abertura:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao enviar emails de abertura.');
   }
 });
 

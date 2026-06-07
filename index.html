@@ -1821,6 +1821,41 @@
     </div>
   </div>
 
+  <!-- Modal: Email de abertura de escalas selecionadas -->
+  <div id="modalEscalaEmailAbertura" class="modal" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box" style="max-width:560px">
+      <div class="modal-header">
+        <h2>Email · escalas abertas</h2>
+        <button type="button" class="modal-close" id="modalEscalaEmailAberturaClose">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="form-hint" id="escalaEmailAberturaResumo">Selecione escalas na tabela e envie um aviso por email.</p>
+        <ul id="escalaEmailAberturaLista" class="form-hint" style="margin:0 0 16px;padding-left:1.2em"></ul>
+        <div class="form-group">
+          <label for="escalaEmailAberturaMensagem">Mensagem (opcional)</label>
+          <textarea id="escalaEmailAberturaMensagem" rows="5" placeholder="Ex.: Olá! As inscrições para o culto deste domingo já estão abertas. Contamos com vocês!" style="width:100%;font-family:inherit;padding:8px;border:1px solid var(--border-color);border-radius:8px;resize:vertical;"></textarea>
+          <small style="color:var(--text-muted);display:block;margin-top:4px;">Texto livre que aparece no corpo do email, antes dos links das escalas.</small>
+        </div>
+        <div class="form-group">
+          <label>Destinatários</label>
+          <label class="checkbox-label" style="display:block;margin-bottom:8px">
+            <input type="radio" name="escalaEmailDestinatarios" value="todos" checked>
+            Todos os voluntários cadastrados (<span id="escalaEmailCountTodos">0</span>)
+          </label>
+          <label class="checkbox-label" style="display:block">
+            <input type="radio" name="escalaEmailDestinatarios" value="ativos">
+            Apenas ativos — escala ou check-in nos últimos 180 dias (<span id="escalaEmailCountAtivos">0</span>)
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="modalEscalaEmailAberturaCancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btnConfirmarEscalaEmailAbertura">Enviar emails</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: Editar Escala -->
   <div id="modalEditarEscala" class="modal" aria-hidden="true">
     <div class="modal-backdrop"></div>
@@ -1977,6 +2012,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.29"></script>
+  <script defer src="app.js?v=1.6.30"></script>
 </body>
 </html>

@@ -167,6 +167,65 @@ export async function pgListVoluntarioEmails(igrejaId) {
   return list.map((v) => (v.email || '').toLowerCase().trim()).filter(Boolean);
 }
 
+/** Emails com candidatura ou check-in nos últimos N dias (horário UTC / timestamp_ms). */
+export async function pgEmailsComAtividadeRecente(igrejaId, dias = 180) {
+  const d = Math.max(1, Math.min(Number(dias) || 180, 730));
+  const pool = getPostgresPool();
+  const sinceMs = Date.now() - d * 24 * 60 * 60 * 1000;
+  const { rows } = await pool.query(
+    `SELECT DISTINCT em FROM (
+       SELECT LOWER(dados->>'email') AS em
+       FROM candidaturas
+       WHERE igreja_id = $1
+         AND LOWER(dados->>'email') LIKE '%@%'
+         AND (
+           created_at >= NOW() - ($2::int * INTERVAL '1 day')
+           OR COALESCE(
+             NULLIF(dados->>'aprovadoEm', '')::timestamptz,
+             created_at
+           ) >= NOW() - ($2::int * INTERVAL '1 day')
+         )
+       UNION
+       SELECT LOWER(email) AS em
+       FROM checkins
+       WHERE igreja_id = $1
+         AND LOWER(email) LIKE '%@%'
+         AND (
+           timestamp_ms >= $3
+           OR data_checkin >= NOW() - ($2::int * INTERVAL '1 day')
+         )
+     ) t
+     WHERE em IS NOT NULL AND em <> ''`,
+    [igrejaId, d, sinceMs],
+  );
+  return new Set(rows.map((r) => r.em));
+}
+
+/**
+ * Destinatários de email de abertura de escala.
+ * @param {'todos'|'ativos'} destinatarios
+ */
+export async function pgResolveDestinatariosEscalaEmail(igrejaId, { destinatarios = 'todos', diasAtividade = 180 } = {}) {
+  const voluntarios = await pgListVoluntarios(igrejaId);
+  const byEmail = new Map();
+  for (const v of voluntarios) {
+    const em = (v.email || '').toLowerCase().trim();
+    if (!em || !em.includes('@') || byEmail.has(em)) continue;
+    byEmail.set(em, v);
+  }
+  if (destinatarios === 'ativos') {
+    const ativos = await pgEmailsComAtividadeRecente(igrejaId, diasAtividade);
+    const out = [];
+    for (const em of ativos) {
+      if (byEmail.has(em)) out.push(byEmail.get(em));
+      else out.push({ email: em, nome: em.split('@')[0] || em });
+    }
+    out.sort((a, b) => (a.nome || a.email || '').localeCompare(b.nome || b.email || '', 'pt-BR'));
+    return out;
+  }
+  return [...byEmail.values()];
+}
+
 /** Garante email na lista de voluntários (cadastro, check-in, registro de conta). */
 /**
  * Garante que o email esteja em `voluntarios` para a igreja.

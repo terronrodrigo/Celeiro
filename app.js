@@ -5225,6 +5225,90 @@ function buildEscalasLembreteDateOptions() {
   return sortEscalasByDataAsc([...byDate.entries()].map(([ymd, count]) => ({ ymd, count })));
 }
 
+async function refreshEscalaEmailAberturaPreview() {
+  const ids = [...selectedEscalaIds];
+  const dest = document.querySelector('input[name="escalaEmailDestinatarios"]:checked')?.value || 'todos';
+  const countTodos = document.getElementById('escalaEmailCountTodos');
+  const countAtivos = document.getElementById('escalaEmailCountAtivos');
+  if (!ids.length) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/email-abertura/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ escalaIds: ids, destinatarios: dest }),
+    });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (countTodos) countTodos.textContent = String(data.totalTodos ?? 0);
+    if (countAtivos) countAtivos.textContent = String(data.totalAtivos ?? 0);
+    const lista = document.getElementById('escalaEmailAberturaLista');
+    if (lista && Array.isArray(data.escalas)) {
+      lista.innerHTML = data.escalas.map((e) => {
+        const dt = e.data ? formatEscalaDateOnly(e.data) : '—';
+        const st = e.ativo ? '' : ' · inscrições fechadas';
+        return `<li>${escapeHtml(e.nome || 'Escala')} (${escapeHtml(dt)})${escapeHtml(st)}</li>`;
+      }).join('');
+    }
+  } catch (_) { /* ignore preview errors */ }
+}
+
+async function openModalEscalaEmailAbertura() {
+  const ids = [...selectedEscalaIds];
+  if (!ids.length) {
+    alert('Selecione ao menos uma escala na tabela (checkbox).');
+    return;
+  }
+  const modal = document.getElementById('modalEscalaEmailAbertura');
+  if (!modal) return;
+  const msg = document.getElementById('escalaEmailAberturaMensagem');
+  if (msg) msg.value = '';
+  const todosRadio = document.querySelector('input[name="escalaEmailDestinatarios"][value="todos"]');
+  if (todosRadio) todosRadio.checked = true;
+  const resumo = document.getElementById('escalaEmailAberturaResumo');
+  if (resumo) resumo.textContent = `${ids.length} escala(s) selecionada(s) para o email:`;
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  await refreshEscalaEmailAberturaPreview();
+}
+
+async function confirmarEscalaEmailAbertura() {
+  const ids = [...selectedEscalaIds];
+  if (!ids.length) return;
+  const mensagem = document.getElementById('escalaEmailAberturaMensagem')?.value?.trim() || '';
+  const destinatarios = document.querySelector('input[name="escalaEmailDestinatarios"]:checked')?.value || 'todos';
+  const countEl = destinatarios === 'ativos'
+    ? document.getElementById('escalaEmailCountAtivos')
+    : document.getElementById('escalaEmailCountTodos');
+  const total = Number(countEl?.textContent || 0);
+  if (!total) {
+    alert(destinatarios === 'ativos'
+      ? 'Nenhum voluntário ativo encontrado (escala ou check-in nos últimos 180 dias).'
+      : 'Nenhum voluntário cadastrado encontrado.');
+    return;
+  }
+  const destLabel = destinatarios === 'ativos'
+    ? `${total} voluntário(s) ativos`
+    : `${total} voluntário(s) cadastrados`;
+  if (!confirm(`Enviar email de abertura de escala para ${destLabel}?\n\nEscalas: ${ids.length}`)) return;
+  const btn = document.getElementById('btnConfirmarEscalaEmailAbertura');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/email-abertura`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ escalaIds: ids, mensagem, destinatarios }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Falha ao enviar emails.');
+    document.getElementById('modalEscalaEmailAbertura')?.classList.remove('open');
+    alert(`Envio iniciado! ${data.total || total} email(s) serão enviados em segundo plano.`);
+  } catch (e) {
+    alert(e.message || 'Erro ao enviar emails.');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function enviarLembreteEscalaVoluntarios(force = false) {
   const sel = document.getElementById('escalaLembreteDataSelect');
   const cultoData = sel?.value?.trim();
@@ -5279,8 +5363,10 @@ function updateEscalasCriarSelectionUi() {
   const n = selectedEscalaIds.size;
   const countEl = document.getElementById('escalasCriarSelectedCount');
   const btn = document.getElementById('btnExcluirEscalasSelecionadas');
+  const btnEmail = document.getElementById('btnEmailEscalasSelecionadas');
   if (countEl) countEl.textContent = String(n);
   if (btn) btn.disabled = n === 0;
+  if (btnEmail) btnEmail.disabled = n === 0;
   const allIds = (escalasList || []).map((e) => String(e._id));
   const allSelected = allIds.length > 0 && allIds.every((id) => selectedEscalaIds.has(id));
   const someSelected = allIds.some((id) => selectedEscalaIds.has(id));
@@ -5333,8 +5419,11 @@ function renderEscalasCriar() {
       <button type="button" class="btn btn-ghost" id="btnExcluirEscalasSelecionadas" disabled style="color:var(--danger,#ef4444)">
         Excluir selecionadas (<span id="escalasCriarSelectedCount">0</span>)
       </button>
+      <button type="button" class="btn btn-primary" id="btnEmailEscalasSelecionadas" disabled title="Enviar email de abertura para as escalas marcadas">
+        Email · selecionadas
+      </button>
       <div class="escala-lembrete-actions" style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <label for="escalaLembreteDataSelect" class="form-hint" style="margin:0">Reforço por email:</label>
+        <label for="escalaLembreteDataSelect" class="form-hint" style="margin:0">Reforço automático (por data):</label>
         <select id="escalaLembreteDataSelect" class="igreja-select" style="min-width:180px" ${lembreteOpcoes.length ? '' : 'disabled'}>${lembreteSelectHtml}</select>
         <button type="button" class="btn btn-ghost" id="btnEnviarLembreteEscala" ${lembreteOpcoes.length ? '' : 'disabled'} title="Envia lembrete de inscrição na escala para todos os voluntários">Email · todos</button>
       </div>
@@ -5355,6 +5444,7 @@ function renderEscalasCriar() {
   `;
 
   document.getElementById('btnEnviarLembreteEscala')?.addEventListener('click', () => enviarLembreteEscalaVoluntarios(false));
+  document.getElementById('btnEmailEscalasSelecionadas')?.addEventListener('click', () => { void openModalEscalaEmailAbertura(); });
   document.getElementById('btnNovaEscala')?.addEventListener('click', () => {
     const m = document.getElementById('modalNovaEscala');
     if (m) {
@@ -6515,6 +6605,16 @@ document.getElementById('formEditarEscala')?.addEventListener('submit', async (e
 ['modalNovaEscalaClose', 'modalNovaEscalaCancel'].forEach(id => {
   document.getElementById(id)?.addEventListener('click', () => { document.getElementById('modalNovaEscala')?.classList.remove('open'); });
 });
+['modalEscalaEmailAberturaClose', 'modalEscalaEmailAberturaCancel'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', () => { document.getElementById('modalEscalaEmailAbertura')?.classList.remove('open'); });
+});
+document.getElementById('modalEscalaEmailAbertura')?.querySelector('.modal-backdrop')?.addEventListener('click', () => {
+  document.getElementById('modalEscalaEmailAbertura')?.classList.remove('open');
+});
+document.querySelectorAll('input[name="escalaEmailDestinatarios"]').forEach((el) => {
+  el.addEventListener('change', () => { void refreshEscalaEmailAberturaPreview(); });
+});
+document.getElementById('btnConfirmarEscalaEmailAbertura')?.addEventListener('click', () => { void confirmarEscalaEmailAbertura(); });
 ['modalEditarEscalaClose', 'modalEditarEscalaCancel'].forEach(id => {
   document.getElementById(id)?.addEventListener('click', () => { document.getElementById('modalEditarEscala')?.classList.remove('open'); });
 });
