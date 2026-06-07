@@ -21,6 +21,14 @@ CREATE TABLE IF NOT EXISTS escala_lembrete_emails (
   emails_enviados INT NOT NULL DEFAULT 0,
   PRIMARY KEY (igreja_id, tipo, culto_data)
 );
+
+CREATE TABLE IF NOT EXISTS checkin_agradecimento_emails (
+  igreja_id TEXT NOT NULL REFERENCES igrejas(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  checkin_ymd DATE NOT NULL,
+  enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (igreja_id, email, checkin_ymd)
+);
 `;
 
 export async function migrateEventosCheckinSchema() {
@@ -150,6 +158,63 @@ export async function pgMarkEscalaLembreteEnviado(igrejaId, tipo, cultoDataYmd, 
        enviado_em = NOW(),
        emails_enviados = EXCLUDED.emails_enviados`,
     [igrejaId, tipo, cultoDataYmd, emailsEnviados],
+  );
+}
+
+/** Voluntários com check-in em checkinYmd que ainda não receberam email de agradecimento. */
+export async function pgListCheckinAgradecimentoPendentes(checkinYmd) {
+  const ymd = String(checkinYmd || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return [];
+  const { start, end } = getDayRangeBrasilia(ymd);
+  if (!start || !end) return [];
+  const { rows } = await getPostgresPool().query(
+    `WITH checkins_dia AS (
+       SELECT c.igreja_id,
+              LOWER(TRIM(c.email)) AS email,
+              MAX(c.nome) AS nome,
+              MAX(c.ministerio) AS ministerio,
+              COUNT(*)::int AS checkins_no_dia
+       FROM checkins c
+       WHERE LOWER(TRIM(COALESCE(c.email, ''))) LIKE '%@%'
+         AND (
+           (c.data_checkin >= $1 AND c.data_checkin < $2)
+           OR (
+             c.timestamp_ms IS NOT NULL
+             AND (to_timestamp(c.timestamp_ms / 1000.0) AT TIME ZONE 'America/Sao_Paulo')::date = $3::date
+           )
+         )
+       GROUP BY c.igreja_id, LOWER(TRIM(c.email))
+     )
+     SELECT cd.igreja_id, cd.email, cd.nome, cd.ministerio, cd.checkins_no_dia
+     FROM checkins_dia cd
+     WHERE NOT EXISTS (
+       SELECT 1 FROM checkin_agradecimento_emails a
+       WHERE a.igreja_id = cd.igreja_id
+         AND LOWER(a.email) = cd.email
+         AND a.checkin_ymd = $3::date
+     )
+     ORDER BY cd.igreja_id, cd.email`,
+    [start, end, ymd],
+  );
+  return rows.map((r) => ({
+    igrejaId: r.igreja_id,
+    email: r.email,
+    nome: r.nome || '',
+    ministerio: r.ministerio || '',
+    checkinsNoDia: r.checkins_no_dia || 1,
+    checkinYmd: ymd,
+  }));
+}
+
+export async function pgMarkCheckinAgradecimentoEnviado(igrejaId, email, checkinYmd) {
+  const em = String(email || '').toLowerCase().trim();
+  const ymd = String(checkinYmd || '').trim().slice(0, 10);
+  if (!em || !ymd) return;
+  await getPostgresPool().query(
+    `INSERT INTO checkin_agradecimento_emails (igreja_id, email, checkin_ymd)
+     VALUES ($1, $2, $3::date)
+     ON CONFLICT (igreja_id, email, checkin_ymd) DO UPDATE SET enviado_em = NOW()`,
+    [igrejaId, em, ymd],
   );
 }
 

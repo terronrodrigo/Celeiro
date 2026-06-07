@@ -77,6 +77,7 @@ import {
 import { buildCheckinPublicUrl, resolveAppBaseUrl } from './lib/checkin-public-url.js';
 import { generateCheckinQrPng } from './lib/checkin-qrcode.js';
 import { sendCheckinAberturaEmailsForEvento, runCheckinAberturaEmailJob } from './lib/checkin-abertura-email.js';
+import { runCheckinAgradecimentoEmailJob } from './lib/checkin-agradecimento-email.js';
 import {
   runEscalaLembreteEmailJob,
   sendEscalaLembreteEmailsForIgreja,
@@ -7082,6 +7083,23 @@ async function start() {
         console.error('runEscalaLembreteEmailJob falhou:', err.message || err);
       }
     }, ESCALA_LEMBRETE_MS).unref?.();
+
+    const CHECKIN_AGRADECIMENTO_MS = Number(process.env.CHECKIN_AGRADECIMENTO_INTERVAL_MS) || 30 * 60 * 1000;
+    setTimeout(() => {
+      runCheckinAgradecimentoEmailJob().catch((err) => {
+        console.error('checkin agradecimento email (boot):', err?.message || err);
+      });
+    }, 60_000);
+    setInterval(async () => {
+      try {
+        const r = await runCheckinAgradecimentoEmailJob();
+        if ((r.sent || 0) > 0) {
+          console.log(`⏱️  checkin agradecimento (${r.checkinYmd}): ${r.sent} enviado(s).`);
+        }
+      } catch (err) {
+        console.error('runCheckinAgradecimentoEmailJob falhou:', err.message || err);
+      }
+    }, CHECKIN_AGRADECIMENTO_MS).unref?.();
   }
 
   app.listen(PORT, '0.0.0.0', () => {
