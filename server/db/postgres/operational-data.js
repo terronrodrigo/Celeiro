@@ -201,7 +201,7 @@ function emailFromVoluntarioRow(r) {
 }
 
 /** Voluntários elegíveis para broadcast (cadastro ativo + contas role=voluntario). */
-async function pgListVoluntariosParaEmailBroadcast(igrejaId) {
+export async function pgListVoluntariosParaEmailBroadcast(igrejaId) {
   const pool = getPostgresPool();
   const { rows: volRows } = await pool.query(
     `SELECT id, email, nome, dados, ativo, fonte FROM voluntarios

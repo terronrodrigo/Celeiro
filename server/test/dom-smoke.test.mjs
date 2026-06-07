@@ -20,6 +20,10 @@ const REQUIRED_IDS = [
   'btnSyncCultosRecorrentes',
   'cultosRecorrentesBody',
   'kpiGridResumoGlobal',
+  'kpiGridResumoVolEngajamento',
+  'resumoVolEngMinisterio',
+  'btnEmailReengajamento',
+  'modalVolReengajamentoEmail',
 ];
 
 describe('index.html — elementos críticos', () => {

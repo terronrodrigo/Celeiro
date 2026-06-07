@@ -407,6 +407,8 @@ function updateAuthUi() {
   if (btnRefresh) {
     btnRefresh.style.display = isLogged && (isAdmin || isLider || authRole === 'lider') ? '' : 'none';
   }
+  const btnReeng = document.getElementById('btnEmailReengajamento');
+  if (btnReeng) btnReeng.style.display = isLogged && isAdmin ? '' : 'none';
   const cadastroLinkSection = document.getElementById('cadastroLinkSection');
   if (cadastroLinkSection) cadastroLinkSection.style.display = isLogged && isAdmin ? '' : 'none';
   const brdidSection = document.getElementById('brdidVerificacaoSection');
@@ -985,6 +987,7 @@ function setView(view, options) {
     if (view === 'resumo' && (isAdmin || isLider || authRole === 'lider')) {
       fetchEscalaEmDestaque();
       fetchResumoGlobal();
+      fetchResumoVoluntariosEngajamento();
     } else {
       const w = document.getElementById('escalaDestaqueWidget');
       if (w) w.innerHTML = '';
@@ -4646,6 +4649,52 @@ function renderResumoGlobal(data) {
   renderResumoCheckins7d(c.serie7d || []);
 }
 
+/** KPIs de engajamento de voluntários (Resumo). */
+async function fetchResumoVoluntariosEngajamento() {
+  if (!authToken) return;
+  const isAdmin = authRole === 'admin';
+  const isLider = authRole === 'lider' || (authMinisterioNomes && authMinisterioNomes.length);
+  if (!isAdmin && !isLider) return;
+  const ministerio = document.getElementById('resumoVolEngMinisterio')?.value?.trim() || '';
+  try {
+    const params = new URLSearchParams();
+    if (ministerio) params.set('ministerio', ministerio);
+    const qs = params.toString();
+    const r = await authFetch(`${API_BASE}/api/dashboard/resumo/voluntarios-engajamento${qs ? `?${qs}` : ''}`);
+    if (!r.ok) return;
+    const data = await r.json();
+    renderResumoVoluntariosEngajamento(data);
+  } catch (_) {}
+}
+
+function renderResumoVoluntariosEngajamento(data) {
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setTxt('resumoVolTotal', data?.total ?? '—');
+  setTxt('resumoVolNunca', data?.nuncaServiram ?? '—');
+  setTxt('resumoVol30', data?.serviram30 ?? '—');
+  setTxt('resumoVol60', data?.serviram60 ?? '—');
+  setTxt('resumoVol90', data?.serviram90 ?? '—');
+
+  const filterSelect = document.getElementById('resumoVolEngMinisterio');
+  const isAdminRole = authRole === 'admin';
+  const mins = Array.isArray(data?.ministeriosDisponiveis) ? data.ministeriosDisponiveis : [];
+  const leaderMins = isAdminRole
+    ? mins
+    : ((authMinisterioNomes && authMinisterioNomes.length)
+      ? authMinisterioNomes
+      : (authMinisterioNome ? [authMinisterioNome] : mins));
+  const section = document.getElementById('resumoVolEngSection');
+  const showFilter = isAdminRole ? leaderMins.length > 0 : leaderMins.length > 1;
+  if (section) section.style.display = showFilter || isAdminRole ? '' : 'none';
+  if (filterSelect && leaderMins.length) {
+    const currentVal = filterSelect.value || '';
+    const todosLabel = isAdminRole ? 'Todos os ministérios' : 'Todos os meus ministérios';
+    filterSelect.innerHTML = `<option value="">${escapeHtml(todosLabel)}</option>`
+      + leaderMins.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+    if (currentVal && leaderMins.includes(currentVal)) filterSelect.value = currentVal;
+  }
+}
+
 let _resumoCkChart = null;
 async function renderResumoCheckins7d(serie) {
   try { await ensureChartJs(); } catch (_) { return; }
@@ -5222,7 +5271,13 @@ async function refreshEscalaEmailAberturaPreview() {
   const dest = document.querySelector('input[name="escalaEmailDestinatarios"]:checked')?.value || 'todos';
   const countTodos = document.getElementById('escalaEmailCountTodos');
   const countAtivos = document.getElementById('escalaEmailCountAtivos');
-  if (!ids.length) return;
+  if (!ids.length) {
+    if (countTodos) countTodos.textContent = '0';
+    if (countAtivos) countAtivos.textContent = '0';
+    return;
+  }
+  if (countTodos) countTodos.textContent = '…';
+  if (countAtivos) countAtivos.textContent = '…';
   try {
     const r = await authFetch(`${API_BASE}/api/escalas/email-abertura/preview`, {
       method: 'POST',
@@ -5247,7 +5302,97 @@ async function refreshEscalaEmailAberturaPreview() {
         return `<li>${escapeHtml(e.nome || 'Escala')} (${escapeHtml(dt)})${escapeHtml(st)}</li>`;
       }).join('');
     }
-  } catch (_) { /* ignore preview errors */ }
+  } catch (_) {
+    if (countTodos) countTodos.textContent = '—';
+    if (countAtivos) countAtivos.textContent = '—';
+  }
+}
+
+async function refreshVolReengajamentoPreview() {
+  const countEl = document.getElementById('volReengajamentoCount');
+  const amostraEl = document.getElementById('volReengajamentoAmostra');
+  const ministerio = document.getElementById('volReengajamentoMinisterio')?.value?.trim() || '';
+  if (countEl) countEl.textContent = '…';
+  if (amostraEl) amostraEl.innerHTML = '';
+  try {
+    const r = await authFetch(`${API_BASE}/api/voluntarios/email-reengajamento/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ministerio: ministerio || undefined }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      console.warn('preview reengajamento:', err.error || r.status);
+      if (countEl) countEl.textContent = '—';
+      return;
+    }
+    const data = await r.json();
+    if (countEl) countEl.textContent = String(data.total ?? 0);
+    const minSel = document.getElementById('volReengajamentoMinisterio');
+    if (minSel && Array.isArray(data.ministeriosDisponiveis) && data.ministeriosDisponiveis.length) {
+      const currentVal = minSel.value || '';
+      minSel.innerHTML = '<option value="">Todos os ministérios</option>'
+        + data.ministeriosDisponiveis.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
+      if (currentVal && data.ministeriosDisponiveis.includes(currentVal)) minSel.value = currentVal;
+    }
+    if (amostraEl && Array.isArray(data.amostra) && data.amostra.length) {
+      amostraEl.innerHTML = data.amostra.map((v) =>
+        `<li>${escapeHtml(v.nome || v.email || '—')} (${escapeHtml(v.email || '')})</li>`,
+      ).join('');
+      if ((data.total || 0) > data.amostra.length) {
+        amostraEl.innerHTML += `<li style="color:var(--text-muted)">… e mais ${(data.total || 0) - data.amostra.length}</li>`;
+      }
+    } else if (amostraEl) {
+      amostraEl.innerHTML = '<li style="color:var(--text-muted)">Nenhum destinatário elegível.</li>';
+    }
+  } catch (_) {
+    if (countEl) countEl.textContent = '—';
+  }
+}
+
+async function openModalVolReengajamentoEmail() {
+  if (authRole !== 'admin') return;
+  const modal = document.getElementById('modalVolReengajamentoEmail');
+  if (!modal) return;
+  const msg = document.getElementById('volReengajamentoMensagem');
+  if (msg) msg.value = '';
+  const resumoMinSel = document.getElementById('resumoVolEngMinisterio');
+  const minSel = document.getElementById('volReengajamentoMinisterio');
+  if (minSel && resumoMinSel?.value) minSel.value = resumoMinSel.value;
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+  await refreshVolReengajamentoPreview();
+}
+
+async function confirmarVolReengajamentoEmail() {
+  const ministerio = document.getElementById('volReengajamentoMinisterio')?.value?.trim() || '';
+  const mensagem = document.getElementById('volReengajamentoMensagem')?.value?.trim() || '';
+  const total = Number(document.getElementById('volReengajamentoCount')?.textContent || 0);
+  if (!total || Number.isNaN(total)) {
+    alert('Nenhum voluntário elegível (serviu nos últimos 180 dias, sem atividade nos últimos 30).');
+    return;
+  }
+  if (!confirm(`Enviar email de re-engajamento para ${total} voluntário(s)?`)) return;
+  const btn = document.getElementById('btnConfirmarVolReengajamentoEmail');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await authFetch(`${API_BASE}/api/voluntarios/email-reengajamento`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ministerio: ministerio || undefined, mensagem }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      alert(data.error || 'Erro ao enviar emails.');
+      return;
+    }
+    alert(`Envio iniciado para ${data.total || total} destinatário(s). Os emails serão processados em segundo plano.`);
+    document.getElementById('modalVolReengajamentoEmail')?.classList.remove('open');
+  } catch (e) {
+    alert(e.message || 'Erro ao enviar emails.');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function openModalEscalaEmailAbertura() {
@@ -6613,6 +6758,18 @@ document.querySelectorAll('input[name="escalaEmailDestinatarios"]').forEach((el)
   el.addEventListener('change', () => { void refreshEscalaEmailAberturaPreview(); });
 });
 document.getElementById('btnConfirmarEscalaEmailAbertura')?.addEventListener('click', () => { void confirmarEscalaEmailAbertura(); });
+document.getElementById('btnEmailReengajamento')?.addEventListener('click', () => { void openModalVolReengajamentoEmail(); });
+document.getElementById('resumoVolEngMinisterio')?.addEventListener('change', () => { void fetchResumoVoluntariosEngajamento(); });
+document.getElementById('volReengajamentoMinisterio')?.addEventListener('change', () => { void refreshVolReengajamentoPreview(); });
+['modalVolReengajamentoEmailClose', 'modalVolReengajamentoEmailCancel'].forEach((id) => {
+  document.getElementById(id)?.addEventListener('click', () => {
+    document.getElementById('modalVolReengajamentoEmail')?.classList.remove('open');
+  });
+});
+document.getElementById('modalVolReengajamentoEmail')?.querySelector('.modal-backdrop')?.addEventListener('click', () => {
+  document.getElementById('modalVolReengajamentoEmail')?.classList.remove('open');
+});
+document.getElementById('btnConfirmarVolReengajamentoEmail')?.addEventListener('click', () => { void confirmarVolReengajamentoEmail(); });
 ['modalEditarEscalaClose', 'modalEditarEscalaCancel'].forEach(id => {
   document.getElementById(id)?.addEventListener('click', () => { document.getElementById('modalEditarEscala')?.classList.remove('open'); });
 });

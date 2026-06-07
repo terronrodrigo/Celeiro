@@ -283,6 +283,9 @@
                   <button type="button" class="btn btn-primary btn-sm" id="btnOpenSend">
                     ✉️ Enviar email (<span id="countSelected">0</span>)
                   </button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btnEmailReengajamento" style="display:none" title="Email para voluntários ativos sem participação recente">
+                    📬 Re-engajamento
+                  </button>
                 </div>
               </div>
               <div class="table-wrapper">
@@ -371,6 +374,43 @@
                 Batismo: <span id="resumoFormBatismo">0</span> ·
                 Apresentação: <span id="resumoFormApresentacao">0</span>
               </div>
+            </div>
+          </section>
+
+          <!-- Engajamento de voluntários -->
+          <section class="filters-row" id="resumoVolEngSection" style="margin-bottom:12px">
+            <div class="filters-card" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;width:100%">
+              <label for="resumoVolEngMinisterio" style="font-size:.9rem;color:var(--text-muted)">Ministério</label>
+              <select id="resumoVolEngMinisterio" class="filter-select" style="min-width:200px">
+                <option value="">Todos os ministérios</option>
+              </select>
+            </div>
+          </section>
+          <section class="kpi-grid" id="kpiGridResumoVolEngajamento" style="margin-bottom:16px">
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Voluntários cadastrados</span></div>
+              <div class="kpi-value" id="resumoVolTotal">—</div>
+              <div class="kpi-footer">no filtro selecionado</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Nunca serviram</span></div>
+              <div class="kpi-value" id="resumoVolNunca">—</div>
+              <div class="kpi-footer">sem check-in nem escala (candidatura)</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Serviram · 30 dias</span></div>
+              <div class="kpi-value" id="resumoVol30">—</div>
+              <div class="kpi-footer">check-in ou candidatura</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Serviram · 60 dias</span></div>
+              <div class="kpi-value" id="resumoVol60">—</div>
+              <div class="kpi-footer">check-in ou candidatura</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Serviram · 90 dias</span></div>
+              <div class="kpi-value" id="resumoVol90">—</div>
+              <div class="kpi-footer">check-in ou candidatura</div>
             </div>
           </section>
 
@@ -1827,6 +1867,38 @@
     </div>
   </div>
 
+  <!-- Modal: Email de re-engajamento de voluntários -->
+  <div id="modalVolReengajamentoEmail" class="modal" aria-hidden="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box" style="max-width:560px">
+      <div class="modal-header">
+        <h2>Email · re-engajamento</h2>
+        <button type="button" class="modal-close" id="modalVolReengajamentoEmailClose">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="form-hint" id="volReengajamentoResumo">Voluntários que serviram nos últimos 180 dias, sem check-in ou escala nos últimos 30.</p>
+        <p class="form-hint" style="margin:0 0 12px">
+          Destinatários: <strong id="volReengajamentoCount">…</strong>
+        </p>
+        <ul id="volReengajamentoAmostra" class="form-hint" style="margin:0 0 16px;padding-left:1.2em;max-height:120px;overflow:auto"></ul>
+        <div class="form-group">
+          <label for="volReengajamentoMinisterio">Filtrar por ministério (opcional)</label>
+          <select id="volReengajamentoMinisterio" class="filter-select" style="width:100%">
+            <option value="">Todos os ministérios</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="volReengajamentoMensagem">Mensagem (opcional)</label>
+          <textarea id="volReengajamentoMensagem" rows="5" placeholder="Texto adicional no corpo do email (opcional)." style="width:100%;font-family:inherit;padding:8px;border:1px solid var(--border-color);border-radius:8px;resize:vertical;"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="modalVolReengajamentoEmailCancel">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btnConfirmarVolReengajamentoEmail">Enviar emails</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: Editar Escala -->
   <div id="modalEditarEscala" class="modal" aria-hidden="true">
     <div class="modal-backdrop"></div>
@@ -1983,6 +2055,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.33"></script>
+  <script defer src="app.js?v=1.6.34"></script>
 </body>
 </html>

@@ -86,6 +86,10 @@ import {
   resolveEscalaLembreteTipoForCulto,
 } from './lib/escala-lembrete-email.js';
 import {
+  previewVoluntarioReengajamentoEmail,
+  sendVoluntarioReengajamentoEmails,
+} from './lib/voluntario-reengajamento-email.js';
+import {
   pgListEventosFormulario, pgFindEventoFormularioById, pgCreateEventoFormulario,
   pgUpdateEventoFormulario, pgDeleteEventoFormulario,
   pgCreateFormularioMembro, pgListFormulariosMembro,
@@ -135,6 +139,9 @@ import {
   pgAttachParticipacaoStats, computePerfilCheckinGap, pgApplyCheckinComplemento,
 } from './db/postgres/operational-data.js';
 import { pgHistoricoMinisterio } from './db/postgres/historico-ministerio.js';
+import {
+  pgVoluntariosEngajamentoResumo,
+} from './db/postgres/voluntarios-engajamento.js';
 import { pgHistoricoVoluntario } from './db/postgres/historico-voluntario.js';
 import {
   pgFindConviteByToken, pgUpsertConviteLider, pgListConvitesLider,
@@ -1717,6 +1724,67 @@ app.get('/api/voluntarios/emails', requireAuth, resolveTenant, requireAdminOrLid
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao listar emails');
+  }
+});
+
+// POST /api/voluntarios/email-reengajamento/preview — contagem de destinatários (admin)
+app.post('/api/voluntarios/email-reengajamento/preview', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const body = req.body || {};
+    const ministerioFiltro = body.ministerio ? String(body.ministerio).trim() : '';
+    const preview = await previewVoluntarioReengajamentoEmail(req.tenantIgrejaId, {
+      ministerioFiltro: ministerioFiltro || undefined,
+    });
+    const list = await pgListMinisterios(req.tenantIgrejaId);
+    const ministeriosDisponiveis = list
+      .map((m) => String(m.nome || '').trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    res.json({ ...preview, ministeriosDisponiveis });
+  } catch (err) {
+    console.error('voluntarios/email-reengajamento/preview:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao calcular destinatários.');
+  }
+});
+
+// POST /api/voluntarios/email-reengajamento — email de re-engajamento (admin)
+app.post('/api/voluntarios/email-reengajamento', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const body = req.body || {};
+    const ministerioFiltro = body.ministerio ? String(body.ministerio).trim() : '';
+    const mensagem = String(body.mensagem || '').trim().slice(0, 4000);
+    if (!(process.env.RESEND_API_KEY || '').trim()) {
+      return sendError(res, 503, 'RESEND_API_KEY não configurada.');
+    }
+    const preview = await previewVoluntarioReengajamentoEmail(req.tenantIgrejaId, {
+      ministerioFiltro: ministerioFiltro || undefined,
+    });
+    if (!preview.total) {
+      return sendError(res, 400, 'Nenhum voluntário elegível (serviu nos últimos 180 dias, sem atividade nos últimos 30).');
+    }
+    const igrejaId = req.tenantIgrejaId;
+    res.json({
+      ok: true,
+      queued: true,
+      total: preview.total,
+      message: 'Envio iniciado em segundo plano.',
+    });
+    sendVoluntarioReengajamentoEmails({
+      igrejaId,
+      mensagem,
+      ministerioFiltro: ministerioFiltro || undefined,
+    })
+      .then((r) => {
+        console.log(`✉️ email reengajamento voluntários: ${r.sent || 0}/${r.total || 0} enviado(s).`);
+      })
+      .catch((err) => {
+        console.error('voluntarios/email-reengajamento background:', err?.message || err);
+      });
+  } catch (err) {
+    console.error('voluntarios/email-reengajamento:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao enviar emails de re-engajamento.');
   }
 });
 
@@ -6559,6 +6627,45 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
       },
     });
   } catch (err) { console.error(err); sendError(res, 500, err.message || 'Erro ao montar resumo.'); }
+});
+
+// GET /api/dashboard/resumo/voluntarios-engajamento — KPIs de engajamento (admin/líder)
+app.get('/api/dashboard/resumo/voluntarios-engajamento', requireAuth, resolveTenant, requireAdminOrLider, async (req, res) => {
+  try {
+    if (!isPostgres()) {
+      return res.json({
+        total: 0,
+        nuncaServiram: 0,
+        serviram30: 0,
+        serviram60: 0,
+        serviram90: 0,
+        ministeriosDisponiveis: [],
+      });
+    }
+    const isAdmin = req.userRole === 'admin';
+    const ministerioFiltro = req.query.ministerio ? String(req.query.ministerio).trim() : '';
+
+    let ministeriosDisponiveis = [];
+    if (isAdmin) {
+      const list = await pgListMinisterios(req.tenantIgrejaId);
+      ministeriosDisponiveis = list
+        .map((m) => String(m.nome || '').trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    } else {
+      ministeriosDisponiveis = req.userMinisterioNomes && req.userMinisterioNomes.length
+        ? req.userMinisterioNomes.map(String).map((s) => s.trim()).filter(Boolean)
+        : (req.userMinisterioNome ? [String(req.userMinisterioNome).trim()] : []);
+    }
+
+    const resumo = await pgVoluntariosEngajamentoResumo(req.tenantIgrejaId, {
+      ministerioFiltro: ministerioFiltro || undefined,
+    });
+    res.json({ ...resumo, ministeriosDisponiveis });
+  } catch (err) {
+    console.error('resumo/voluntarios-engajamento:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao calcular engajamento de voluntários.');
+  }
 });
 
 // GET /api/dashboard/escala-em-destaque — cultos de hoje/amanhã + check-in aberto (widget Resumo)
