@@ -756,19 +756,19 @@ export async function pgCheckinsBreakdownByDay(igrejaId, dataYmd = null) {
            )
          )
      ),
-     aprovados AS (
+     inscritos_escala AS (
        SELECT cand.id AS cand_id,
               LOWER(TRIM(cand.dados->>'email')) AS em,
               e.dados->>'eventoCheckinId' AS evt_id
        FROM candidaturas cand
        JOIN escalas e ON e.id = cand.escala_id AND e.igreja_id = cand.igreja_id
        WHERE cand.igreja_id = $1
-         AND COALESCE(cand.dados->>'status', '') = 'aprovado'
+         AND COALESCE(cand.dados->>'status', '') NOT IN ('desistencia', 'falta')
      ),
      classified AS (
        SELECT cd.*,
          EXISTS (
-           SELECT 1 FROM aprovados a
+           SELECT 1 FROM inscritos_escala a
            WHERE cd.candidatura_id = a.cand_id
               OR (
                 cd.em = a.em

@@ -1095,6 +1095,35 @@ export async function pgCreateCheckin({
 }
 
 /**
+ * Totais de acompanhamento de escala.
+ * Presente = inscrito na escala (não desistiu/falta) com check-in no culto, mesmo sem aprovação.
+ */
+export function computeAcompanhamentoTotals(itens, eventoEncerrado) {
+  let aprovados = 0;
+  let inscritos = 0;
+  let presentes = 0;
+  let faltaram = 0;
+  let pendentes = 0;
+  for (const it of itens || []) {
+    const st = it.status || 'pendente';
+    const cancelado = st === 'desistencia' || st === 'falta';
+    const aprovado = st === 'aprovado';
+    if (!cancelado) inscritos += 1;
+    if (aprovado) aprovados += 1;
+    if (it.compareceu && !cancelado) {
+      presentes += 1;
+    } else if (aprovado && eventoEncerrado) {
+      faltaram += 1;
+    } else if (aprovado) {
+      pendentes += 1;
+    }
+  }
+  const taxaBase = inscritos > 0 ? inscritos : aprovados;
+  const taxa = taxaBase > 0 ? Math.round((presentes / taxaBase) * 100) : 0;
+  return { aprovados, inscritos, presentes, faltaram, pendentes, taxa };
+}
+
+/**
  * Retorna lista de candidaturas aprovadas de uma escala com status de presença:
  *  { _id, nome, email, ministerio, status, compareceu (bool), checkinId, checkinTimestamp }
  * "compareceu" é true se houver check-in com candidatura_id correspondente,

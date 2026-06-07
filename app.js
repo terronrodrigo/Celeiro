@@ -3169,6 +3169,14 @@ async function fetchPerfil() {
       updateAuthUi();
     }
   } catch (e) { if (e.message === 'AUTH_REQUIRED') return; }
+  try {
+    const rHist = await authFetch(`${API_BASE}/api/historico/meu`);
+    if (rHist.ok && currentView === 'perfil') {
+      const hist = await rHist.json().catch(() => ({}));
+      historicoMeuResumo = hist.resumo || {};
+      renderPerfilParticipacaoKpis(historicoMeuResumo);
+    }
+  } catch (_) {}
   finally { setViewLoading('perfil', false); }
 }
 
@@ -3274,18 +3282,38 @@ async function confirmarCheckinDesdePerfil() {
   }
 }
 
+function renderParticipacaoKpis(resumo, ids) {
+  const r = resumo || {};
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setTxt(ids.inscricoes, r.vezesEscalaInscricao ?? 0);
+  setTxt(ids.aprovadas, r.vezesEscalaAprovado ?? 0);
+  setTxt(ids.checkins, r.vezesCheckin ?? 0);
+  setTxt(ids.presente, r.vezesPresente ?? 0);
+  setTxt(ids.taxa, r.taxaPresenca != null ? `${r.taxaPresenca}%` : '—');
+  const taxaCard = document.getElementById(ids.taxaCard);
+  if (taxaCard) taxaCard.style.display = (r.vezesEscalaInscricao > 0) ? '' : 'none';
+}
+
 function renderHistoricoMeuKpis(resumo) {
-  const r = resumo || historicoMeuResumo || {};
-  const cultosEl = document.getElementById('meuHistoricoCultosEscala');
-  const vezesEl = document.getElementById('meuHistoricoVezesEscala');
-  const checkinsEl = document.getElementById('meuHistoricoCheckins');
-  const taxaEl = document.getElementById('meuHistoricoTaxaPresenca');
-  const taxaCard = document.getElementById('meuHistoricoTaxaPresencaCard');
-  if (cultosEl) cultosEl.textContent = r.cultosEmEscala ?? 0;
-  if (vezesEl) vezesEl.textContent = r.vezesEscalaAprovado ?? 0;
-  if (checkinsEl) checkinsEl.textContent = r.vezesCheckin ?? 0;
-  if (taxaEl) taxaEl.textContent = r.taxaPresenca != null ? `${r.taxaPresenca}%` : '—';
-  if (taxaCard) taxaCard.style.display = (r.vezesEscalaAprovado > 0) ? '' : 'none';
+  renderParticipacaoKpis(resumo, {
+    inscricoes: 'meuHistoricoVezesEscala',
+    aprovadas: 'meuHistoricoVezesAprovado',
+    checkins: 'meuHistoricoCheckins',
+    presente: 'meuHistoricoPresente',
+    taxa: 'meuHistoricoTaxaPresenca',
+    taxaCard: 'meuHistoricoTaxaPresencaCard',
+  });
+}
+
+function renderPerfilParticipacaoKpis(resumo) {
+  renderParticipacaoKpis(resumo, {
+    inscricoes: 'perfilKpiVezesEscala',
+    aprovadas: 'perfilKpiVezesAprovado',
+    checkins: 'perfilKpiCheckins',
+    presente: 'perfilKpiPresente',
+    taxa: 'perfilKpiTaxa',
+    taxaCard: 'perfilKpiTaxaCard',
+  });
 }
 
 async function fetchHistoricoMeu() {
@@ -3715,7 +3743,7 @@ function renderTable(list) {
       <td class="cell-with-avatar"><span class="cell-avatar">${avatarHtml(v.fotoUrl, v.nome)}</span><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(v.nome || '—')}</button>${origemBadge}</td>
       <td><button type="button" class="link-voluntario" data-email="${escapeAttr(email)}" title="Ver perfil">${escapeHtml(v.email || '')}</button></td>
       <td>${escapeHtml([v.cidade, v.estado].filter(Boolean).join(' / ') || '—')}</td>
-      <td class="num-cell" title="Inscrições na escala (todas): ${Number(v.vezesEscalaInscricao) || 0}">${Number(v.vezesEscalaAprovado) || 0}</td>
+      <td class="num-cell" title="${Number(v.vezesEscalaAprovado) || 0} aprovada(s)">${Number(v.vezesEscalaInscricao) || 0}</td>
       <td class="num-cell">${Number(v.vezesCheckin) || 0}</td>
       <td>${escapeHtml(truncate(voluntarioMinisteriosDisplay(v) || '—', 48))}</td>
       <td>${escapeHtml(truncate(v.disponibilidade || '—', 30))}</td>
@@ -3835,6 +3863,7 @@ async function openPerfilVoluntario(email, options) {
   const nomeDisplay = v?.nome || email || '?';
   const fotoBlock = `<div class="perfil-modal-foto">${avatarHtml(fotoUrl, nomeDisplay, 'avatar-lg')}</div>`;
   const checkinsCountHint = v?.vezesCheckin != null ? Number(v.vezesCheckin) || 0 : null;
+  const participacaoSection = v ? `<div class="perfil-section"><span class="perfil-label">Participação</span><p style="margin:0;line-height:1.55">${Number(v.vezesEscalaInscricao) || 0} inscrições na escala · ${Number(v.vezesEscalaAprovado) || 0} aprovadas · ${Number(v.vezesCheckin) || 0} check-ins</p></div>` : '';
   const checkinsSection = `<div class="perfil-section" id="perfilVolCheckinsSection"><span class="perfil-label">Check-ins${checkinsCountHint != null ? ` (${checkinsCountHint})` : ''}</span><div id="perfilVolCheckinsWrap"><p class="perfil-checkins-empty">Carregando…</p></div></div>`;
   const isLider = authRole === 'lider';
   
@@ -3847,6 +3876,7 @@ async function openPerfilVoluntario(email, options) {
         ${fieldRow('Email', v.email)}
         ${fieldRow('Ministérios (cadastro / check-in)', voluntarioMinisteriosDisplay(v) || null)}
         ${fieldRow('WhatsApp', whatsappValue)}
+        ${participacaoSection}
         ${checkinsSection}
       `.trim() || '<p>Nenhum dado cadastrado.</p>');
     } else {
@@ -3870,6 +3900,7 @@ async function openPerfilVoluntario(email, options) {
         ${fieldRow('Horas por semana', v.horasSemana)}
         ${areasStr.trim() ? fieldRow('Áreas de interesse (legado)', areasStr) : ''}
         ${fieldRow('Testemunho', v.testemunho || null)}
+        ${participacaoSection}
         ${checkinsSection}
       `.trim() || '<p>Nenhum dado cadastrado.</p>');
     }
@@ -4786,11 +4817,12 @@ async function fetchEscalaEmDestaque() {
     };
 
     const cards = itens.map((item) => {
-      const totals = item.totals || { aprovados: 0, presentes: 0, faltaram: 0, pendentes: 0, taxa: 0, checkinsTotal: 0, checkinsComEscala: 0, checkinsSemEscala: 0 };
-      const ckTotal = totals.checkinsTotal ?? totals.presentes ?? 0;
+      const totals = item.totals || { aprovados: 0, inscritos: 0, presentes: 0, faltaram: 0, pendentes: 0, taxa: 0, checkinsTotal: 0, checkinsComEscala: 0, checkinsSemEscala: 0 };
+      const ckTotal = totals.checkinsTotal ?? 0;
       const ckSemEscala = totals.checkinsSemEscala ?? 0;
       const ckNaEscala = totals.checkinsComEscala ?? totals.presentes ?? 0;
-      const taxa = totals.taxa ?? (totals.aprovados > 0 ? Math.round((totals.presentes / totals.aprovados) * 100) : 0);
+      const taxaBase = totals.inscritos > 0 ? totals.inscritos : totals.aprovados;
+      const taxa = totals.taxa ?? (taxaBase > 0 ? Math.round((totals.presentes / taxaBase) * 100) : 0);
       const [bg, fg, sitLabel] = sitMap[item.situacao] || sitMap.futura;
       const ymd = item.ymd || escalaDataToYMD(item.escala?.data);
       const when = diaLabel(ymd, data.hoje, data.amanha);
@@ -4810,7 +4842,8 @@ async function fetchEscalaEmDestaque() {
             ${tile('Check-ins', ckTotal, '#0f766e')}
             ${tile('Na escala', ckNaEscala, '#166534')}
             ${tile('Sem escala', ckSemEscala, '#b45309')}
-            ${tile('Aprovados', totals.aprovados, '#1a1a2e')}
+            ${tile('Inscritos', totals.inscritos ?? totals.aprovados, '#1a1a2e')}
+            ${tile('Presentes', totals.presentes, '#15803d')}
             ${tile('Aguardando', totals.pendentes, '#3730a3')}
             ${tile('Faltaram', totals.faltaram, '#991b1b')}
           </div>

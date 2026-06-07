@@ -296,7 +296,7 @@
                       <th>Nome</th>
                       <th>Email</th>
                       <th>Cidade / Estado</th>
-                      <th title="Aprovações na escala (candidatura com status aprovado)" class="num-cell">Escala</th>
+                      <th title="Inscrições na escala (total · aprovadas no tooltip da célula)" class="num-cell">Escala</th>
                       <th title="Total de check-ins registrados" class="num-cell">Check-ins</th>
                       <th title="Informado no perfil, check-in ou cadastro (pode haver mais de um)">Ministérios</th>
                       <th>Disponibilidade</th>
@@ -1013,6 +1013,28 @@
         <!-- Voluntário / Líder / Admin: tela de perfil -->
         <section class="view" data-view="perfil">
           <div class="perfil-page">
+            <section class="kpi-grid" id="perfilParticipacaoSection" style="margin-bottom:16px">
+              <div class="kpi-card">
+                <div class="kpi-header"><span class="kpi-label">Inscrições na escala</span></div>
+                <div class="kpi-value" id="perfilKpiVezesEscala">0</div>
+                <div class="kpi-footer"><span id="perfilKpiVezesAprovado">0</span> aprovadas</div>
+              </div>
+              <div class="kpi-card">
+                <div class="kpi-header"><span class="kpi-label">Check-ins realizados</span></div>
+                <div class="kpi-value" id="perfilKpiCheckins">0</div>
+                <div class="kpi-footer">presenças confirmadas</div>
+              </div>
+              <div class="kpi-card">
+                <div class="kpi-header"><span class="kpi-label">Presenças na escala</span></div>
+                <div class="kpi-value" id="perfilKpiPresente">0</div>
+                <div class="kpi-footer">check-in no culto da inscrição</div>
+              </div>
+              <div class="kpi-card" id="perfilKpiTaxaCard">
+                <div class="kpi-header"><span class="kpi-label">Taxa de presença</span></div>
+                <div class="kpi-value" id="perfilKpiTaxa">—</div>
+                <div class="kpi-footer">presenças ÷ inscrições</div>
+              </div>
+            </section>
             <div class="filters-card perfil-card">
               <div class="perfil-form-header">
                 <h2 class="perfil-title">Atualizar dados de perfil</h2>
@@ -1083,24 +1105,24 @@
           <p id="checkinRecebidoMsg" class="checkin-recebido-msg" style="display: none;" role="status"></p>
           <section class="kpi-grid">
             <div class="kpi-card">
-              <div class="kpi-header"><span class="kpi-label">Cultos em escala</span></div>
-              <div class="kpi-value" id="meuHistoricoCultosEscala">0</div>
-              <div class="kpi-footer">cultos com escala aprovada</div>
-            </div>
-            <div class="kpi-card">
-              <div class="kpi-header"><span class="kpi-label">Vezes na escala</span></div>
+              <div class="kpi-header"><span class="kpi-label">Inscrições na escala</span></div>
               <div class="kpi-value" id="meuHistoricoVezesEscala">0</div>
-              <div class="kpi-footer">candidaturas aprovadas</div>
+              <div class="kpi-footer"><span id="meuHistoricoVezesAprovado">0</span> aprovadas</div>
             </div>
             <div class="kpi-card">
               <div class="kpi-header"><span class="kpi-label">Check-ins realizados</span></div>
               <div class="kpi-value" id="meuHistoricoCheckins">0</div>
               <div class="kpi-footer">presenças confirmadas</div>
             </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Presenças na escala</span></div>
+              <div class="kpi-value" id="meuHistoricoPresente">0</div>
+              <div class="kpi-footer">check-in no culto da inscrição</div>
+            </div>
             <div class="kpi-card" id="meuHistoricoTaxaPresencaCard">
               <div class="kpi-header"><span class="kpi-label">Taxa de presença</span></div>
               <div class="kpi-value" id="meuHistoricoTaxaPresenca">—</div>
-              <div class="kpi-footer">check-ins ÷ escalas aprovadas</div>
+              <div class="kpi-footer">presenças ÷ inscrições</div>
             </div>
           </section>
           <div class="table-card">
@@ -2055,6 +2077,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.36"></script>
+  <script defer src="app.js?v=1.6.37"></script>
 </body>
 </html>

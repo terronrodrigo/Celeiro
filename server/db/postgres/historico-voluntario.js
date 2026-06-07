@@ -9,6 +9,7 @@ const EMPTY_RESUMO = {
   cultosEmEscala: 0,
   vezesEscalaAprovado: 0,
   vezesEscalaInscricao: 0,
+  vezesPresente: 0,
   vezesCheckin: 0,
   cultosComCheckin: 0,
   taxaPresenca: null,
@@ -41,15 +42,25 @@ export async function pgHistoricoVoluntario(igrejaId, emailLower) {
 
   let vezesEscalaInscricao = 0;
   let vezesEscalaAprovado = 0;
+  let vezesPresente = 0;
   const cultoIdsEscala = new Set();
+  const checkinsPorEvento = new Set(
+    ckRows.map((c) => (c.evento_id ? String(c.evento_id) : '')).filter(Boolean),
+  );
 
   for (const c of candRows) {
-    vezesEscalaInscricao += 1;
     const d = c.dados || {};
-    if (d.status === 'aprovado') {
+    const st = d.status || 'pendente';
+    if (st === 'desistencia' || st === 'falta') continue;
+    vezesEscalaInscricao += 1;
+    if (st === 'aprovado') {
       vezesEscalaAprovado += 1;
       const evtId = (c.escala_dados || {}).eventoCheckinId;
       if (evtId) cultoIdsEscala.add(String(evtId));
+    }
+    const evtId = (c.escala_dados || {}).eventoCheckinId;
+    if (evtId && checkinsPorEvento.has(String(evtId))) {
+      vezesPresente += 1;
     }
   }
 
@@ -67,8 +78,8 @@ export async function pgHistoricoVoluntario(igrejaId, emailLower) {
     }
   }
 
-  const taxaPresenca = vezesEscalaAprovado > 0
-    ? Math.round((vezesCheckin / vezesEscalaAprovado) * 100)
+  const taxaPresenca = vezesEscalaInscricao > 0
+    ? Math.round((vezesPresente / vezesEscalaInscricao) * 100)
     : null;
 
   const ultimoCheckin = ultimoCheckinMs != null
@@ -80,6 +91,7 @@ export async function pgHistoricoVoluntario(igrejaId, emailLower) {
       cultosEmEscala: cultoIdsEscala.size,
       vezesEscalaAprovado,
       vezesEscalaInscricao,
+      vezesPresente,
       vezesCheckin,
       cultosComCheckin: cultoIdsCheckin.size,
       taxaPresenca,

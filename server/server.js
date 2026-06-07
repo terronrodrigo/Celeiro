@@ -61,6 +61,7 @@ import {
   pgDeleteEscala, pgBulkDeleteEscalas, pgGetEscalaInscricaoStatus, pgSetEscalaInscricaoStatus,
   pgCountAprovadosByMinisterio, pgAutoLinkEscalasOrfas, pgFindEscalaByEventoCheckin,
   pgListAcompanhamentoEscala, pgBackfillCheckinCandidaturas, pgAutoMarcarFaltas,
+  computeAcompanhamentoTotals,
   pgListEscalasByCandidaturaEmail,
   pgListMinhasCandidaturasParaEscalas, pgFindEventosCheckinByIds, pgListMeusCheckins,
   pgReabrirEscalasDoDia,
@@ -2077,6 +2078,7 @@ app.get('/api/historico/meu', requireAuth, resolveTenant, async (req, res) => {
           cultosEmEscala: 0,
           vezesEscalaAprovado: 0,
           vezesEscalaInscricao: 0,
+          vezesPresente: 0,
           vezesCheckin: 0,
           cultosComCheckin: 0,
           taxaPresenca: null,
@@ -6131,23 +6133,22 @@ app.get('/api/escalas/:id/acompanhamento', requireAuth, resolveTenant, async (re
     const agora = Date.now();
     const eventoEncerrado = fim ? agora > fim : false;
 
-    let aprovados = 0; let presentes = 0; let faltaram = 0; let pendentes = 0;
+    let aprovados = 0; let presentes = 0; let faltaram = 0; let pendentes = 0; let inscritos = 0;
     const enriched = itens.map((it) => {
-      const aprovado = it.status === 'aprovado';
-      let presenca = 'pendente';
+      const st = it.status || 'pendente';
+      const cancelado = st === 'desistencia' || st === 'falta';
+      const aprovado = st === 'aprovado';
+      let presenca = cancelado ? 'cancelado' : 'na-escala';
       if (it.compareceu) {
         presenca = 'presente';
-        if (aprovado) presentes += 1;
       } else if (aprovado && eventoEncerrado) {
         presenca = 'faltou';
-        faltaram += 1;
       } else if (aprovado) {
         presenca = 'aguardando';
-        pendentes += 1;
       }
-      if (aprovado) aprovados += 1;
       return { ...it, presenca };
     });
+    ({ aprovados, inscritos, presentes, faltaram, pendentes } = computeAcompanhamentoTotals(itens, eventoEncerrado));
 
     return res.json({
       escala: {
@@ -6165,7 +6166,7 @@ app.get('/api/escalas/:id/acompanhamento', requireAuth, resolveTenant, async (re
         fimCheckin: evento.fimCheckin,
         encerrado: eventoEncerrado,
       } : null,
-      totals: { aprovados, presentes, faltaram, pendentes },
+      totals: { aprovados, inscritos, presentes, faltaram, pendentes },
       itens: enriched,
     });
   } catch (err) { console.error(err); sendError(res, 500, err.message || 'Erro ao montar acompanhamento.'); }
@@ -6705,21 +6706,12 @@ app.get('/api/dashboard/escala-em-destaque', requireAuth, resolveTenant, async (
 
     async function totalsFor(escala, evt) {
       const itens = await pgListAcompanhamentoEscala(ig, escala._id) || [];
-      let aprovados = 0; let presentes = 0; let faltaram = 0; let pendentes = 0;
       const fim = evt?.fimCheckin ? new Date(evt.fimCheckin).getTime() : null;
       const encerrado = fim ? agora > fim : false;
-      for (const it of itens) {
-        if (it.status === 'aprovado') {
-          aprovados += 1;
-          if (it.compareceu) presentes += 1;
-          else if (encerrado) faltaram += 1;
-          else pendentes += 1;
-        }
-      }
-      const taxa = aprovados > 0 ? Math.round((presentes / aprovados) * 100) : 0;
+      const { aprovados, inscritos, presentes, faltaram, pendentes, taxa } = computeAcompanhamentoTotals(itens, encerrado);
       const evtKey = evt?._id ? String(evt._id) : '';
       const ckEvt = evtKey ? (ckBreakdown.byEvento[evtKey] || { total: 0, comEscala: 0, semEscala: 0 }) : { total: 0, comEscala: 0, semEscala: 0 };
-      return { aprovados, presentes, faltaram, pendentes, taxa, checkinsTotal: ckEvt.total, checkinsComEscala: ckEvt.comEscala, checkinsSemEscala: ckEvt.semEscala };
+      return { aprovados, inscritos, presentes, faltaram, pendentes, taxa, checkinsTotal: ckEvt.total, checkinsComEscala: ckEvt.comEscala, checkinsSemEscala: ckEvt.semEscala };
     }
 
     const mapped = [];
