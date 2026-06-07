@@ -490,10 +490,18 @@ export async function sendEscalaAberturaEmailsCustom({
 export async function previewEscalaAberturaEmail(igrejaId, { escalaIds, destinatarios = 'todos' } = {}) {
   const ids = [...new Set((escalaIds || []).map(String).filter(Boolean))];
   const escalas = ids.length ? await pgFindEscalasByIds(igrejaId, ids) : [];
-  const [todos, ativos] = await Promise.all([
-    pgResolveDestinatariosEscalaEmail(igrejaId, { destinatarios: 'todos' }),
-    pgResolveDestinatariosEscalaEmail(igrejaId, { destinatarios: 'ativos' }),
-  ]);
+  let todos = [];
+  let ativos = [];
+  try {
+    todos = await pgResolveDestinatariosEscalaEmail(igrejaId, { destinatarios: 'todos' });
+  } catch (err) {
+    console.error('previewEscalaAberturaEmail todos:', err?.message || err);
+  }
+  try {
+    ativos = await pgResolveDestinatariosEscalaEmail(igrejaId, { destinatarios: 'ativos' });
+  } catch (err) {
+    console.error('previewEscalaAberturaEmail ativos:', err?.message || err);
+  }
   const dest = destinatarios === 'ativos' ? 'ativos' : 'todos';
   return {
     escalas: escalas.map((e) => ({

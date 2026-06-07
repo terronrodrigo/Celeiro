@@ -174,25 +174,19 @@ export async function pgEmailsComAtividadeRecente(igrejaId, dias = 180) {
   const sinceMs = Date.now() - d * 24 * 60 * 60 * 1000;
   const { rows } = await pool.query(
     `SELECT DISTINCT em FROM (
-       SELECT LOWER(dados->>'email') AS em
+       SELECT LOWER(TRIM(dados->>'email')) AS em
        FROM candidaturas
        WHERE igreja_id = $1
-         AND LOWER(dados->>'email') LIKE '%@%'
-         AND (
-           created_at >= NOW() - ($2::int * INTERVAL '1 day')
-           OR COALESCE(
-             NULLIF(dados->>'aprovadoEm', '')::timestamptz,
-             created_at
-           ) >= NOW() - ($2::int * INTERVAL '1 day')
-         )
+         AND LOWER(COALESCE(dados->>'email', '')) LIKE '%@%'
+         AND created_at >= NOW() - ($2::int * INTERVAL '1 day')
        UNION
-       SELECT LOWER(email) AS em
+       SELECT LOWER(TRIM(email)) AS em
        FROM checkins
        WHERE igreja_id = $1
-         AND LOWER(email) LIKE '%@%'
+         AND LOWER(COALESCE(email, '')) LIKE '%@%'
          AND (
-           timestamp_ms >= $3
-           OR data_checkin >= NOW() - ($2::int * INTERVAL '1 day')
+           (timestamp_ms IS NOT NULL AND timestamp_ms >= $3)
+           OR COALESCE(data_checkin, created_at) >= NOW() - ($2::int * INTERVAL '1 day')
          )
      ) t
      WHERE em IS NOT NULL AND em <> ''`,
@@ -201,12 +195,59 @@ export async function pgEmailsComAtividadeRecente(igrejaId, dias = 180) {
   return new Set(rows.map((r) => r.em));
 }
 
+function emailFromVoluntarioRow(r) {
+  const d = r.dados || {};
+  return String(r.email || d.email || '').toLowerCase().trim();
+}
+
+/** Voluntários elegíveis para broadcast (cadastro ativo + contas role=voluntario). */
+async function pgListVoluntariosParaEmailBroadcast(igrejaId) {
+  const pool = getPostgresPool();
+  const { rows: volRows } = await pool.query(
+    `SELECT id, email, nome, dados, ativo, fonte FROM voluntarios
+     WHERE igreja_id = $1 AND (ativo IS NOT FALSE)
+     ORDER BY LOWER(email)`,
+    [igrejaId],
+  );
+  const byEmail = new Map();
+  for (const r of volRows) {
+    const em = emailFromVoluntarioRow(r);
+    if (!em || !em.includes('@') || byEmail.has(em)) continue;
+    byEmail.set(em, mapVoluntarioFromRow({ ...r, email: em }));
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, email, nome, ministerio_ids FROM users
+     WHERE igreja_id = $1 AND role = 'voluntario' AND (ativo IS NOT FALSE)`,
+    [igrejaId],
+  );
+  for (const u of userRows) {
+    const em = String(u.email || '').toLowerCase().trim();
+    if (!em || !em.includes('@') || byEmail.has(em)) continue;
+    byEmail.set(em, {
+      _id: u.id,
+      email: em,
+      nome: u.nome || '',
+      areas: '',
+      disponibilidade: '',
+      estado: '',
+      cidade: '',
+      ministerio: '',
+      batizado: null,
+      ativo: true,
+      fonte: 'user',
+    });
+  }
+
+  return [...byEmail.values()];
+}
+
 /**
  * Destinatários de email de abertura de escala.
  * @param {'todos'|'ativos'} destinatarios
  */
 export async function pgResolveDestinatariosEscalaEmail(igrejaId, { destinatarios = 'todos', diasAtividade = 180 } = {}) {
-  const voluntarios = await pgListVoluntarios(igrejaId);
+  const voluntarios = await pgListVoluntariosParaEmailBroadcast(igrejaId);
   const byEmail = new Map();
   for (const v of voluntarios) {
     const em = (v.email || '').toLowerCase().trim();
@@ -214,7 +255,13 @@ export async function pgResolveDestinatariosEscalaEmail(igrejaId, { destinatario
     byEmail.set(em, v);
   }
   if (destinatarios === 'ativos') {
-    const ativos = await pgEmailsComAtividadeRecente(igrejaId, diasAtividade);
+    let ativos;
+    try {
+      ativos = await pgEmailsComAtividadeRecente(igrejaId, diasAtividade);
+    } catch (err) {
+      console.error('pgEmailsComAtividadeRecente:', err?.message || err);
+      ativos = new Set();
+    }
     const out = [];
     for (const em of ativos) {
       if (byEmail.has(em)) out.push(byEmail.get(em));

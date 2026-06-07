@@ -5237,7 +5237,13 @@ async function refreshEscalaEmailAberturaPreview() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ escalaIds: ids, destinatarios: dest }),
     });
-    if (!r.ok) return;
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      console.warn('preview email-abertura:', err.error || r.status);
+      if (countTodos) countTodos.textContent = '—';
+      if (countAtivos) countAtivos.textContent = '—';
+      return;
+    }
     const data = await r.json();
     if (countTodos) countTodos.textContent = String(data.totalTodos ?? 0);
     if (countAtivos) countAtivos.textContent = String(data.totalAtivos ?? 0);
