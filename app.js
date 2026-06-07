@@ -4598,13 +4598,23 @@ function renderResumoGlobal(data) {
   setTxt('resumoPessoasComCheckin', p.comCheckin || 0);
 
   const ult = c.ultimoCultoInfo;
-  if (ult) {
+  const hojeTotal = c.hoje ?? 0;
+  const hojeComEscala = c.hojeComEscala ?? 0;
+  const hojeSemEscala = c.hojeSemEscala ?? 0;
+  const ckLabel = document.getElementById('resumoCkLabel');
+  if (hojeTotal > 0) {
+    if (ckLabel) ckLabel.textContent = 'Check-ins · hoje';
+    setTxt('resumoCkUltimoCulto', hojeTotal);
+    setTxt('resumoCkUltimoCultoNome', `${hojeComEscala} na escala · ${hojeSemEscala} sem escala`);
+  } else if (ult) {
+    if (ckLabel) ckLabel.textContent = 'Check-ins · último culto';
     setTxt('resumoCkUltimoCulto', c.ultimoCulto ?? 0);
     const d = ult.data ? formatEscalaDateOnly(ult.data) : '';
     setTxt('resumoCkUltimoCultoNome', `${ult.label || 'Culto'}${d ? ` · ${d}` : ''}`);
   } else {
+    if (ckLabel) ckLabel.textContent = 'Check-ins · hoje';
     setTxt('resumoCkUltimoCulto', '—');
-    setTxt('resumoCkUltimoCultoNome', 'Nenhum culto encerrado ainda');
+    setTxt('resumoCkUltimoCultoNome', 'Nenhum check-in registrado hoje');
   }
   setTxt('resumoCkSemana', c.semana);
   setTxt('resumoCkMes', c.mes);
@@ -4748,7 +4758,10 @@ async function fetchEscalaEmDestaque() {
     };
 
     const cards = itens.map((item) => {
-      const totals = item.totals || { aprovados: 0, presentes: 0, faltaram: 0, pendentes: 0, taxa: 0 };
+      const totals = item.totals || { aprovados: 0, presentes: 0, faltaram: 0, pendentes: 0, taxa: 0, checkinsTotal: 0, checkinsComEscala: 0, checkinsSemEscala: 0 };
+      const ckTotal = totals.checkinsTotal ?? totals.presentes ?? 0;
+      const ckSemEscala = totals.checkinsSemEscala ?? 0;
+      const ckNaEscala = totals.checkinsComEscala ?? totals.presentes ?? 0;
       const taxa = totals.taxa ?? (totals.aprovados > 0 ? Math.round((totals.presentes / totals.aprovados) * 100) : 0);
       const [bg, fg, sitLabel] = sitMap[item.situacao] || sitMap.futura;
       const ymd = item.ymd || escalaDataToYMD(item.escala?.data);
@@ -4766,10 +4779,12 @@ async function fetchEscalaEmDestaque() {
             <div style="color:var(--text-muted);font-size:.82rem">Presença: <strong style="color:#166534">${taxa}%</strong></div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${tile('Check-ins', ckTotal, '#0f766e')}
+            ${tile('Na escala', ckNaEscala, '#166534')}
+            ${tile('Sem escala', ckSemEscala, '#b45309')}
             ${tile('Aprovados', totals.aprovados, '#1a1a2e')}
-            ${tile('Presentes', totals.presentes, '#166534')}
-            ${tile('Faltaram', totals.faltaram, '#991b1b')}
             ${tile('Aguardando', totals.pendentes, '#3730a3')}
+            ${tile('Faltaram', totals.faltaram, '#991b1b')}
           </div>
         </div>`;
     }).join('');
@@ -4777,7 +4792,7 @@ async function fetchEscalaEmDestaque() {
     wrap.innerHTML = `
       <div style="margin-bottom:8px">
         <h2 style="font-size:1.05rem;margin:0 0 4px">Cultos · hoje e amanhã</h2>
-        <p class="auth-subtitle" style="margin:0">Check-ins abertos e próximas escalas</p>
+        <p class="auth-subtitle" style="margin:0">Check-ins abertos e próximas escalas${data.checkinsHoje?.total ? ` · <strong>${data.checkinsHoje.total}</strong> check-in(s) hoje (${data.checkinsHoje.comEscala ?? 0} na escala, ${data.checkinsHoje.semEscala ?? 0} sem escala)` : ''}</p>
       </div>
       ${cards}`;
 

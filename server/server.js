@@ -137,6 +137,7 @@ import {
   pgListCadastroIncompletoCandidates,
   getPostgresPool,
   pgAttachParticipacaoStats, computePerfilCheckinGap, pgApplyCheckinComplemento,
+  pgCheckinsBreakdownByDay,
 } from './db/postgres/operational-data.js';
 import { pgHistoricoMinisterio } from './db/postgres/historico-ministerio.js';
 import {
@@ -6518,6 +6519,8 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
     const ckMes = Number(ckAggRows[0]?.mes || 0);
     const ckUltimoCulto = ultimoCulto?.total ?? 0;
 
+    const ckHojeBreakdown = await pgCheckinsBreakdownByDay(ig);
+
     const { rows: serieRows } = await pool.query(
       `WITH dias AS (
          SELECT generate_series(
@@ -6605,6 +6608,9 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
       },
       checkins: {
         ontem: ckOntem,
+        hoje: ckHojeBreakdown.total,
+        hojeComEscala: ckHojeBreakdown.comEscala,
+        hojeSemEscala: ckHojeBreakdown.semEscala,
         ultimoCulto: ckUltimoCulto,
         ultimoCultoInfo: ultimoCulto,
         semana: ckSemana,
@@ -6679,6 +6685,7 @@ app.get('/api/dashboard/escala-em-destaque', requireAuth, resolveTenant, async (
     const ig = req.tenantIgrejaId;
     const hoje = getHojeDateString();
     const amanha = addDaysYmd(hoje, 1);
+    const ckBreakdown = await pgCheckinsBreakdownByDay(ig, hoje);
 
     const escalas = await pgListEscalas(ig, {
       ativoOnly: false,
@@ -6706,7 +6713,9 @@ app.get('/api/dashboard/escala-em-destaque', requireAuth, resolveTenant, async (
         }
       }
       const taxa = aprovados > 0 ? Math.round((presentes / aprovados) * 100) : 0;
-      return { aprovados, presentes, faltaram, pendentes, taxa };
+      const evtKey = evt?._id ? String(evt._id) : '';
+      const ckEvt = evtKey ? (ckBreakdown.byEvento[evtKey] || { total: 0, comEscala: 0, semEscala: 0 }) : { total: 0, comEscala: 0, semEscala: 0 };
+      return { aprovados, presentes, faltaram, pendentes, taxa, checkinsTotal: ckEvt.total, checkinsComEscala: ckEvt.comEscala, checkinsSemEscala: ckEvt.semEscala };
     }
 
     const mapped = [];
@@ -6757,6 +6766,11 @@ app.get('/api/dashboard/escala-em-destaque', requireAuth, resolveTenant, async (
     return res.json({
       hoje,
       amanha,
+      checkinsHoje: {
+        total: ckBreakdown.total,
+        comEscala: ckBreakdown.comEscala,
+        semEscala: ckBreakdown.semEscala,
+      },
       itens,
       escala: first?.escala || null,
       evento: first?.evento || null,

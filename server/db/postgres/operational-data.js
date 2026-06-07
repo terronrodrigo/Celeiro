@@ -3,7 +3,7 @@
  */
 import { randomUUID } from 'crypto';
 import { getPostgresPool } from './init.js';
-import { escalaDataToYMD, getDayRangeBrasilia } from '../../lib/brasilia.js';
+import { escalaDataToYMD, getDayRangeBrasilia, getHojeDateString } from '../../lib/brasilia.js';
 import { pgFindUserById, pgFindUsersByEmail, normBatizadoPerfil } from './repos.js';
 import { splitVoluntarioMinisterios } from '../../lib/ministerio-match.js';
 
@@ -726,4 +726,85 @@ export async function pgMapUltimosMinisteriosServidos(igrejaId, { perEmail = 3 }
     });
   }
   return out;
+}
+
+/**
+ * Contagem de check-ins em um dia com divisão escala / sem escala.
+ * "Com escala" = check-in vinculado a candidatura aprovada (por id ou email+evento).
+ * @param {string} igrejaId
+ * @param {string} [dataYmd] — default hoje (Brasília)
+ * @returns {{ total, comEscala, semEscala, byEvento: Record<string, { total, comEscala, semEscala }> }}
+ */
+export async function pgCheckinsBreakdownByDay(igrejaId, dataYmd = null) {
+  const ymd = (dataYmd || getHojeDateString()).trim().slice(0, 10);
+  const { start, end } = getDayRangeBrasilia(ymd);
+  if (!start || !end) {
+    return { total: 0, comEscala: 0, semEscala: 0, byEvento: {} };
+  }
+  const pool = getPostgresPool();
+  const { rows } = await pool.query(
+    `WITH checkins_dia AS (
+       SELECT ch.id, ch.email, ch.evento_id, ch.candidatura_id,
+              LOWER(TRIM(ch.email)) AS em
+       FROM checkins ch
+       WHERE ch.igreja_id = $1
+         AND (
+           (ch.data_checkin >= $2 AND ch.data_checkin < $3)
+           OR (
+             ch.timestamp_ms IS NOT NULL
+             AND (to_timestamp(ch.timestamp_ms / 1000.0) AT TIME ZONE 'America/Sao_Paulo')::date = $4::date
+           )
+         )
+     ),
+     aprovados AS (
+       SELECT cand.id AS cand_id,
+              LOWER(TRIM(cand.dados->>'email')) AS em,
+              e.dados->>'eventoCheckinId' AS evt_id
+       FROM candidaturas cand
+       JOIN escalas e ON e.id = cand.escala_id AND e.igreja_id = cand.igreja_id
+       WHERE cand.igreja_id = $1
+         AND COALESCE(cand.dados->>'status', '') = 'aprovado'
+     ),
+     classified AS (
+       SELECT cd.*,
+         EXISTS (
+           SELECT 1 FROM aprovados a
+           WHERE cd.candidatura_id = a.cand_id
+              OR (
+                cd.em = a.em
+                AND cd.evento_id IS NOT NULL
+                AND a.evt_id IS NOT NULL
+                AND cd.evento_id::text = a.evt_id
+              )
+         ) AS com_escala
+       FROM checkins_dia cd
+     )
+     SELECT
+       COALESCE(evento_id::text, '') AS evt_id,
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (WHERE com_escala)::int AS com_escala,
+       COUNT(*) FILTER (WHERE NOT com_escala)::int AS sem_escala
+     FROM classified
+     GROUP BY GROUPING SETS ((evento_id), ())`,
+    [igrejaId, start, end, ymd],
+  );
+  const byEvento = {};
+  let total = 0;
+  let comEscala = 0;
+  let semEscala = 0;
+  for (const r of rows) {
+    const pack = {
+      total: r.total || 0,
+      comEscala: r.com_escala || 0,
+      semEscala: r.sem_escala || 0,
+    };
+    if (r.evt_id === '' || r.evt_id == null) {
+      total = pack.total;
+      comEscala = pack.comEscala;
+      semEscala = pack.semEscala;
+    } else if (r.evt_id) {
+      byEvento[r.evt_id] = pack;
+    }
+  }
+  return { total, comEscala, semEscala, byEvento, dataYmd: ymd };
 }
