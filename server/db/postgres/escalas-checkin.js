@@ -740,6 +740,47 @@ export async function pgFindEventoCheckinPorData(igrejaId, dataYmd) {
   return list[0] || null;
 }
 
+/**
+ * Escolhe o evento de check-in mais adequado para uma escala dentre os ativos na mesma data.
+ * Exportada para testes; a versão async busca eventos e delega aqui.
+ */
+export function pickEventoCheckinForEscala(escala, eventosOnDate) {
+  const list = eventosOnDate || [];
+  if (!escala || !list.length) return null;
+
+  const cultoId = escala.cultoRecorrenteId ? String(escala.cultoRecorrenteId) : null;
+  if (cultoId) {
+    const matches = list.filter(
+      (e) => e.cultoRecorrenteId && String(e.cultoRecorrenteId) === cultoId,
+    );
+    if (matches.length === 1) return matches[0];
+  }
+
+  if (list.length === 1) return list[0];
+  return null;
+}
+
+/**
+ * Resolve o evento de check-in para uma escala:
+ * 1. escala.eventoCheckinId (se definido)
+ * 2. culto_recorrente_id + mesma data
+ * 3. único evento na data (retrocompat)
+ */
+export async function pgResolveEventoCheckinForEscala(igrejaId, escala) {
+  if (!escala) return null;
+
+  if (escala.eventoCheckinId) {
+    const linked = await pgFindEventoCheckinById(escala.eventoCheckinId, igrejaId);
+    if (linked) return linked;
+  }
+
+  const ymd = escalaDataToYMD(escala.data);
+  if (!ymd) return null;
+
+  const eventosOnDate = await pgListEventosCheckin(igrejaId, { ativoOnly: true, dataYmd: ymd });
+  return pickEventoCheckinForEscala(escala, eventosOnDate);
+}
+
 export async function pgFindEventoCheckinById(id, igrejaId = null) {
   const params = [id];
   let sql = `SELECT id, igreja_id, data, label, ativo, horario_inicio, horario_fim,
@@ -914,9 +955,7 @@ export async function pgLinkEscalaToEvento(escalaId, igrejaId, eventoCheckinId =
   if (!escala) return null;
   let evtId = eventoCheckinId;
   if (!evtId) {
-    const ymd = escalaDataToYMD(escala.data);
-    if (!ymd) return escala;
-    const evt = await pgFindEventoCheckinPorData(igrejaId, ymd);
+    const evt = await pgResolveEventoCheckinForEscala(igrejaId, escala);
     evtId = evt?._id || null;
   }
   if (!evtId) return escala;
@@ -941,18 +980,40 @@ export async function pgAutoLinkEscalasOrfas(igrejaId = null) {
   );
   let vinculadas = 0;
   for (const row of rows) {
-    const ymd = escalaDataToYMD(row.dados?.data);
-    if (!ymd) continue;
-    const { rows: evts } = await getPostgresPool().query(
-      "SELECT id FROM eventos_checkin WHERE igreja_id = $1 AND data = $2::date AND ativo = TRUE",
-      [row.igreja_id, ymd],
-    );
-    if (evts.length === 1) {
-      await pgUpdateEscala(row.id, row.igreja_id, { eventoCheckinId: evts[0].id });
+    const escala = mapEscalaRow(row);
+    const evt = await pgResolveEventoCheckinForEscala(row.igreja_id, escala);
+    if (evt?._id) {
+      await pgUpdateEscala(row.id, row.igreja_id, { eventoCheckinId: evt._id });
       vinculadas += 1;
     }
   }
   return vinculadas;
+}
+
+/**
+ * Corrige escalas cujo eventoCheckinId diverge de culto_ocorrencias
+ * (ex.: dois cultos no mesmo dia que apontavam para o mesmo check-in).
+ */
+export async function pgRepairEscalaEventoLinksFromOcorrencias(igrejaId = null) {
+  const params = [];
+  let sql = `
+    SELECT co.igreja_id, co.escala_id, co.evento_checkin_id
+    FROM culto_ocorrencias co
+    WHERE co.escala_id IS NOT NULL AND co.evento_checkin_id IS NOT NULL`;
+  if (igrejaId) {
+    params.push(igrejaId);
+    sql += ` AND co.igreja_id = $${params.length}`;
+  }
+  const { rows } = await getPostgresPool().query(sql, params);
+  let corrigidas = 0;
+  for (const row of rows) {
+    const escala = await pgFindEscalaById(row.escala_id, row.igreja_id);
+    if (!escala) continue;
+    if (String(escala.eventoCheckinId || '') === String(row.evento_checkin_id)) continue;
+    await pgUpdateEscala(row.escala_id, row.igreja_id, { eventoCheckinId: row.evento_checkin_id });
+    corrigidas += 1;
+  }
+  return corrigidas;
 }
 
 /** Busca a escala vinculada a um evento de check-in (se houver). */

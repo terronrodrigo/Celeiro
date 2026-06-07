@@ -240,20 +240,6 @@ async function ensureOcorrenciaForDate(culto, dataYmd) {
   const tituloData = formatDataPtBr(dataYmd);
   const nomeOcorrencia = `${culto.nome} — ${tituloData}`;
 
-  if (culto.gerarEscala) {
-    const escala = await pgCreateEscala({
-      igrejaId: culto.igrejaId,
-      nome: nomeOcorrencia,
-      data: dataYmd,
-      descricao: `Culto recorrente (${culto.horario} · horário de Brasília). Gerado automaticamente.`,
-      ativo: true,
-      criadoPor: culto.criadoPor,
-      cultoRecorrenteId: culto._id,
-      autoGerada: true,
-    });
-    escalaId = escala._id;
-  }
-
   if (culto.gerarCheckin) {
     const evento = await pgCreateEventoCheckin({
       igrejaId: culto.igrejaId,
@@ -267,6 +253,21 @@ async function ensureOcorrenciaForDate(culto, dataYmd) {
       autoGerado: true,
     });
     eventoId = evento._id;
+  }
+
+  if (culto.gerarEscala) {
+    const escala = await pgCreateEscala({
+      igrejaId: culto.igrejaId,
+      nome: nomeOcorrencia,
+      data: dataYmd,
+      descricao: `Culto recorrente (${culto.horario} · horário de Brasília). Gerado automaticamente.`,
+      ativo: true,
+      criadoPor: culto.criadoPor,
+      cultoRecorrenteId: culto._id,
+      autoGerada: true,
+      eventoCheckinId: eventoId,
+    });
+    escalaId = escala._id;
   }
 
   const occId = randomUUID();

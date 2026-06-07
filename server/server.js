@@ -56,10 +56,11 @@ import {
   pgListEscalas, pgFindEscalaById, pgFindEscalasByIds, pgCreateEscala, pgUpdateEscala, pgCountCandidaturasByEscala,
   pgListEventosCheckin, pgListEventosCheckinHoje, pgFindEventoCheckinById,
   pgCreateEventoCheckin, pgUpdateEventoCheckin, pgDeleteEventoCheckin, pgBulkDeleteEventosCheckin, pgCreateCheckin,
-  pgCreateCandidatura, pgFindCandidaturaDuplicada, pgFindEventoCheckinPorData,
+  pgCreateCandidatura, pgFindCandidaturaDuplicada, pgResolveEventoCheckinForEscala,
   pgListCandidaturasByEscalaIds,
   pgDeleteEscala, pgBulkDeleteEscalas, pgGetEscalaInscricaoStatus, pgSetEscalaInscricaoStatus,
-  pgCountAprovadosByMinisterio, pgAutoLinkEscalasOrfas, pgFindEscalaByEventoCheckin,
+  pgCountAprovadosByMinisterio, pgAutoLinkEscalasOrfas, pgRepairEscalaEventoLinksFromOcorrencias,
+  pgFindEscalaByEventoCheckin,
   pgListAcompanhamentoEscala, pgBackfillCheckinCandidaturas, pgAutoMarcarFaltas,
   computeAcompanhamentoTotals,
   pgListEscalasByCandidaturaEmail,
@@ -613,9 +614,10 @@ app.get('/api/whatsapp/mensagem-escala', requireAuth, resolveTenant, async (req,
     if (isPostgres()) {
       escala = await pgFindEscalaById(escalaId, req.tenantIgrejaId);
       if (!escala) return sendError(res, 404, 'Escala não encontrada.');
-      const ymd = escala.data ? escalaDataToYMD(escala.data) : null;
-      if (ymd) {
-        const ev = await pgFindEventoCheckinPorData(req.tenantIgrejaId, ymd);
+      if (escala.eventoCheckinId) {
+        eventoCheckinId = escala.eventoCheckinId;
+      } else {
+        const ev = await pgResolveEventoCheckinForEscala(req.tenantIgrejaId, escala);
         if (ev) eventoCheckinId = ev._id;
       }
     } else if (isMongo()) {
@@ -5350,20 +5352,16 @@ app.post('/api/escalas', requireAuth, resolveTenant, requireAdmin, async (req, r
       });
       if (queroCriarEvento && escala?.data) {
         const ymd = String(data).slice(0, 10);
-        // Tenta reusar um evento já existente na mesma data; se não houver, cria um novo.
-        let evento = await pgFindEventoCheckinPorData(req.tenantIgrejaId, ymd);
-        if (!evento) {
-          evento = await pgCreateEventoCheckin({
-            igrejaId: req.tenantIgrejaId,
-            dataYmd: ymd,
-            label: String(nome).trim(),
-            ativo: true,
-            horarioInicio: horarioInicio || '',
-            horarioFim: horarioFim || '',
-            criadoPor: req.userId,
-            autoGerado: true,
-          });
-        }
+        const evento = await pgCreateEventoCheckin({
+          igrejaId: req.tenantIgrejaId,
+          dataYmd: ymd,
+          label: String(nome).trim(),
+          ativo: true,
+          horarioInicio: horarioInicio || '',
+          horarioFim: horarioFim || '',
+          criadoPor: req.userId,
+          autoGerado: true,
+        });
         if (evento?._id) {
           escala = await pgUpdateEscala(escala._id, req.tenantIgrejaId, { eventoCheckinId: evento._id });
         }
@@ -7027,6 +7025,8 @@ async function start() {
       try {
         const n = await pgAutoLinkEscalasOrfas();
         if (n > 0) console.log(`✅ Auto-link escala↔evento_checkin: ${n} escala(s) vinculada(s).`);
+        const repaired = await pgRepairEscalaEventoLinksFromOcorrencias();
+        if (repaired > 0) console.log(`✅ Reparo escala↔evento (culto_ocorrencias): ${repaired} escala(s) corrigida(s).`);
         const m = await pgBackfillCheckinCandidaturas();
         if (m > 0) console.log(`✅ Backfill check-in↔candidatura: ${m} check-in(s) vinculado(s).`);
         const f = await pgAutoMarcarFaltas();
