@@ -1819,7 +1819,10 @@ app.get('/api/checkins/datas', requireAuth, resolveTenant, requireAdmin, async (
 app.get('/api/checkins', requireAuth, resolveTenant, async (req, res) => {
   try {
     const isAdmin = req.userRole === 'admin';
-    const { data: dataFiltro, eventoId, ministerio } = req.query;
+    const { data: dataFiltro, eventoId, ministerio, email: emailQuery } = req.query;
+    const emailFiltro = isAdmin && emailQuery
+      ? String(emailQuery).trim().toLowerCase()
+      : null;
 
     if (isPostgres()) {
       let checkinsData;
@@ -1829,10 +1832,11 @@ app.get('/api/checkins', requireAuth, resolveTenant, async (req, res) => {
         checkinsData = await pgListCheckins(req.tenantIgrejaId, { email: userEmail, limit: 500 });
       } else {
         checkinsData = await pgListCheckins(req.tenantIgrejaId, {
-          dataYmd: dataFiltro ? String(dataFiltro).trim() : null,
+          dataYmd: emailFiltro ? null : (dataFiltro ? String(dataFiltro).trim() : null),
           eventoId: eventoId || null,
           ministerio: ministerio || null,
-          limit: 5000,
+          email: emailFiltro,
+          limit: emailFiltro ? 500 : 5000,
         });
       }
       const ministeriosCount = {};

@@ -3779,8 +3779,10 @@ function formatCheckinDate(timestamp) {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-function renderCheckinsBadges(emailKey, checkinsListOverride) {
-  const source = Array.isArray(checkinsListOverride) ? checkinsListOverride : (Array.isArray(checkins) ? checkins : []);
+function renderCheckinsBadgesHtml(emailKey, checkinsListOverride) {
+  const source = Array.isArray(checkinsListOverride)
+    ? checkinsListOverride
+    : (Array.isArray(allCheckins) && allCheckins.length ? allCheckins : (Array.isArray(checkins) ? checkins : []));
   const list = source
     .filter(c => (c.email || '').toLowerCase().trim() === emailKey)
     .sort((a, b) => {
@@ -3790,11 +3792,28 @@ function renderCheckinsBadges(emailKey, checkinsListOverride) {
     });
   if (!list.length) return '<p class="perfil-checkins-empty">Nenhum check-in registrado.</p>';
   const badges = list.map(c => {
-    const data = formatCheckinDate(c.timestamp);
+    const data = formatCheckinDate(c.timestampMs ?? c.timestamp ?? c.dataCheckin);
     const min = escapeHtml(String(c.ministerio || '—').trim());
     return `<span class="perfil-checkin-badge">${data} · ${min}</span>`;
   }).join('');
   return `<div class="perfil-checkins-list">${badges}</div>`;
+}
+
+function renderCheckinsBadges(emailKey, checkinsListOverride) {
+  return renderCheckinsBadgesHtml(emailKey, checkinsListOverride);
+}
+
+async function fetchCheckinsForVoluntarioEmail(email) {
+  const key = (email || '').toLowerCase().trim();
+  if (!key || !authToken) return [];
+  try {
+    const r = await authFetch(`${API_BASE}/api/checkins?email=${encodeURIComponent(key)}`);
+    if (!r.ok) return [];
+    const data = await r.json().catch(() => ({}));
+    return Array.isArray(data.checkins) ? data.checkins : [];
+  } catch (_) {
+    return [];
+  }
 }
 
 async function openPerfilVoluntario(email, options) {
@@ -3802,9 +3821,8 @@ async function openPerfilVoluntario(email, options) {
   const content = document.getElementById('perfilVoluntarioConteudo');
   if (!modalPerfil || !content) return;
   const key = (email || '').toLowerCase().trim();
-  const checkinsList = options && Array.isArray(options.checkinsList) ? options.checkinsList : null;
   const v = (Array.isArray(voluntarios) ? voluntarios : []).find(x => (x.email || '').toLowerCase() === key);
-  let fotoUrl = v?.fotoUrl || (checkinsList && checkinsList.find(c => (c.email || '').toLowerCase() === key)?.fotoUrl) || null;
+  let fotoUrl = v?.fotoUrl || null;
   if (!fotoUrl && (authRole === 'admin' || authRole === 'lider')) {
     try {
       const r = await authFetch(`${API_BASE}/api/users/foto?email=${encodeURIComponent(key)}`);
@@ -3814,9 +3832,10 @@ async function openPerfilVoluntario(email, options) {
       }
     } catch (_) {}
   }
-  const nomeDisplay = v?.nome || (checkinsList && checkinsList.find(c => (c.email || '').toLowerCase() === key)?.nome) || email || '?';
+  const nomeDisplay = v?.nome || email || '?';
   const fotoBlock = `<div class="perfil-modal-foto">${avatarHtml(fotoUrl, nomeDisplay, 'avatar-lg')}</div>`;
-  const checkinsSection = `<div class="perfil-section"><span class="perfil-label">Check-ins</span>${renderCheckinsBadges(key, checkinsList)}</div>`;
+  const checkinsCountHint = v?.vezesCheckin != null ? Number(v.vezesCheckin) || 0 : null;
+  const checkinsSection = `<div class="perfil-section" id="perfilVolCheckinsSection"><span class="perfil-label">Check-ins${checkinsCountHint != null ? ` (${checkinsCountHint})` : ''}</span><div id="perfilVolCheckinsWrap"><p class="perfil-checkins-empty">Carregando…</p></div></div>`;
   const isLider = authRole === 'lider';
   
   if (v) {
@@ -3855,15 +3874,24 @@ async function openPerfilVoluntario(email, options) {
       `.trim() || '<p>Nenhum dado cadastrado.</p>');
     }
   } else {
-    const sourceForCheckin = checkinsList || (Array.isArray(checkins) ? checkins : []);
-    const checkin = sourceForCheckin.find(c => (c.email || '').toLowerCase() === key);
-    const msg = checkin
-      ? fotoBlock + `${fieldRow('Nome', checkin.nome)}${fieldRow('Email', checkin.email)}${checkinsSection}<p class="perfil-not-found" style="margin-top:12px">Dados completos não encontrados na lista de voluntários.</p>`
-      : fotoBlock + '<p class="perfil-not-found">Voluntário não encontrado na lista.</p>';
+    const msg = fotoBlock + `${fieldRow('Nome', email)}${fieldRow('Email', email)}${checkinsSection}<p class="perfil-not-found" style="margin-top:12px">Dados completos não encontrados na lista de voluntários.</p>`;
     content.innerHTML = msg;
   }
   modalPerfil.classList.add('open');
   modalPerfil.setAttribute('aria-hidden', 'false');
+
+  const checkinsList = options && Array.isArray(options.checkinsList)
+    ? options.checkinsList
+    : await fetchCheckinsForVoluntarioEmail(key);
+  const wrap = document.getElementById('perfilVolCheckinsWrap');
+  const section = document.getElementById('perfilVolCheckinsSection');
+  if (wrap) {
+    wrap.innerHTML = renderCheckinsBadgesHtml(key, checkinsList);
+    if (section) {
+      const label = section.querySelector('.perfil-label');
+      if (label) label.textContent = `Check-ins (${checkinsList.length})`;
+    }
+  }
 }
 
 function closeModalPerfilVoluntario() {
