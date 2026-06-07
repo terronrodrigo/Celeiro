@@ -477,14 +477,6 @@ body {
 }
 
 /* KPI Cards */
-.kpi-toolbar {
-  display: none;
-  margin-bottom: 0.75rem;
-}
-.kpi-toggle-more {
-  width: auto;
-}
-
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -1778,13 +1770,6 @@ body {
     flex: 1 1 200px;
   }
 
-  .kpi-toolbar {
-    display: flex;
-    justify-content: flex-end;
-  }
-  #kpiGridResumo:not(.kpis-expanded) .kpi-card:nth-child(n+4) {
-    display: none;
-  }
   .kpi-grid {
     grid-template-columns: 1fr;
     gap: 1rem;

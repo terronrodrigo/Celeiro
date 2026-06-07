@@ -7187,15 +7187,6 @@ document.getElementById('btnRetry')?.addEventListener('click', () => {
   fetchAllData();
 });
 
-document.getElementById('btnKpiToggleMore')?.addEventListener('click', () => {
-  const grid = document.getElementById('kpiGridResumo');
-  const btn = document.getElementById('btnKpiToggleMore');
-  if (!grid || !btn) return;
-  const expanded = grid.classList.toggle('kpis-expanded');
-  btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-  btn.textContent = expanded ? 'Menos indicadores' : 'Mais indicadores';
-});
-
 document.getElementById('topIgrejaSelect')?.addEventListener('change', async () => {
   if (!authIsGlobalAdmin || !authToken) return;
   const sel = document.getElementById('topIgrejaSelect');

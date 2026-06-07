@@ -19,8 +19,7 @@ const REQUIRED_IDS = [
   'cultoRecorrenteDia',
   'btnSyncCultosRecorrentes',
   'cultosRecorrentesBody',
-  'btnKpiToggleMore',
-  'kpiGridResumo',
+  'kpiGridResumoGlobal',
 ];
 
 describe('index.html — elementos críticos', () => {
