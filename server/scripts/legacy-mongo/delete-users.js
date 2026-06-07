@@ -8,7 +8,7 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import User from '../models/User.js';
+import User from '../../models/User.js';
 
 const emails = process.argv.slice(2).filter((e) => e && e.includes('@'));
 const mongoUri = (process.env.MONGODB_URI || '').trim().replace(/^["']|["']$/g, '');

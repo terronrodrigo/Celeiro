@@ -32,7 +32,7 @@ import { normalizarEstado, normalizarCidade } from './utils/normalize-locale.js'
 import { createWhatsAppHandler } from './whatsapp/handler.js';
 import { processBrdidWebhook, getLastVerification } from './brdid/whatsapp-verification.js';
 import { resolveTenant, tQ, publicIgrejaFromRequest, DEFAULT_IGREJA_SLUG, listIgrejasAtivas } from './tenant-context.js';
-import { initDatabase, isDbReady, isMongo, isPostgres, getDbMode, isMongoDecommissioned } from './db/connection.js';
+import { initDatabase, isDbReady, isMongo, isPostgres, getDbMode } from './db/connection.js';
 import { EMPTY_VOLUNTARIOS, EMPTY_ARRAY, emptyCheckinsPayload } from './db/stubs.js';
 import {
   resolveUserForEmailPasswordLogin,
@@ -103,16 +103,15 @@ import {
   parseDataQuery,
   detectTurnoEscala,
 } from './lib/escala-consolidada.js';
-import { weekdayBrasilia, addDaysYmd } from './lib/brasilia.js';
+import {
+  weekdayBrasilia, addDaysYmd, DIAS_SEMANA, formatDataPtBr,
+} from './lib/brasilia.js';
 import {
   pgListCultosRecorrentes, pgFindCultoRecorrente, pgCreateCultoRecorrente,
   pgUpdateCultoRecorrente, pgDeleteCultoRecorrente, syncCultosRecorrentes,
   startRecurringCultosScheduler,
 } from './db/postgres/cultos-recorrentes.js';
-import { DIAS_SEMANA, formatDataPtBr } from './lib/brasilia.js';
 import { buildWaMeUrl, buildMensagemAprovacaoEscala, phoneToWaMeDigits } from './lib/whatsapp-links.js';
-import { runMongoToPgMigration, getMongoMigrationStatus, getMigrationProgress, runMongoMigrationPreflight, runPostgresValidationAudit } from './lib/mongo-to-pg-migrate.js';
-import { getMongoDecommissionStatus, verifyMongoDecommissionReady, executeMongoDecommission } from './lib/mongo-decommission.js';
 import { isValidEntityId } from './lib/ids.js';
 import { filterCandidaturasForLider, voluntarioMatchesLiderMinisterios, normalizeVoluntarioMinisteriosPatch, splitVoluntarioMinisterios } from './lib/ministerio-match.js';
 import { enrichCandidaturasForPanel } from './lib/candidatura-enrich.js';
@@ -131,6 +130,7 @@ import {
   pgUpdateCandidaturaStatus, pgBulkUpdateCandidaturaStatus, pgCandidaturaStatsByEmails,
   pgListCandidaturasByEmail, pgListCandidaturasForEscalas,
   pgListCheckinEmails,
+  pgListCadastroIncompletoCandidates,
   getPostgresPool,
   pgAttachParticipacaoStats, computePerfilCheckinGap, pgApplyCheckinComplemento,
 } from './db/postgres/operational-data.js';
@@ -372,13 +372,11 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     db: getDbMode(),
-    mongodb: isMongoDecommissioned() ? 'decommissioned' : (isMongo() ? 'connected' : 'disconnected'),
     postgres: isPostgres() ? 'connected' : 'disconnected',
-    mongoDecommissioned: isMongoDecommissioned(),
   });
 });
 
-/** Rotas que ainda usam Mongoose: em modo só-Postgres devolvem payload vazio até migração do Mongo. */
+/** Rotas legadas Mongo: em modo só-Postgres retornam payload vazio (caminho morto após migração). */
 function guardMongoData(res, emptyPayload, message = 'Banco de dados indisponível.') {
   if (!isDbReady()) {
     sendError(res, 503, message);
@@ -551,38 +549,6 @@ function requireMasterAdmin(req, res, next) {
   const email = (req.userEmail || '').toString().trim().toLowerCase();
   if (!MASTER_ADMIN_EMAIL || email !== MASTER_ADMIN_EMAIL) {
     return res.status(403).json({ error: 'Acesso negado. Apenas o administrador master pode realizar esta ação.' });
-  }
-  next();
-}
-
-/** Master admin ou admin global (superadmin) — migração Mongo→Postgres. */
-function requireMigrationAdmin(req, res, next) {
-  const role = String(req.userRole || '').toLowerCase();
-  const email = (req.userEmail || '').toString().trim().toLowerCase();
-  const isMaster = MASTER_ADMIN_EMAIL && email === MASTER_ADMIN_EMAIL;
-  const isGlobal = req.authIsGlobalAdmin === true && role === 'admin';
-  const isGlobalLegacy = role === 'admin' && !req.authIgrejaIdStr;
-  if (!isMaster && !isGlobal && !isGlobalLegacy) {
-    return res.status(403).json({ error: 'Acesso negado. Apenas superadmin pode migrar dados.' });
-  }
-  next();
-}
-
-/** Erros de migração são visíveis ao superadmin (não mascarar em produção). */
-function sendMigrationError(res, status, message) {
-  const requestId = res?.req?._requestId || crypto.randomBytes(4).toString('hex');
-  const msg = String(message || 'Erro na migração').trim();
-  if (status >= 500) {
-    const route = res?.req ? `${res.req.method} ${res.req.originalUrl || res.req.url}` : 'unknown';
-    console.error(`[migration ${requestId}] ${status} ${route}: ${msg}`);
-  }
-  res.setHeader('x-request-id', requestId);
-  return res.status(status).json({ error: msg, requestId });
-}
-
-function blockIfMongoDecommissioned(req, res, next) {
-  if (isMongoDecommissioned()) {
-    return sendMigrationError(res, 410, 'MongoDB desativado. A plataforma usa apenas PostgreSQL.');
   }
   next();
 }
@@ -4786,184 +4752,36 @@ app.delete('/api/users/:id', requireAuth, requireMasterAdmin, async (req, res) =
   }
 });
 
-// GET /api/admin/migrate-mongo-to-pg/status — conexão Mongo + Postgres (superadmin)
-app.get('/api/admin/migrate-mongo-to-pg/status', requireAuth, requireMigrationAdmin, async (req, res) => {
-  try {
-    const status = await getMongoMigrationStatus();
-    const decommission = await getMongoDecommissionStatus();
-    res.json({ ...status, decommission });
-  } catch (err) {
-    console.error(err);
-    sendMigrationError(res, 500, err.message || 'Erro ao verificar status da migração.');
-  }
-});
-
-// GET /api/admin/migrate-mongo-to-pg/progress — etapa atual da migração (superadmin)
-app.get('/api/admin/migrate-mongo-to-pg/progress', requireAuth, requireMigrationAdmin, blockIfMongoDecommissioned, (req, res) => {
-  res.json(getMigrationProgress());
-});
-
-// POST /api/admin/migrate-mongo-to-pg/test — testa leitura Mongo + Postgres (superadmin)
-app.post('/api/admin/migrate-mongo-to-pg/test', requireAuth, requireMigrationAdmin, blockIfMongoDecommissioned, async (req, res) => {
-  try {
-    const allIgrejas = req.body?.allIgrejas === true;
-    const igrejaSlug = (req.body?.igrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
-    const result = await runMongoMigrationPreflight({ igrejaSlug, allIgrejas });
-    res.json(result);
-  } catch (err) {
-    console.error('migrate-mongo-to-pg/test:', err);
-    sendMigrationError(res, 500, err.message || 'Erro no teste de acesso aos dados.');
-  }
-});
-
-// POST /api/admin/migrate-mongo-to-pg/validate-pg — levantamento PostgreSQL vs Mongo (superadmin)
-app.post('/api/admin/migrate-mongo-to-pg/validate-pg', requireAuth, requireMigrationAdmin, blockIfMongoDecommissioned, async (req, res) => {
-  try {
-    const allIgrejas = req.body?.allIgrejas !== false;
-    const igrejaSlug = (req.body?.igrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
-    const result = await runPostgresValidationAudit({ igrejaSlug, allIgrejas });
-    res.json(result);
-  } catch (err) {
-    console.error('migrate-mongo-to-pg/validate-pg:', err);
-    sendMigrationError(res, 500, err.message || 'Erro ao validar PostgreSQL.');
-  }
-});
-
-// POST /api/admin/migrate-mongo-to-pg — copia dados Mongo → PostgreSQL (superadmin)
-app.post('/api/admin/migrate-mongo-to-pg', requireAuth, requireMigrationAdmin, blockIfMongoDecommissioned, async (req, res) => {
-  try {
-    if (!isPostgres()) return sendMigrationError(res, 503, 'PostgreSQL não disponível.');
-    const dryRun = req.query.dry === '1' || req.query.dry === 'true' || req.body?.dryRun === true;
-    const allIgrejas = req.body?.allIgrejas === true;
-    const igrejaSlug = (req.body?.igrejaSlug || DEFAULT_IGREJA_SLUG).toString().trim().toLowerCase();
-    const preflightToken = (req.body?.preflightToken || '').toString().trim();
-    const result = await runMongoToPgMigration({ igrejaSlug, allIgrejas, dryRun, preflightToken });
-    invalidateCache();
-    res.json(result);
-  } catch (err) {
-    console.error('migrate-mongo-to-pg:', err);
-    sendMigrationError(res, 500, err.message || 'Erro na migração MongoDB → PostgreSQL.');
-  }
-});
-
-// GET /api/admin/mongo-decommission/status — Mongo desativado? (superadmin)
-app.get('/api/admin/mongo-decommission/status', requireAuth, requireMigrationAdmin, async (req, res) => {
-  try {
-    res.json(await getMongoDecommissionStatus());
-  } catch (err) {
-    console.error('mongo-decommission/status:', err);
-    sendMigrationError(res, 500, err.message || 'Erro ao verificar status do MongoDB.');
-  }
-});
-
-// POST /api/admin/mongo-decommission/verify — pré-check antes de desativar (superadmin)
-app.post('/api/admin/mongo-decommission/verify', requireAuth, requireMigrationAdmin, async (req, res) => {
-  try {
-    res.json(await verifyMongoDecommissionReady());
-  } catch (err) {
-    console.error('mongo-decommission/verify:', err);
-    sendMigrationError(res, 500, err.message || 'Erro na verificação.');
-  }
-});
-
-// POST /api/admin/mongo-decommission — desativa MongoDB na plataforma (superadmin)
-app.post('/api/admin/mongo-decommission', requireAuth, requireMigrationAdmin, async (req, res) => {
-  try {
-    const confirm = req.body?.confirm === true;
-    const email = (req.userEmail || '').toString().trim().toLowerCase();
-    const result = await executeMongoDecommission({ confirm, email });
-    invalidateCache();
-    res.json(result);
-  } catch (err) {
-    console.error('mongo-decommission:', err);
-    sendMigrationError(res, 500, err.message || 'Erro ao desativar MongoDB.');
-  }
-});
-
-// POST /api/fix-datacheckin - Corrige dataCheckin de check-ins com eventoId (admin only).
-// Necessário uma vez: bug antigo em getEventDateStringSaoPaulo causava data -1 dia.
-app.post('/api/fix-datacheckin', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
-  try {
-    if (!guardMongoData(res, EMPTY_ARRAY)) return;
-    const dryRun = req.query.dry !== 'false';
-    const checkins = await Checkin.find({ eventoId: { $exists: true, $ne: null } })
-      .select('_id eventoId dataCheckin').lean();
-    const eventIds = [...new Set(checkins.map(c => String(c.eventoId)))];
-    const eventos = await EventoCheckin.find({ _id: { $in: eventIds } }).select('_id data').lean();
-    const eventoMap = new Map(eventos.map(e => [String(e._id), e]));
-
-    const errados = [];
-    for (const c of checkins) {
-      const evento = eventoMap.get(String(c.eventoId));
-      if (!evento || !evento.data) continue;
-      const d = evento.data instanceof Date ? evento.data : new Date(evento.data);
-      // Data correta: UTC midnight do evento → meia-noite BRT (T03:00:00Z)
-      const dataCorreta = new Date(d.toISOString().slice(0, 10) + 'T03:00:00.000Z');
-      const dataAtual = c.dataCheckin instanceof Date ? c.dataCheckin : new Date(c.dataCheckin);
-      if (!dataAtual || dataAtual.getTime() !== dataCorreta.getTime()) {
-        errados.push({ id: c._id, de: dataAtual?.toISOString(), para: dataCorreta.toISOString() });
-        if (!dryRun) {
-          await Checkin.updateOne({ _id: c._id }, { $set: { dataCheckin: dataCorreta } });
-        }
-      }
-    }
-    res.json({ dryRun, total: checkins.length, errados: errados.length, detalhes: errados });
-  } catch (err) {
-    console.error(err);
-    sendError(res, 500, err.message || 'Erro ao corrigir dataCheckin.');
-  }
-});
-
-// POST /api/migrate - Migrar dados das CSVs para o MongoDB (admin only)
-app.post('/api/migrate', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
-  try {
-    if (!guardMongoData(res, EMPTY_ARRAY)) return;
-    if (!VOLUNTARIOS_CSV_PATH && !CSV_URL) return sendError(res, 400, 'VOLUNTARIOS_CSV_PATH ou CSV_URL não configurado.');
-    const celeiroId = await getCeleiroIgrejaIdForLegacyImport();
-    const volResult = await syncVoluntarios(celeiroId);
-    const checkResult = CHECKIN_CSV_PATH ? await syncCheckins(celeiroId) : { inserted: 0, updated: 0, skipped: true };
-
-    res.json({ 
-      success: true, 
-      message: 'Migração concluída!',
-      voluntarios: volResult,
-      checkins: checkResult 
-    });
-  } catch (err) {
-    console.error(err);
-    sendError(res, 500, err.message || 'Erro na migração.');
-  }
-});
-
 // POST /api/send-cadastro-incompleto - Envia email de convite de cadastro para voluntários
 // que fizeram check-in mas não têm perfil completo (Voluntario com nome preenchido). Admin only.
 // ?dry=true → apenas lista os elegíveis sem enviar.
 app.post('/api/send-cadastro-incompleto', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) return sendError(res, 500, 'RESEND_API_KEY não configurada.');
     const dryRun = String(req.query.dry || 'false') !== 'false';
     const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
     const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
 
-    // Emails únicos com check-in
-    const checkinsAgg = await Checkin.aggregate([
-      { $match: { ...tQ(req) } },
-      { $group: { _id: { $toLower: '$email' }, nome: { $first: '$nome' } } },
-      { $match: { _id: { $ne: null, $nin: ['', null] } } },
-    ]);
-
-    // Voluntarios com perfil (nome preenchido)
-    const perfis = await Voluntario.find({
-      email: { $exists: true, $ne: '' }, nome: { $exists: true, $ne: '' }, ...tQ(req),
-    }).select('email').lean();
-    const emailsComPerfil = new Set(perfis.map(v => (v.email || '').toLowerCase().trim()));
-
-    const elegíveis = checkinsAgg
-      .filter(c => c._id && !emailsComPerfil.has(c._id.trim()))
-      .map(c => ({ email: c._id.trim(), nome: (c.nome || '').trim() }))
-      .sort((a, b) => a.email.localeCompare(b.email));
+    let elegíveis;
+    if (isPostgres()) {
+      elegíveis = await pgListCadastroIncompletoCandidates(req.tenantIgrejaId);
+    } else {
+      if (!guardMongoData(res, EMPTY_ARRAY)) return;
+      const checkinsAgg = await Checkin.aggregate([
+        { $match: { ...tQ(req) } },
+        { $group: { _id: { $toLower: '$email' }, nome: { $first: '$nome' } } },
+        { $match: { _id: { $ne: null, $nin: ['', null] } } },
+      ]);
+      const perfis = await Voluntario.find({
+        email: { $exists: true, $ne: '' }, nome: { $exists: true, $ne: '' }, ...tQ(req),
+      }).select('email').lean();
+      const emailsComPerfil = new Set(perfis.map(v => (v.email || '').toLowerCase().trim()));
+      elegíveis = checkinsAgg
+        .filter(c => c._id && !emailsComPerfil.has(c._id.trim()))
+        .map(c => ({ email: c._id.trim(), nome: (c.nome || '').trim() }))
+        .sort((a, b) => a.email.localeCompare(b.email));
+    }
 
     if (dryRun || !elegíveis.length) {
       return res.json({ dryRun: true, total: elegíveis.length, elegíveis });

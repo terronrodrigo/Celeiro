@@ -9,8 +9,8 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import Igreja from '../models/Igreja.js';
-import Voluntario from '../models/Voluntario.js';
+import Igreja from '../../models/Igreja.js';
+import Voluntario from '../../models/Voluntario.js';
 
 const MONGODB_URI = (process.env.MONGODB_URI || '').trim();
 const DRY = process.argv.includes('--dry-run');

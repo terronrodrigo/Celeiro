@@ -2,8 +2,8 @@ import 'dotenv/config';
 import fs from 'fs';
 import mongoose from 'mongoose';
 import { parse } from 'csv-parse/sync';
-import Voluntario from '../models/Voluntario.js';
-import Checkin from '../models/Checkin.js';
+import Voluntario from '../../models/Voluntario.js';
+import Checkin from '../../models/Checkin.js';
 import { normalizarEstado, normalizarCidade } from '../utils/normalize-locale.js';
 
 const VOLUNTARIOS_CSV_PATH = (process.env.VOLUNTARIOS_CSV_PATH || '').trim();

@@ -16,8 +16,8 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import Igreja from '../models/Igreja.js';
-import Ministerio from '../models/Ministerio.js';
+import Igreja from '../../models/Igreja.js';
+import Ministerio from '../../models/Ministerio.js';
 
 const MONGODB_URI = (process.env.MONGODB_URI || '').trim();
 const SOURCE_SLUG = (process.env.SOURCE_IGREJA_SLUG || 'inc-sp').trim().toLowerCase();

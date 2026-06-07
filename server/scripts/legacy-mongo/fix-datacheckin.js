@@ -17,8 +17,8 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import Checkin from '../models/Checkin.js';
-import EventoCheckin from '../models/EventoCheckin.js';
+import Checkin from '../../models/Checkin.js';
+import EventoCheckin from '../../models/EventoCheckin.js';
 
 const DRY_RUN = !process.argv.includes('--fix');
 

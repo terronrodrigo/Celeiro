@@ -9,7 +9,7 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import User from '../models/User.js';
+import User from '../../models/User.js';
 
 const email = process.argv[2];
 const novaSenha = process.argv[3];

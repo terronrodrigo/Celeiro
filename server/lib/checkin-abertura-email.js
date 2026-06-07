@@ -172,5 +172,3 @@ export async function runCheckinAberturaEmailJob() {
   }
   return { processed: eventos.length, sent: totalSent, failed: totalFailed };
 }
-
-export { pgListEventosCheckinAberturaEmailPendentes };

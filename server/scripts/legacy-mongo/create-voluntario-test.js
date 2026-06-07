@@ -6,8 +6,8 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import User from '../models/User.js';
-import Voluntario from '../models/Voluntario.js';
+import User from '../../models/User.js';
+import Voluntario from '../../models/Voluntario.js';
 
 const EMAIL = 'rodrigo.terron@gmail.com';
 const SENHA = '123456';

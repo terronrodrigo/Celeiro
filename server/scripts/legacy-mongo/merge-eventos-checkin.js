@@ -10,8 +10,8 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import Checkin from '../models/Checkin.js';
-import EventoCheckin from '../models/EventoCheckin.js';
+import Checkin from '../../models/Checkin.js';
+import EventoCheckin from '../../models/EventoCheckin.js';
 
 const searchTerm = process.argv[2]?.trim();
 const mongoUri = (process.env.MONGODB_URI || '').trim().replace(/^["']|["']$/g, '');

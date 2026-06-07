@@ -3,8 +3,8 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import Escala from '../models/Escala.js';
-import Candidatura from '../models/Candidatura.js';
+import Escala from '../../models/Escala.js';
+import Candidatura from '../../models/Candidatura.js';
 
 const mongoUri = (process.env.MONGODB_URI || '').trim().replace(/^["']|["']$/g, '');
 if (!mongoUri) {

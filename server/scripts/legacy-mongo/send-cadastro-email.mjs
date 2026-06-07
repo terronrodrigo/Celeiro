@@ -10,8 +10,8 @@
 import 'dotenv/config';
 import mongoose from 'mongoose';
 import { Resend } from 'resend';
-import Checkin from '../models/Checkin.js';
-import Voluntario from '../models/Voluntario.js';
+import Checkin from '../../models/Checkin.js';
+import Voluntario from '../../models/Voluntario.js';
 
 const MODE = process.argv.includes('--send') ? 'send'
            : process.argv.includes('--test') ? 'test'

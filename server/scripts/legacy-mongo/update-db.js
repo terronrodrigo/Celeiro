@@ -7,13 +7,13 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import User from '../models/User.js';
-import Voluntario from '../models/Voluntario.js';
-import Checkin from '../models/Checkin.js';
-import EventoCheckin from '../models/EventoCheckin.js';
-import Ministerio from '../models/Ministerio.js';
-import RoleHistory from '../models/RoleHistory.js';
-import Igreja from '../models/Igreja.js';
+import User from '../../models/User.js';
+import Voluntario from '../../models/Voluntario.js';
+import Checkin from '../../models/Checkin.js';
+import EventoCheckin from '../../models/EventoCheckin.js';
+import Ministerio from '../../models/Ministerio.js';
+import RoleHistory from '../../models/RoleHistory.js';
+import Igreja from '../../models/Igreja.js';
 
 const MONGODB_URI = (process.env.MONGODB_URI || '').trim();
 if (!MONGODB_URI) {

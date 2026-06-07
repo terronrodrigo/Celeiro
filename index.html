@@ -338,35 +338,6 @@
           <!-- Widget escala em destaque (Fase 5) -->
           <div id="escalaDestaqueWidget" style="margin-bottom:16px"></div>
 
-          <!-- Migração MongoDB → PostgreSQL (superadmin / master admin) -->
-          <section class="cadastro-link-card filters-row" id="mongoMigrateSection" style="display: none;">
-            <div class="filters-card cadastro-link-box">
-              <div class="cadastro-link-content" style="flex-wrap: wrap; gap: 8px;">
-                <span class="cadastro-link-label" id="mongoMigrateSectionTitle">Migração MongoDB → PostgreSQL:</span>
-                <span id="mongoMigrateStatus" class="cadastro-link-label" style="opacity:0.85"></span>
-                <span id="mongoDecommissionBadge" class="cadastro-link-label" style="display:none;font-size:12px;color:var(--success,#22c55e)"></span>
-                <div id="mongoMigrateTools" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;width:100%">
-                <label class="cadastro-link-label" style="display:inline-flex;align-items:center;gap:4px;margin:0;">
-                  <input type="checkbox" id="mongoMigrateDryRun" checked> Simular (dry-run)
-                </label>
-                <label class="cadastro-link-label" style="display:inline-flex;align-items:center;gap:4px;margin:0;">
-                  <input type="checkbox" id="mongoMigrateAllIgrejas" checked> Todas as igrejas
-                </label>
-                <button type="button" class="btn btn-ghost btn-sm" id="btnMongoValidatePg">Validar PostgreSQL</button>
-                <button type="button" class="btn btn-ghost btn-sm" id="btnMongoMigrateTest">1. Testar acesso</button>
-                <button type="button" class="btn btn-primary btn-sm btn-migrate-progress" id="btnMongoMigrate" disabled aria-describedby="mongoMigrateProgressText" title="Execute o teste de acesso antes">
-                  <span class="btn-migrate-progress__fill" id="mongoMigrateProgressFill" style="width:0%" aria-hidden="true"></span>
-                  <span class="btn-migrate-progress__label" id="btnMongoMigrateLabel">2. Continuar migração</span>
-                </button>
-                <button type="button" class="btn btn-primary btn-sm" id="btnDesativarMongo" title="Verifica o PostgreSQL e desativa o MongoDB na plataforma">Desativar Mongo</button>
-                <span id="mongoMigratePreflightBadge" class="cadastro-link-label" style="display:none;font-size:12px;color:var(--success,#22c55e)"></span>
-                <span id="mongoMigrateProgressText" class="cadastro-link-label" style="display:none;font-size:12px;opacity:0.9"></span>
-                </div>
-              </div>
-              <pre id="mongoMigrateResult" class="cadastro-link-label" style="display:none;margin:8px 0 0;white-space:pre-wrap;font-size:12px;max-height:360px;overflow:auto"></pre>
-            </div>
-          </section>
-
           <!-- Cards globais (consumidos de /api/dashboard/resumo) -->
           <section class="kpi-grid" id="kpiGridResumoGlobal" style="margin-bottom:16px">
             <div class="kpi-card">
@@ -2012,6 +1983,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.31"></script>
+  <script defer src="app.js?v=1.6.32"></script>
 </body>
 </html>

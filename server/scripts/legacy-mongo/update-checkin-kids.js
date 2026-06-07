@@ -10,7 +10,7 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import Checkin from '../models/Checkin.js';
+import Checkin from '../../models/Checkin.js';
 
 const mongoUri = (process.env.MONGODB_URI || '').trim().replace(/^["']|["']$/g, '');
 

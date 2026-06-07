@@ -1,12 +1,25 @@
 /**
  * Inicialização do banco: PostgreSQL (Railway DATABASE_URL) e/ou MongoDB (MONGODB_URI).
  * Prioridade para voltar ao ar: Postgres sobe mesmo se Mongo estiver suspenso.
+ * Mongoose é carregado sob demanda (lazy) quando Postgres-only — startup mais rápido.
  */
-import mongoose from 'mongoose';
 import { initPostgres, isPostgresReady, getPostgresPool } from './postgres/init.js';
 
+let mongooseModule = null;
+let mongooseLoadPromise = null;
 let mongoConnected = false;
 let mongoDecommissioned = false;
+
+async function loadMongoose() {
+  if (mongooseModule) return mongooseModule;
+  if (!mongooseLoadPromise) {
+    mongooseLoadPromise = import('mongoose').then((mod) => {
+      mongooseModule = mod.default;
+      return mongooseModule;
+    });
+  }
+  return mongooseLoadPromise;
+}
 
 export function isMongoDecommissioned() {
   if (mongoDecommissioned) return true;
@@ -31,7 +44,8 @@ export async function loadMongoDecommissionFlag() {
 
 export function isMongo() {
   if (isMongoDecommissioned()) return false;
-  return mongoConnected && mongoose.connection.readyState === 1;
+  if (!mongoConnected || !mongooseModule) return false;
+  return mongooseModule.connection.readyState === 1;
 }
 
 export function isPostgres() {
@@ -100,6 +114,7 @@ export async function initDatabase() {
 
   if (shouldUseMongo() && mongoUri) {
     try {
+      const mongoose = await loadMongoose();
       await mongoose.connect(mongoUri);
       mongoConnected = true;
       console.log('✅ MongoDB conectado');
@@ -130,6 +145,7 @@ export async function ensureMongoConnection() {
   if (!mongoUri) {
     throw new Error('MONGODB_URI não configurado no Railway.');
   }
+  const mongoose = await loadMongoose();
   const state = mongoose.connection.readyState;
   if (state === 1 && mongoose.connection.db) {
     mongoConnected = true;
@@ -150,7 +166,7 @@ export async function ensureMongoConnection() {
   mongoConnected = true;
 }
 
-function resolveMongoDb() {
+function resolveMongoDb(mongoose) {
   if (mongoose.connection.db) return mongoose.connection.db;
   try {
     const client = mongoose.connection.getClient?.();
@@ -165,7 +181,8 @@ function resolveMongoDb() {
 /** Ping no Mongo após conexão garantida. */
 export async function pingMongo() {
   await ensureMongoConnection();
-  const db = resolveMongoDb();
+  const mongoose = await loadMongoose();
+  const db = resolveMongoDb(mongoose);
   if (!db) {
     throw new Error('MongoDB: database indisponível após conexão. Verifique MONGODB_URI e Network Access no Atlas.');
   }

@@ -6,20 +6,20 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import Igreja from '../models/Igreja.js';
-import Ministerio from '../models/Ministerio.js';
-import User from '../models/User.js';
-import Escala from '../models/Escala.js';
-import Candidatura from '../models/Candidatura.js';
-import EventoCheckin from '../models/EventoCheckin.js';
-import Checkin from '../models/Checkin.js';
-import EventoFormulario from '../models/EventoFormulario.js';
-import FormularioMembro from '../models/FormularioMembro.js';
-import FormularioConsolidacao from '../models/FormularioConsolidacao.js';
-import FormularioBatismo from '../models/FormularioBatismo.js';
-import FormularioApresentacao from '../models/FormularioApresentacao.js';
-import Voluntario from '../models/Voluntario.js';
-import RoleHistory from '../models/RoleHistory.js';
+import Igreja from '../../models/Igreja.js';
+import Ministerio from '../../models/Ministerio.js';
+import User from '../../models/User.js';
+import Escala from '../../models/Escala.js';
+import Candidatura from '../../models/Candidatura.js';
+import EventoCheckin from '../../models/EventoCheckin.js';
+import Checkin from '../../models/Checkin.js';
+import EventoFormulario from '../../models/EventoFormulario.js';
+import FormularioMembro from '../../models/FormularioMembro.js';
+import FormularioConsolidacao from '../../models/FormularioConsolidacao.js';
+import FormularioBatismo from '../../models/FormularioBatismo.js';
+import FormularioApresentacao from '../../models/FormularioApresentacao.js';
+import Voluntario from '../../models/Voluntario.js';
+import RoleHistory from '../../models/RoleHistory.js';
 
 const MONGODB_URI = (process.env.MONGODB_URI || '').trim();
 if (!MONGODB_URI) {

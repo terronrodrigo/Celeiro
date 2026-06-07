@@ -601,6 +601,33 @@ export async function pgListCheckinEmails(igrejaId) {
   return rows.map((r) => r.em).filter(Boolean);
 }
 
+/**
+ * Voluntários que fizeram check-in mas não têm perfil completo (nome preenchido).
+ * Paridade com rota /api/send-cadastro-incompleto (Mongo legado).
+ */
+export async function pgListCadastroIncompletoCandidates(igrejaId) {
+  const { rows } = await getPostgresPool().query(
+    `SELECT LOWER(c.email) AS email,
+            MAX(NULLIF(TRIM(c.nome), '')) AS nome
+     FROM checkins c
+     WHERE c.igreja_id = $1
+       AND c.email IS NOT NULL AND TRIM(c.email) <> ''
+       AND NOT EXISTS (
+         SELECT 1 FROM voluntarios v
+         WHERE v.igreja_id = c.igreja_id
+           AND LOWER(v.email) = LOWER(c.email)
+           AND NULLIF(TRIM(v.nome), '') IS NOT NULL
+       )
+     GROUP BY LOWER(c.email)
+     ORDER BY LOWER(c.email)`,
+    [igrejaId],
+  );
+  return rows.map((r) => ({
+    email: String(r.email || '').trim(),
+    nome: String(r.nome || '').trim(),
+  })).filter((r) => r.email.includes('@'));
+}
+
 /** Aceita string CSV ou array; devolve array de strings trimadas e não vazias. */
 function splitMultiValue(v) {
   if (Array.isArray(v)) return v.map((x) => String(x ?? '').trim()).filter(Boolean);

@@ -5,7 +5,7 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import Checkin from '../models/Checkin.js';
+import Checkin from '../../models/Checkin.js';
 
 const TZ_BRASILIA = 'America/Sao_Paulo';
 const mongoUri = (process.env.MONGODB_URI || '').trim().replace(/^["']|["']$/g, '');

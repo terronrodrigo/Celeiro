@@ -11,9 +11,9 @@
  */
 import 'dotenv/config';
 import mongoose from 'mongoose';
-import Checkin from '../models/Checkin.js';
-import EventoCheckin from '../models/EventoCheckin.js';
-import Voluntario from '../models/Voluntario.js';
+import Checkin from '../../models/Checkin.js';
+import EventoCheckin from '../../models/EventoCheckin.js';
+import Voluntario from '../../models/Voluntario.js';
 
 function getUri(envVar, label) {
   let uri = (process.env[envVar] || '').trim().replace(/^["']|["']$/g, '');
