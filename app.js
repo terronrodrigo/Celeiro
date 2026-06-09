@@ -838,6 +838,7 @@ let historicoMinisterioSort = 'escala';
 let historicoMeuResumo = {};
 let escalasList = [];
 let selectedEscalaIds = new Set();
+let lastEscalaEmailAberturaPreview = null;
 let escalaAtiva = null;
 let candidaturasAll = [];
 let candidaturasAnaliseFilters = {};
@@ -5347,13 +5348,17 @@ async function refreshEscalaEmailAberturaPreview() {
   const dest = document.querySelector('input[name="escalaEmailDestinatarios"]:checked')?.value || 'todos';
   const countTodos = document.getElementById('escalaEmailCountTodos');
   const countAtivos = document.getElementById('escalaEmailCountAtivos');
+  const totalSel = document.getElementById('escalaEmailTotalSelecionado');
   if (!ids.length) {
+    lastEscalaEmailAberturaPreview = null;
     if (countTodos) countTodos.textContent = '0';
     if (countAtivos) countAtivos.textContent = '0';
+    if (totalSel) totalSel.textContent = '0';
     return;
   }
   if (countTodos) countTodos.textContent = '…';
   if (countAtivos) countAtivos.textContent = '…';
+  if (totalSel) totalSel.textContent = '…';
   try {
     const r = await authFetch(`${API_BASE}/api/escalas/email-abertura/preview`, {
       method: 'POST',
@@ -5363,13 +5368,18 @@ async function refreshEscalaEmailAberturaPreview() {
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
       console.warn('preview email-abertura:', err.error || r.status);
+      lastEscalaEmailAberturaPreview = null;
       if (countTodos) countTodos.textContent = '—';
       if (countAtivos) countAtivos.textContent = '—';
+      if (totalSel) totalSel.textContent = '—';
       return;
     }
     const data = await r.json();
+    lastEscalaEmailAberturaPreview = data;
     if (countTodos) countTodos.textContent = String(data.totalTodos ?? 0);
     if (countAtivos) countAtivos.textContent = String(data.totalAtivos ?? 0);
+    const selectedTotal = dest === 'ativos' ? (data.totalAtivos ?? 0) : (data.totalTodos ?? 0);
+    if (totalSel) totalSel.textContent = String(selectedTotal);
     const lista = document.getElementById('escalaEmailAberturaLista');
     if (lista && Array.isArray(data.escalas)) {
       lista.innerHTML = data.escalas.map((e) => {
@@ -5379,8 +5389,42 @@ async function refreshEscalaEmailAberturaPreview() {
       }).join('');
     }
   } catch (_) {
+    lastEscalaEmailAberturaPreview = null;
     if (countTodos) countTodos.textContent = '—';
     if (countAtivos) countAtivos.textContent = '—';
+    if (totalSel) totalSel.textContent = '—';
+  }
+}
+
+function parseEscalaEmailRecipientCount(raw) {
+  const n = Number(String(raw ?? '').replace(/[^\d]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function refreshEscalaLembretePreview() {
+  const sel = document.getElementById('escalaLembreteDataSelect');
+  const countEl = document.getElementById('escalaLembretePessoasCount');
+  const cultoData = sel?.value?.trim();
+  if (!countEl) return;
+  if (!cultoData) {
+    countEl.textContent = '0';
+    return;
+  }
+  countEl.textContent = '…';
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/enviar-lembrete/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cultoData }),
+    });
+    if (!r.ok) {
+      countEl.textContent = '—';
+      return;
+    }
+    const data = await r.json();
+    countEl.textContent = String(data.total ?? 0);
+  } catch (_) {
+    countEl.textContent = '—';
   }
 }
 
@@ -5495,10 +5539,15 @@ async function confirmarEscalaEmailAbertura() {
   if (!ids.length) return;
   const mensagem = document.getElementById('escalaEmailAberturaMensagem')?.value?.trim() || '';
   const destinatarios = document.querySelector('input[name="escalaEmailDestinatarios"]:checked')?.value || 'todos';
-  const countEl = destinatarios === 'ativos'
-    ? document.getElementById('escalaEmailCountAtivos')
-    : document.getElementById('escalaEmailCountTodos');
-  const total = Number(countEl?.textContent || 0);
+  const total = lastEscalaEmailAberturaPreview
+    ? (destinatarios === 'ativos'
+      ? (lastEscalaEmailAberturaPreview.totalAtivos ?? 0)
+      : (lastEscalaEmailAberturaPreview.totalTodos ?? 0))
+    : parseEscalaEmailRecipientCount(
+      (destinatarios === 'ativos'
+        ? document.getElementById('escalaEmailCountAtivos')
+        : document.getElementById('escalaEmailCountTodos'))?.textContent,
+    );
   if (!total) {
     alert(destinatarios === 'ativos'
       ? 'Nenhum voluntário ativo encontrado (escala ou check-in nos últimos 180 dias).'
@@ -5536,9 +5585,12 @@ async function enviarLembreteEscalaVoluntarios(force = false) {
     return;
   }
   const label = sel?.selectedOptions?.[0]?.textContent?.trim() || cultoData;
+  const pessoasEl = document.getElementById('escalaLembretePessoasCount');
+  const pessoas = pessoasEl ? parseEscalaEmailRecipientCount(pessoasEl.textContent) : 0;
+  const pessoasLabel = pessoasEl?.textContent === '…' ? '…' : String(pessoas);
   const msg = force
-    ? `Reenviar email de lembrete de inscrição na escala para todos os voluntários?\n\n${label}`
-    : `Enviar email de lembrete de inscrição na escala para todos os voluntários?\n\n${label}`;
+    ? `Reenviar email de lembrete de inscrição na escala para ${pessoasLabel} voluntário(s)?\n\n${label}`
+    : `Enviar email de lembrete de inscrição na escala para ${pessoasLabel} voluntário(s)?\n\n${label}`;
   if (!confirm(msg)) return;
   const btn = document.getElementById('btnEnviarLembreteEscala');
   if (btn) btn.disabled = true;
@@ -5644,6 +5696,7 @@ function renderEscalasCriar() {
       <div class="escala-lembrete-actions" style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <label for="escalaLembreteDataSelect" class="form-hint" style="margin:0">Reforço automático (por data):</label>
         <select id="escalaLembreteDataSelect" class="igreja-select" style="min-width:180px" ${lembreteOpcoes.length ? '' : 'disabled'}>${lembreteSelectHtml}</select>
+        <span class="form-hint" style="margin:0">· <strong id="escalaLembretePessoasCount">…</strong> pessoa(s)</span>
         <button type="button" class="btn btn-ghost" id="btnEnviarLembreteEscala" ${lembreteOpcoes.length ? '' : 'disabled'} title="Envia lembrete de inscrição na escala para todos os voluntários">Email · todos</button>
       </div>
     </div>
@@ -5663,6 +5716,8 @@ function renderEscalasCriar() {
   `;
 
   document.getElementById('btnEnviarLembreteEscala')?.addEventListener('click', () => enviarLembreteEscalaVoluntarios(false));
+  document.getElementById('escalaLembreteDataSelect')?.addEventListener('change', () => { void refreshEscalaLembretePreview(); });
+  void refreshEscalaLembretePreview();
   document.getElementById('btnEmailEscalasSelecionadas')?.addEventListener('click', () => { void openModalEscalaEmailAbertura(); });
   document.getElementById('btnNovaEscala')?.addEventListener('click', () => {
     const m = document.getElementById('modalNovaEscala');

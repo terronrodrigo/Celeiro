@@ -21,11 +21,12 @@ function toCsvString(v) {
 
 function mapVoluntarioFromRow(row) {
   const d = row.dados || {};
+  const email = emailFromVoluntarioRow(row);
   const ministerios = splitVoluntarioMinisterios({ ministerios: d.ministerios, ministerio: d.ministerio });
   const ministerio = ministerios.length ? ministerios.join(', ') : '';
   return {
     _id: row.id,
-    email: row.email,
+    email,
     nome: d.nome || row.nome || '',
     areas: toCsvString(d.areas),
     disponibilidade: toCsvString(d.disponibilidade),
@@ -127,18 +128,18 @@ export async function pgListVoluntarios(igrejaId) {
   const pool = getPostgresPool();
   const { rows: volRows } = await pool.query(
     `SELECT id, email, nome, dados, ativo, fonte FROM voluntarios
-     WHERE igreja_id = $1 AND ativo = TRUE ORDER BY LOWER(email)`,
+     WHERE igreja_id = $1 AND ${VOLUNTARIO_ATIVO_SQL} ORDER BY LOWER(email)`,
     [igrejaId],
   );
   const byEmail = new Map();
   volRows.forEach((r) => {
-    const em = (r.email || '').toLowerCase().trim();
-    if (em) byEmail.set(em, mapVoluntarioFromRow(r));
+    const em = emailFromVoluntarioRow(r);
+    if (em && em.includes('@')) byEmail.set(em, mapVoluntarioFromRow(r));
   });
 
   const { rows: userRows } = await pool.query(
     `SELECT id, email, nome, ministerio_ids FROM users
-     WHERE igreja_id = $1 AND role = 'voluntario' AND ativo = TRUE`,
+     WHERE igreja_id = $1 AND role = 'voluntario' AND ${VOLUNTARIO_ATIVO_SQL}`,
     [igrejaId],
   );
   for (const u of userRows) {
@@ -200,12 +201,14 @@ function emailFromVoluntarioRow(r) {
   return String(r.email || d.email || '').toLowerCase().trim();
 }
 
+const VOLUNTARIO_ATIVO_SQL = '(ativo IS DISTINCT FROM FALSE)';
+
 /** Voluntários elegíveis para broadcast (cadastro ativo + contas role=voluntario). */
 export async function pgListVoluntariosParaEmailBroadcast(igrejaId) {
   const pool = getPostgresPool();
   const { rows: volRows } = await pool.query(
     `SELECT id, email, nome, dados, ativo, fonte FROM voluntarios
-     WHERE igreja_id = $1 AND (ativo IS NOT FALSE)
+     WHERE igreja_id = $1 AND ${VOLUNTARIO_ATIVO_SQL}
      ORDER BY LOWER(email)`,
     [igrejaId],
   );
@@ -218,7 +221,7 @@ export async function pgListVoluntariosParaEmailBroadcast(igrejaId) {
 
   const { rows: userRows } = await pool.query(
     `SELECT id, email, nome, ministerio_ids FROM users
-     WHERE igreja_id = $1 AND role = 'voluntario' AND (ativo IS NOT FALSE)`,
+     WHERE igreja_id = $1 AND role = 'voluntario' AND ${VOLUNTARIO_ATIVO_SQL}`,
     [igrejaId],
   );
   for (const u of userRows) {

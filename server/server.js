@@ -84,6 +84,7 @@ import {
   sendEscalaLembreteEmailsForIgreja,
   sendEscalaAberturaEmailsCustom,
   previewEscalaAberturaEmail,
+  previewEscalaLembreteEmail,
   getCultoDataYmdForLembrete,
   resolveEscalaLembreteTipoForToday,
   resolveEscalaLembreteTipoForCulto,
@@ -5432,8 +5433,8 @@ app.post('/api/escalas/enviar-lembrete', requireAuth, resolveTenant, requireAdmi
     if (force) {
       await pgClearEscalaLembreteEnviado(req.tenantIgrejaId, tipo, cultoDataYmd);
     }
-    const emails = await pgListVoluntarioEmails(req.tenantIgrejaId);
-    const total = emails.length;
+    const preview = await previewEscalaLembreteEmail(req.tenantIgrejaId, cultoDataYmd);
+    const total = preview.total;
     const igrejaId = req.tenantIgrejaId;
     const appBase = resolveAppBaseUrl(req);
     res.json({
@@ -5464,6 +5465,22 @@ app.post('/api/escalas/enviar-lembrete', requireAuth, resolveTenant, requireAdmi
   } catch (err) {
     console.error('escalas/enviar-lembrete:', err?.message || err);
     sendError(res, 500, err.message || 'Erro ao enviar lembretes.');
+  }
+});
+
+// POST /api/escalas/enviar-lembrete/preview — contagem de destinatários por data
+app.post('/api/escalas/enviar-lembrete/preview', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const cultoDataYmd = (req.body?.cultoData || '').toString().trim().slice(0, 10);
+    if (!cultoDataYmd || !/^\d{4}-\d{2}-\d{2}$/.test(cultoDataYmd)) {
+      return sendError(res, 400, 'Informe cultoData (YYYY-MM-DD).');
+    }
+    const preview = await previewEscalaLembreteEmail(req.tenantIgrejaId, cultoDataYmd);
+    res.json(preview);
+  } catch (err) {
+    console.error('escalas/enviar-lembrete/preview:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao calcular destinatários.');
   }
 });
 

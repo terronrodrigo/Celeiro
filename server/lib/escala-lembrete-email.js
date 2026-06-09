@@ -7,7 +7,7 @@ import {
 } from './brasilia.js';
 import { getProximaOcorrenciaYmd, getNowHHMMBrasilia } from './escala-checkin-rules.js';
 import { buildEscalaPublicUrl } from './escala-public-url.js';
-import { pgListVoluntarios, pgMapUltimosMinisteriosServidos, pgResolveDestinatariosEscalaEmail } from '../db/postgres/operational-data.js';
+import { pgMapUltimosMinisteriosServidos, pgResolveDestinatariosEscalaEmail } from '../db/postgres/operational-data.js';
 import { pgFindIgrejaById, pgListIgrejas } from '../db/postgres/repos.js';
 import {
   pgFindEscalasByIds,
@@ -177,7 +177,7 @@ export async function sendEscalaLembreteEmailsForIgreja({
   }));
 
   const [voluntarios, historicoMap] = await Promise.all([
-    pgListVoluntarios(igrejaId),
+    pgResolveDestinatariosEscalaEmail(igrejaId, { destinatarios: 'todos' }),
     pgMapUltimosMinisteriosServidos(igrejaId, { perEmail: 3 }),
   ]);
 
@@ -189,13 +189,12 @@ export async function sendEscalaLembreteEmailsForIgreja({
     : [];
   const pastEscalaById = new Map(pastEscalas.map((e) => [String(e._id), e]));
 
-  const byEmail = new Map();
-  for (const v of voluntarios) {
-    const em = (v.email || '').toLowerCase().trim();
-    if (!em || !em.includes('@') || byEmail.has(em)) continue;
-    byEmail.set(em, v);
-  }
-  const recipients = [...byEmail.entries()];
+  const recipients = voluntarios
+    .map((v) => {
+      const em = (v.email || '').toLowerCase().trim();
+      return em && em.includes('@') ? [em, v] : null;
+    })
+    .filter(Boolean);
   if (!recipients.length) {
     if (!force) await pgMarkEscalaLembreteEnviado(igrejaId, tipo, cultoDataYmd, 0);
     return { sent: 0, failed: 0, total: 0 };
@@ -514,5 +513,20 @@ export async function previewEscalaAberturaEmail(igrejaId, { escalaIds, destinat
     totalAtivos: ativos.length,
     totalSelecionado: dest === 'ativos' ? ativos.length : todos.length,
     destinatarios: dest,
+  };
+}
+
+/** Preview de destinatários para lembrete por data de culto (email · todos). */
+export async function previewEscalaLembreteEmail(igrejaId, cultoDataYmd) {
+  const ymd = String(cultoDataYmd || '').trim().slice(0, 10);
+  if (!ymd) return { total: 0, escalasCount: 0, cultoDataYmd: '' };
+  const [escalas, destinatarios] = await Promise.all([
+    pgListEscalasByDataYmd(igrejaId, ymd, { ativoOnly: true }),
+    pgResolveDestinatariosEscalaEmail(igrejaId, { destinatarios: 'todos' }),
+  ]);
+  return {
+    total: destinatarios.length,
+    escalasCount: escalas.length,
+    cultoDataYmd: ymd,
   };
 }
