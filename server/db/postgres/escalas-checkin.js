@@ -251,7 +251,7 @@ export function filterNextPerCulto(items, todayYmdArg = null) {
 export async function pgFindEscalasByIds(igrejaId, ids) {
   if (!ids?.length) return [];
   const { rows } = await getPostgresPool().query(
-    'SELECT id, igreja_id, data_ymd, dados, created_at FROM escalas WHERE igreja_id = $1 AND id = ANY($2::text[])',
+    'SELECT id, igreja_id, dados, created_at FROM escalas WHERE igreja_id = $1 AND id = ANY($2::text[])',
     [igrejaId, ids],
   );
   return rows.map(mapEscalaRow);

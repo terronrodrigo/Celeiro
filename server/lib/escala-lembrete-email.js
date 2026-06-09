@@ -488,7 +488,14 @@ export async function sendEscalaAberturaEmailsCustom({
 
 export async function previewEscalaAberturaEmail(igrejaId, { escalaIds, destinatarios = 'todos' } = {}) {
   const ids = [...new Set((escalaIds || []).map(String).filter(Boolean))];
-  const escalas = ids.length ? await pgFindEscalasByIds(igrejaId, ids) : [];
+  let escalas = [];
+  if (ids.length) {
+    try {
+      escalas = await pgFindEscalasByIds(igrejaId, ids);
+    } catch (err) {
+      console.error('previewEscalaAberturaEmail escalas:', err?.message || err);
+    }
+  }
   let todos = [];
   let ativos = [];
   try {
