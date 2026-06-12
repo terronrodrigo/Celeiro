@@ -605,6 +605,34 @@ async function authFetch(url, options = {}) {
   return r;
 }
 
+/** Encurta um link público da plataforma via /f/CODIGO (cai no link longo se indisponível). */
+async function shortenPublicUrl(longUrl) {
+  try {
+    if (!authToken || !longUrl) return longUrl;
+    const r = await authFetch(`${API_BASE}/api/short-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: longUrl }),
+    });
+    if (!r.ok) return longUrl;
+    const d = await r.json().catch(() => ({}));
+    return d.code ? `${window.location.origin}/f/${d.code}` : longUrl;
+  } catch (_) {
+    return longUrl;
+  }
+}
+
+/** Encurta e copia um link público para a área de transferência. */
+async function copyPublicLink(longUrl, successMsg = 'Link copiado!') {
+  const url = await shortenPublicUrl(longUrl);
+  try {
+    await navigator.clipboard.writeText(url);
+    alert(successMsg);
+  } catch (_) {
+    prompt('Copie o link:', url);
+  }
+}
+
 /** Exibe erro de login de forma visível (texto + toast + console). */
 function showLoginError(message, detail) {
   const msg = String(message || 'Falha ao entrar.').trim();
@@ -1199,10 +1227,11 @@ async function fetchConvitesLider() {
 }
 
 function formatConvitesLiderBulkText(convites) {
-  return (convites || [])
-    .filter((c) => c.link)
-    .map((c) => `${c.ministerioNome || 'Ministério'}:\n${c.link}`)
-    .join('\n\n');
+  return Promise.all(
+    (convites || [])
+      .filter((c) => c.link)
+      .map(async (c) => `${c.ministerioNome || 'Ministério'}:\n${await shortenPublicUrl(c.link)}`),
+  ).then((blocks) => blocks.join('\n\n'));
 }
 
 function updateConvitesLiderBulkUi() {
@@ -1245,6 +1274,7 @@ async function copiarLinkConviteLider(ministerioId) {
     link = data.link;
   }
   if (!link) { showToast('Não foi possível obter o link.', 'error'); return; }
+  link = await shortenPublicUrl(link);
   try {
     await navigator.clipboard.writeText(link);
     showToast('Link copiado!', 'success');
@@ -1922,7 +1952,7 @@ function wireEventosCheckinTableActions() {
       const ig = encodeURIComponent(getTenantSlugForLinks());
       const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}`;
       const url = `${base}?checkin=${encodeURIComponent(id)}&igreja=${ig}`;
-      navigator.clipboard.writeText(url).then(() => alert('Link copiado! Compartilhe para as pessoas fazerem check-in (email + ministério).')).catch(() => prompt('Copie o link:', url));
+      copyPublicLink(url, 'Link copiado! Compartilhe para as pessoas fazerem check-in (email + ministério).');
     });
   });
   eventosCheckinBody.querySelectorAll('[data-event-qr]').forEach(btn => {
@@ -5761,7 +5791,7 @@ function renderEscalasCriar() {
       const id = btn.getAttribute('data-escala-link');
       const ig = getTenantSlugForLinks();
       const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}?escala=${encodeURIComponent(id)}&igreja=${encodeURIComponent(ig)}`;
-      navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie:', url));
+      copyPublicLink(url);
     });
   });
   container.querySelectorAll('[data-escala-link-ministerio]').forEach(btn => {
@@ -6316,12 +6346,7 @@ function renderEscalasCandidatosLider() {
       const ministerio = btn.getAttribute('data-escala-open-copy-ministerio') || '';
       if (!escalaId || !ministerio) return;
       const url = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}?escala=${encodeURIComponent(escalaId)}&ministerio=${encodeURIComponent(ministerio)}&igreja=${encodeURIComponent(ig)}`;
-      try {
-        await navigator.clipboard.writeText(url);
-        alert('Link copiado!');
-      } catch (_) {
-        prompt('Copie o link:', url);
-      }
+      await copyPublicLink(url);
     });
   });
 }
@@ -6965,10 +6990,10 @@ async function openModalCopiarLinkMinisterio(escalaId) {
       _modalCopiarLinkMinisterios = list.slice();
       sel.innerHTML = '<option value="">Selecione o ministério</option>' + list.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
       const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}`;
-      const blocks = list.map((m) => {
-        const url = `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(m)}&igreja=${encodeURIComponent(ig)}`;
+      const blocks = await Promise.all(list.map(async (m) => {
+        const url = await shortenPublicUrl(`${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(m)}&igreja=${encodeURIComponent(ig)}`);
         return `${m}\n${url}`;
-      });
+      }));
       const text = blocks.join('\n\n');
       if (listArea) listArea.value = text;
       if (listWrap) listWrap.style.display = 'block';
@@ -6988,7 +7013,7 @@ async function openModalCopiarLinkMinisterio(escalaId) {
 document.getElementById('modalCopiarLinkMinisterio')?.querySelector('.modal-backdrop')?.addEventListener('click', () => {
   document.getElementById('modalCopiarLinkMinisterio')?.classList.remove('open');
 });
-document.getElementById('modalCopiarLinkMinisterioCopiar')?.addEventListener('click', () => {
+document.getElementById('modalCopiarLinkMinisterioCopiar')?.addEventListener('click', async () => {
   const sel = document.getElementById('modalCopiarLinkMinisterioSelect');
   const ministerio = sel?.value?.trim();
   if (!_modalCopiarLinkEscalaId || !ministerio) {
@@ -6997,7 +7022,7 @@ document.getElementById('modalCopiarLinkMinisterioCopiar')?.addEventListener('cl
   }
   const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}`;
   const ig = getTenantSlugForLinks();
-  const url = `${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(ministerio)}&igreja=${encodeURIComponent(ig)}`;
+  const url = await shortenPublicUrl(`${base}?escala=${encodeURIComponent(_modalCopiarLinkEscalaId)}&ministerio=${encodeURIComponent(ministerio)}&igreja=${encodeURIComponent(ig)}`);
   navigator.clipboard.writeText(url).then(() => {
     alert('Link copiado! Quem abrir só poderá se candidatar a esse ministério.');
     document.getElementById('modalCopiarLinkMinisterio')?.classList.remove('open');
@@ -7999,7 +8024,7 @@ document.getElementById('btnGerarTodosConvitesLider')?.addEventListener('click',
     (data.convites || []).forEach((c) => {
       if (c.ministerioId) convitesLiderByMinId[String(c.ministerioId)] = c;
     });
-    convitesLiderBulkText = formatConvitesLiderBulkText(data.convites);
+    convitesLiderBulkText = await formatConvitesLiderBulkText(data.convites);
     updateConvitesLiderBulkUi();
     renderMinistros();
     showToast(`${data.total || 0} link(s) gerado(s).`, 'success');
@@ -8151,10 +8176,10 @@ document.getElementById('historicoMinisterioSort')?.addEventListener('change', (
 document.getElementById('btnExportCheckinsCsv')?.addEventListener('click', () => exportCheckinsCsv());
 document.getElementById('btnExportFormularioMembroCsv')?.addEventListener('click', () => exportFormularioMembroCsv());
 document.getElementById('btnExportFormularioConsolidacaoCsv')?.addEventListener('click', () => exportFormularioConsolidacaoCsv());
-document.getElementById('btnCopiarLinkFormularioConsolidacao')?.addEventListener('click', () => {
-  const input = document.getElementById('formularioConsolidacaoLinkInput');
-  const url = input?.value || getFormularioConsolidacaoLinkUrl();
-  if (!url) return;
+document.getElementById('btnCopiarLinkFormularioConsolidacao')?.addEventListener('click', async () => {
+  const longUrl = document.getElementById('formularioConsolidacaoLinkInput')?.value || getFormularioConsolidacaoLinkUrl();
+  if (!longUrl) return;
+  const url = await shortenPublicUrl(longUrl);
   navigator.clipboard.writeText(url).then(() => {
     const btn = document.getElementById('btnCopiarLinkFormularioConsolidacao');
     if (btn) { const t = btn.textContent; btn.textContent = 'Copiado!'; setTimeout(() => { btn.textContent = t; }, 2000); }
@@ -8532,19 +8557,20 @@ document.getElementById('cadastroPublicoForm')?.addEventListener('submit', async
   }
 });
 
-document.getElementById('btnCopiarLinkCadastro')?.addEventListener('click', () => {
+document.getElementById('btnCopiarLinkCadastro')?.addEventListener('click', async () => {
   const input = document.getElementById('cadastroLinkInput');
   if (!input?.value) return;
-  navigator.clipboard.writeText(input.value).then(() => {
+  const url = await shortenPublicUrl(input.value);
+  navigator.clipboard.writeText(url).then(() => {
     const btn = document.getElementById('btnCopiarLinkCadastro');
     if (btn) { const t = btn.textContent; btn.textContent = 'Copiado!'; setTimeout(() => { btn.textContent = t; }, 2000); }
-  }).catch(() => {});
+  }).catch(() => prompt('Copie o link:', url));
 });
 
-document.getElementById('btnCopiarLinkFormularioMembro')?.addEventListener('click', () => {
-  const input = document.getElementById('formularioMembroLinkInput');
-  const url = input?.value || getFormularioMembroLinkUrl();
-  if (!url) return;
+document.getElementById('btnCopiarLinkFormularioMembro')?.addEventListener('click', async () => {
+  const longUrl = document.getElementById('formularioMembroLinkInput')?.value || getFormularioMembroLinkUrl();
+  if (!longUrl) return;
+  const url = await shortenPublicUrl(longUrl);
   navigator.clipboard.writeText(url).then(() => {
     const btn = document.getElementById('btnCopiarLinkFormularioMembro');
     if (btn) { const t = btn.textContent; btn.textContent = 'Copiado!'; setTimeout(() => { btn.textContent = t; }, 2000); }

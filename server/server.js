@@ -102,6 +102,7 @@ import {
   pgCreateFormularioApresentacao, pgListFormulariosApresentacaoByEvento,
   pgCreateFormularioNovoMembro, pgListFormulariosNovoMembroByEvento,
 } from './db/postgres/formularios.js';
+import { pgGetOrCreateShortLink, pgFindShortLinkTarget } from './db/postgres/short-links.js';
 import {
   buildIntersecaoDomingo,
   buildVisaoConsolidada,
@@ -3066,7 +3067,32 @@ app.delete('/api/eventos-formulario/:id', requireAuth, resolveTenant, requireAdm
 });
 
 // Público: dados do evento de formulário (batismo ou apresentação)
-// Link curto público de formulário: /f/Ab3xK9z → redireciona para o link completo do evento.
+// Encurtador de links da plataforma: gera /f/CODIGO para qualquer link público interno
+// (escala, check-in, cadastro, convite, formulários). Idempotente por destino.
+app.post('/api/short-link', requireAuth, resolveTenant, async (req, res) => {
+  try {
+    const raw = String(req.body?.url || '').trim();
+    let search = '';
+    let hash = '';
+    try {
+      const u = new URL(raw, 'http://internal');
+      search = u.search || '';
+      hash = /^#[\w-]{1,64}$/.test(u.hash || '') ? u.hash : '';
+    } catch (_) { search = ''; }
+    // Só aceita query string interna (sem host/esquema) — evita open redirect.
+    if (!search || !search.startsWith('?') || search.length < 2 || search.length > 2000) {
+      return sendError(res, 400, 'Link inválido para encurtar.');
+    }
+    if (!isPostgres()) return res.json({ code: null });
+    const code = await pgGetOrCreateShortLink(`/${search}${hash}`, req.tenantIgrejaId || null);
+    return res.json({ code });
+  } catch (err) {
+    console.error('short-link create:', err?.message || err);
+    sendError(res, 500, 'Erro ao gerar link curto.');
+  }
+});
+
+// Link curto público: /f/Ab3xK9z → redireciona para o link completo (genérico ou evento de formulário).
 app.get('/f/:code', async (req, res) => {
   const code = String(req.params.code || '').trim();
   if (!/^[A-Za-z0-9]{4,16}$/.test(code)) return res.redirect('/');
@@ -3074,6 +3100,8 @@ app.get('/f/:code', async (req, res) => {
     let evento = null;
     let slug = '';
     if (isPostgres()) {
+      const target = await pgFindShortLinkTarget(code);
+      if (target && target.startsWith('/')) return res.redirect(302, target);
       evento = await pgFindEventoFormularioByShortCode(code);
       if (evento) {
         const ig = await pgFindIgrejaById(evento.igrejaId);
