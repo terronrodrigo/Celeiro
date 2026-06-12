@@ -18,17 +18,51 @@ function mapEventoFormRow(row) {
     ativo: row.ativo !== false,
     horarioInicio: row.horario_inicio || '',
     horarioFim: row.horario_fim || '',
+    shortCode: row.short_code || '',
     createdAt: row.created_at,
   };
 }
 
+// Alfabeto sem caracteres ambíguos (0/O, 1/l/I) para links curtos legíveis.
+const SHORT_CODE_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ';
+export function generateEventoShortCode(len = 7) {
+  let out = '';
+  for (let i = 0; i < len; i++) {
+    out += SHORT_CODE_ALPHABET[Math.floor(Math.random() * SHORT_CODE_ALPHABET.length)];
+  }
+  return out;
+}
+
 async function ensureEventoFormColumns() {
-  // Migração leve para colunas opcionais (horarioInicio/Fim e criadoPor) se ainda não existirem.
+  // Migração leve para colunas opcionais (horarioInicio/Fim, criadoPor e shortCode) se ainda não existirem.
   await getPostgresPool().query(`
     ALTER TABLE eventos_formulario ADD COLUMN IF NOT EXISTS horario_inicio TEXT;
     ALTER TABLE eventos_formulario ADD COLUMN IF NOT EXISTS horario_fim TEXT;
     ALTER TABLE eventos_formulario ADD COLUMN IF NOT EXISTS criado_por TEXT;
+    ALTER TABLE eventos_formulario ADD COLUMN IF NOT EXISTS short_code TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS eventos_formulario_short_code_idx
+      ON eventos_formulario (short_code) WHERE short_code IS NOT NULL;
   `).catch(() => {});
+}
+
+/** Gera short_code para eventos antigos que ainda não têm (uma vez por boot). */
+async function backfillEventoShortCodes() {
+  try {
+    const pool = getPostgresPool();
+    const { rows } = await pool.query('SELECT id FROM eventos_formulario WHERE short_code IS NULL OR short_code = \'\' LIMIT 1000');
+    for (const row of rows) {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          await pool.query('UPDATE eventos_formulario SET short_code = $2 WHERE id = $1', [row.id, generateEventoShortCode()]);
+          break;
+        } catch (e) {
+          if (attempt === 4) throw e; // colisão de código único: tenta outro
+        }
+      }
+    }
+  } catch (e) {
+    console.error('backfill short_code eventos_formulario:', e?.message || e);
+  }
 }
 
 let columnsEnsured = false;
@@ -36,6 +70,7 @@ async function ensureOnce() {
   if (columnsEnsured) return;
   columnsEnsured = true;
   await ensureEventoFormColumns();
+  await backfillEventoShortCodes();
 }
 
 export async function pgListEventosFormulario(igrejaId, { tipo, ativo, data } = {}) {
@@ -75,12 +110,28 @@ export async function pgCreateEventoFormulario({
 }) {
   await ensureOnce();
   const id = randomUUID();
-  await getPostgresPool().query(
-    `INSERT INTO eventos_formulario (id, igreja_id, tipo, data, label, ativo, horario_inicio, horario_fim, criado_por)
-     VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9)`,
-    [id, igrejaId, tipo, dataYmd, label || '', !!ativo, horarioInicio || '', horarioFim || '', criadoPor],
-  );
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await getPostgresPool().query(
+        `INSERT INTO eventos_formulario (id, igreja_id, tipo, data, label, ativo, horario_inicio, horario_fim, criado_por, short_code)
+         VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10)`,
+        [id, igrejaId, tipo, dataYmd, label || '', !!ativo, horarioInicio || '', horarioFim || '', criadoPor, generateEventoShortCode()],
+      );
+      break;
+    } catch (e) {
+      if (attempt === 4) throw e; // colisão de short_code: tenta outro código
+    }
+  }
   return pgFindEventoFormularioById(id, igrejaId);
+}
+
+export async function pgFindEventoFormularioByShortCode(code) {
+  await ensureOnce();
+  const { rows } = await getPostgresPool().query(
+    'SELECT * FROM eventos_formulario WHERE short_code = $1 LIMIT 1',
+    [code],
+  );
+  return mapEventoFormRow(rows[0]);
 }
 
 export async function pgUpdateEventoFormulario(id, igrejaId, { label, ativo, horarioInicio, horarioFim }) {

@@ -95,7 +95,7 @@ import {
 } from './lib/voluntario-reengajamento-email.js';
 import {
   pgListEventosFormulario, pgFindEventoFormularioById, pgCreateEventoFormulario,
-  pgUpdateEventoFormulario, pgDeleteEventoFormulario,
+  pgUpdateEventoFormulario, pgDeleteEventoFormulario, pgFindEventoFormularioByShortCode,
   pgCreateFormularioMembro, pgListFormulariosMembro,
   pgCreateFormularioConsolidacao, pgListFormulariosConsolidacao,
   pgCreateFormularioBatismo, pgListFormulariosBatismoByEvento,
@@ -3066,6 +3066,36 @@ app.delete('/api/eventos-formulario/:id', requireAuth, resolveTenant, requireAdm
 });
 
 // Público: dados do evento de formulário (batismo ou apresentação)
+// Link curto público de formulário: /f/Ab3xK9z → redireciona para o link completo do evento.
+app.get('/f/:code', async (req, res) => {
+  const code = String(req.params.code || '').trim();
+  if (!/^[A-Za-z0-9]{4,16}$/.test(code)) return res.redirect('/');
+  try {
+    let evento = null;
+    let slug = '';
+    if (isPostgres()) {
+      evento = await pgFindEventoFormularioByShortCode(code);
+      if (evento) {
+        const ig = await pgFindIgrejaById(evento.igrejaId);
+        slug = ig?.slug || '';
+      }
+    } else {
+      evento = await EventoFormulario.findOne({ shortCode: code }).lean();
+      if (evento) {
+        const ig = await Igreja.findById(evento.igrejaId).select('slug').lean();
+        slug = ig?.slug || '';
+      }
+    }
+    if (!evento) return res.redirect('/');
+    const param = evento.tipo === 'batismo' ? 'batismo' : evento.tipo === 'apresentacao' ? 'apresentacao' : 'novo-membro';
+    const igrejaQs = slug ? `&igreja=${encodeURIComponent(slug)}` : '';
+    return res.redirect(302, `/?${param}=${encodeURIComponent(String(evento._id))}${igrejaQs}`);
+  } catch (err) {
+    console.error('short link /f/:code:', err?.message || err);
+    return res.redirect('/');
+  }
+});
+
 app.get('/api/formulario-publico/:tipo/:eventoId', async (req, res) => {
   try {
     const igrejaDoc = await publicIgrejaFromRequest(req);

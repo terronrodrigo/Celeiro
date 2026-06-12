@@ -2633,7 +2633,7 @@ async function fetchFormularios() {
             <td>${escapeHtml(label)}</td>
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
             <td>${filled}</td>
-            <td><button type="button" class="btn btn-sm btn-primary" data-form-link="novo-membro" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
+            <td><button type="button" class="btn btn-sm btn-primary" data-form-link="novo-membro" data-event-id="${escapeAttr(eventId)}" data-short-code="${escapeAttr(e.shortCode || '')}" title="Copiar link">Copiar link</button></td>
             <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-novo-membro="${escapeAttr(eventId)}" title="Enviar e-mail às pessoas que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
             <td>
               <button type="button" class="btn btn-sm btn-ghost" data-export-novo-membro-csv="${escapeAttr(eventId)}" data-export-novo-membro-label="${escapeAttr(label)}" title="Baixar CSV só deste evento">Baixar CSV</button>
@@ -2651,9 +2651,12 @@ async function fetchFormularios() {
         eventosNovoMembroBody.querySelectorAll('[data-form-link="novo-membro"]').forEach(btn => {
           btn.addEventListener('click', () => {
             const id = btn.getAttribute('data-event-id');
+            const shortCode = btn.getAttribute('data-short-code');
             const ig = encodeURIComponent(getTenantSlugForLinks());
             const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}`;
-            const url = `${base}?novo-membro=${encodeURIComponent(id)}&igreja=${ig}`;
+            const url = shortCode
+              ? `${window.location.origin}/f/${shortCode}`
+              : `${base}?novo-membro=${encodeURIComponent(id)}&igreja=${ig}`;
             navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie o link:', url));
           });
         });
@@ -2689,7 +2692,7 @@ async function fetchFormularios() {
             <td>${escapeHtml(label)}</td>
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
             <td>${filled}</td>
-            <td><button type="button" class="btn btn-sm btn-primary" data-form-link="batismo" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
+            <td><button type="button" class="btn btn-sm btn-primary" data-form-link="batismo" data-event-id="${escapeAttr(eventId)}" data-short-code="${escapeAttr(e.shortCode || '')}" title="Copiar link">Copiar link</button></td>
             <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-batismo="${escapeAttr(eventId)}" title="Enviar e-mail às pessoas que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
             <td>
               <button type="button" class="btn btn-sm btn-ghost" data-export-batismo-csv="${escapeAttr(eventId)}" data-export-batismo-label="${escapeAttr(label)}" title="Baixar CSV só deste evento">Baixar CSV</button>
@@ -2707,9 +2710,12 @@ async function fetchFormularios() {
         eventosBatismoBody.querySelectorAll('[data-form-link="batismo"]').forEach(btn => {
           btn.addEventListener('click', () => {
             const id = btn.getAttribute('data-event-id');
+            const shortCode = btn.getAttribute('data-short-code');
             const ig = encodeURIComponent(getTenantSlugForLinks());
             const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}`;
-            const url = `${base}?batismo=${encodeURIComponent(id)}&igreja=${ig}`;
+            const url = shortCode
+              ? `${window.location.origin}/f/${shortCode}`
+              : `${base}?batismo=${encodeURIComponent(id)}&igreja=${ig}`;
             navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie o link:', url));
           });
         });
@@ -2744,7 +2750,7 @@ async function fetchFormularios() {
             <td>${escapeHtml(label)}</td>
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
             <td>${filled}</td>
-            <td><button type="button" class="btn btn-sm btn-primary" data-form-link="apresentacao" data-event-id="${escapeAttr(eventId)}" title="Copiar link">Copiar link</button></td>
+            <td><button type="button" class="btn btn-sm btn-primary" data-form-link="apresentacao" data-event-id="${escapeAttr(eventId)}" data-short-code="${escapeAttr(e.shortCode || '')}" title="Copiar link">Copiar link</button></td>
             <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-apresentacao="${escapeAttr(eventId)}" title="Enviar e-mail aos responsáveis que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
             <td>
               <button type="button" class="btn btn-sm btn-ghost" data-export-apresentacao-csv="${escapeAttr(eventId)}" data-export-apresentacao-label="${escapeAttr(label)}" title="Baixar CSV só deste evento">Baixar CSV</button>
@@ -2762,9 +2768,12 @@ async function fetchFormularios() {
         eventosApresentacaoBody.querySelectorAll('[data-form-link="apresentacao"]').forEach(btn => {
           btn.addEventListener('click', () => {
             const id = btn.getAttribute('data-event-id');
+            const shortCode = btn.getAttribute('data-short-code');
             const ig = encodeURIComponent(getTenantSlugForLinks());
             const base = `${window.location.origin}${window.location.pathname.replace(/\/$/, '') || ''}`;
-            const url = `${base}?apresentacao=${encodeURIComponent(id)}&igreja=${ig}`;
+            const url = shortCode
+              ? `${window.location.origin}/f/${shortCode}`
+              : `${base}?apresentacao=${encodeURIComponent(id)}&igreja=${ig}`;
             navigator.clipboard.writeText(url).then(() => alert('Link copiado!')).catch(() => prompt('Copie o link:', url));
           });
         });
