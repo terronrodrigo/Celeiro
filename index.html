@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#0c0c0e">
+  <meta name="theme-color" content="#f7f1e8">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <title>Voluntários · Celeiro São Paulo</title>
@@ -23,14 +23,14 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=1.3.2">
+  <link rel="stylesheet" href="styles.css?v=2.1.0">
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar">
       <div class="sidebar-header">
         <div class="logo">
-          <img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async">
+          <img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async">
         </div>
       </div>
       <nav class="sidebar-nav" id="navAdmin">
@@ -1264,7 +1264,7 @@
   <div id="escalaPublicOverlay" class="auth-overlay" style="display: none;">
     <div class="auth-card checkin-public-card">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle" id="escalaPublicSubtitle">Candidatura para escala</p>
       </div>
       <form id="escalaPublicForm" class="auth-form">
@@ -1320,7 +1320,7 @@
   <div id="checkinPublicOverlay" class="auth-overlay" style="display: none;">
     <div class="auth-card checkin-public-card">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle" id="checkinPublicSubtitle">Check-in de presença</p>
       </div>
       <form id="checkinPublicForm" class="auth-form">
@@ -1372,11 +1372,17 @@
 
   <!-- Formulário público: Consolidação / Acolhimento -->
   <div id="formularioConsolidacaoOverlay" class="auth-overlay cadastro-overlay public-form-page" style="display: none;">
-    <div class="auth-card cadastro-card">
+    <div class="auth-card cadastro-card form-not-started">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle">Formulário de Consolidação</p>
-        <p class="form-hint" style="margin-top:8px;line-height:1.45">Estamos felizes com sua decisão. Suas informações serão tratadas com sigilo e usadas para nossa equipe de voluntários caminhar com você.</p>
+      </div>
+      <div class="form-welcome">
+        <div class="form-welcome-icon" aria-hidden="true">🙏</div>
+        <h2 class="form-welcome-title">Bem-vindo(a)!</h2>
+        <p class="form-welcome-text">Estamos felizes com sua decisão. Suas informações serão tratadas com sigilo e usadas para nossa equipe caminhar com você.</p>
+        <button type="button" class="btn btn-primary form-welcome-start">Iniciar preenchimento</button>
+        <p class="form-welcome-hint">Leva menos de 2 minutos.</p>
       </div>
       <form id="formularioConsolidacaoForm" class="auth-form cadastro-form">
         <div class="form-group"><label for="formConsNome">Nome completo (sem abreviações)</label><input type="text" id="formConsNome" placeholder="Nome completo" required autocomplete="name"></div>
@@ -1411,27 +1417,47 @@
 
   <!-- Formulário público: Novos Membros (por evento) -->
   <div id="formularioNovoMembroPublicOverlay" class="auth-overlay cadastro-overlay public-form-page" style="display: none;">
-    <div class="auth-card cadastro-card">
+    <div class="auth-card cadastro-card form-not-started">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle" id="formularioNovoMembroEventLabel">Novos Membros</p>
       </div>
+      <div class="form-welcome">
+        <div class="form-welcome-icon" aria-hidden="true">🤍</div>
+        <h2 class="form-welcome-title">Seja muito bem-vindo(a)!</h2>
+        <p class="form-welcome-text">Que alegria ter você conosco! Preencha seus dados para caminharmos juntos com você nesta nova fase.</p>
+        <button type="button" class="btn btn-primary form-welcome-start">Iniciar preenchimento</button>
+        <p class="form-welcome-hint">Leva menos de 2 minutos.</p>
+      </div>
       <form id="formularioNovoMembroForm" class="auth-form cadastro-form">
-        <div class="form-group"><label for="formNovoMembroNome">Nome completo</label><input type="text" id="formNovoMembroNome" placeholder="Nome completo" required></div>
+        <div class="form-group"><label for="formNovoMembroNome">Nome completo</label><input type="text" id="formNovoMembroNome" placeholder="Nome completo" required autocomplete="name"></div>
+        <div class="form-group"><label for="formNovoMembroEmail">E-mail</label><input type="email" id="formNovoMembroEmail" placeholder="seu@email.com" required autocomplete="email"></div>
         <div class="form-row">
-          <div class="form-group"><label for="formNovoMembroCelular">Celular / WhatsApp</label><input type="tel" id="formNovoMembroCelular" placeholder="(11) 99999-9999" maxlength="16" required></div>
-          <div class="form-group"><label for="formNovoMembroIdade">Idade</label><input type="number" id="formNovoMembroIdade" min="1" max="120" placeholder="Ex: 28"></div>
+          <div class="form-group"><label for="formNovoMembroCelular">Telefone / WhatsApp</label><input type="tel" id="formNovoMembroCelular" placeholder="(11) 99999-9999" maxlength="16" required autocomplete="tel"></div>
+          <div class="form-group"><label for="formNovoMembroNascimento">Data de nascimento</label><input type="date" id="formNovoMembroNascimento" min="1920-01-01" max="2100-12-31"></div>
         </div>
-        <div class="form-group"><label for="formNovoMembroEndereco">Endereço</label><input type="text" id="formNovoMembroEndereco" placeholder="Rua, número, bairro, cidade"></div>
-        <div class="form-group"><label for="formNovoMembroEmail">E-mail</label><input type="email" id="formNovoMembroEmail" placeholder="seu@email.com" required></div>
         <div class="form-row">
+          <div class="form-group"><label for="formNovoMembroBairro">Bairro onde mora</label><input type="text" id="formNovoMembroBairro" placeholder="Ex: Vila Mariana"></div>
+          <div class="form-group"><label for="formNovoMembroCidade">Cidade onde mora</label><input type="text" id="formNovoMembroCidade" placeholder="Ex: São Paulo"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label for="formNovoMembroGenero">Gênero</label><select id="formNovoMembroGenero"><option value="">Selecione</option><option value="Masculino">Masculino</option><option value="Feminino">Feminino</option></select></div>
           <div class="form-group"><label for="formNovoMembroEstadoCivil">Estado civil</label><select id="formNovoMembroEstadoCivil"><option value="">Selecione</option><option value="Solteiro(a)">Solteiro(a)</option><option value="Casado(a)">Casado(a)</option><option value="Divorciado(a)">Divorciado(a)</option><option value="Viúvo(a)">Viúvo(a)</option><option value="União estável">União estável</option></select></div>
-          <div class="form-group"><label for="formNovoMembroBatizado">É batizado?</label><select id="formNovoMembroBatizado"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
         </div>
-        <div class="form-group"><label for="formNovoMembroTempoIgreja">Há quanto tempo frequenta a igreja?</label><select id="formNovoMembroTempoIgreja"><option value="">Selecione</option><option value="Menos de 1 mês">Menos de 1 mês</option><option value="1 a 3 meses">1 a 3 meses</option><option value="3 a 6 meses">3 a 6 meses</option><option value="6 a 12 meses">6 a 12 meses</option><option value="1 a 2 anos">1 a 2 anos</option><option value="Mais de 2 anos">Mais de 2 anos</option></select></div>
-        <div class="form-group"><label for="formNovoMembroInteresseServir">Tem interesse em servir na igreja?</label><select id="formNovoMembroInteresseServir"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        <div class="form-row">
+          <div class="form-group"><label for="formNovoMembroBatizado">Já é batizado?</label><select id="formNovoMembroBatizado"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+          <div class="form-group"><label for="formNovoMembroJaVoluntario">Já é voluntário?</label><select id="formNovoMembroJaVoluntario"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
+        </div>
+        <div class="form-group" id="formNovoMembroMinisteriosServiuWrap" style="display:none">
+          <label>Ministérios em que já serviu</label>
+          <div id="formNovoMembroMinisteriosServiuList" class="checkbox-list"></div>
+        </div>
+        <div class="form-group" id="formNovoMembroInteresseWrap" style="display:none">
+          <label for="formNovoMembroInteresseServir">Tem interesse em servir na igreja?</label>
+          <select id="formNovoMembroInteresseServir"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select>
+        </div>
         <div class="form-group" id="formNovoMembroMinisteriosWrap" style="display:none">
-          <label>Ministérios de interesse <span class="form-hint">(até 3)</span></label>
+          <label>Ministérios que tem interesse de servir <span class="form-hint">(até 3)</span></label>
           <div id="formNovoMembroMinisteriosList" class="checkbox-list"></div>
         </div>
         <p id="formularioNovoMembroError" class="auth-error"></p>
@@ -1443,10 +1469,17 @@
 
   <!-- Formulário público legado: Novos Membros (link único — descontinuado) -->
   <div id="formularioMembroOverlay" class="auth-overlay cadastro-overlay public-form-page" style="display: none;">
-    <div class="auth-card cadastro-card">
+    <div class="auth-card cadastro-card form-not-started">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle">Novos Membros</p>
+      </div>
+      <div class="form-welcome">
+        <div class="form-welcome-icon" aria-hidden="true">🤍</div>
+        <h2 class="form-welcome-title">Seja muito bem-vindo(a)!</h2>
+        <p class="form-welcome-text">Que alegria ter você conosco! Preencha seus dados para caminharmos juntos com você nesta nova fase.</p>
+        <button type="button" class="btn btn-primary form-welcome-start">Iniciar preenchimento</button>
+        <p class="form-welcome-hint">Leva menos de 2 minutos.</p>
       </div>
       <form id="formularioMembroForm" class="auth-form cadastro-form">
         <div class="form-group"><label for="formMembroNome">Nome completo</label><input type="text" id="formMembroNome" placeholder="Nome completo" required></div>
@@ -1470,10 +1503,17 @@
 
   <!-- Formulário público: Batismo -->
   <div id="formularioBatismoPublicOverlay" class="auth-overlay public-form-page" style="display: none;">
-    <div class="auth-card checkin-public-card">
+    <div class="auth-card checkin-public-card form-not-started">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle" id="formularioBatismoEventLabel">Batismo</p>
+      </div>
+      <div class="form-welcome">
+        <div class="form-welcome-icon" aria-hidden="true">🕊️</div>
+        <h2 class="form-welcome-title">Bem-vindo(a)!</h2>
+        <p class="form-welcome-text">Que decisão linda! Preencha o formulário para participar do próximo batismo.</p>
+        <button type="button" class="btn btn-primary form-welcome-start">Iniciar preenchimento</button>
+        <p class="form-welcome-hint">Leva menos de 2 minutos.</p>
       </div>
       <form id="formularioBatismoForm" class="auth-form">
         <div class="form-group"><label for="formBatismoNome">Nome completo</label><input type="text" id="formBatismoNome" placeholder="Nome completo" required></div>
@@ -1493,10 +1533,17 @@
 
   <!-- Formulário público: Apresentação de Bebês -->
   <div id="formularioApresentacaoPublicOverlay" class="auth-overlay formulario-apresentacao-overlay public-form-page" style="display: none;">
-    <div class="auth-card checkin-public-card formulario-apresentacao-card">
+    <div class="auth-card checkin-public-card formulario-apresentacao-card form-not-started">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle" id="formularioApresentacaoEventLabel">Apresentação de Bebês</p>
+      </div>
+      <div class="form-welcome">
+        <div class="form-welcome-icon" aria-hidden="true">👶</div>
+        <h2 class="form-welcome-title">Bem-vindos!</h2>
+        <p class="form-welcome-text">Será uma honra celebrar com a sua família. Preencha os dados para a apresentação do(s) seu(s) filho(s).</p>
+        <button type="button" class="btn btn-primary form-welcome-start">Iniciar preenchimento</button>
+        <p class="form-welcome-hint">Leva menos de 2 minutos.</p>
       </div>
       <form id="formularioApresentacaoForm" class="auth-form">
         <div class="form-group"><label for="formApresNomeMae">Nome da mãe</label><input type="text" id="formApresNomeMae" placeholder="Nome da mãe"></div>
@@ -1519,7 +1566,7 @@
   <div id="conviteLiderOverlay" class="auth-overlay cadastro-overlay" style="display: none;">
     <div class="auth-card cadastro-card">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle" id="conviteLiderSubtitle">Cadastro de liderança</p>
         <p class="auth-subtitle" id="conviteLiderMinisterioLabel" style="margin-top:4px;font-weight:600"></p>
       </div>
@@ -1539,7 +1586,7 @@
   <div id="cadastroOverlay" class="auth-overlay cadastro-overlay" style="display: none;">
     <div class="auth-card cadastro-card">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle">Inscrição de voluntários</p>
       </div>
       <form id="cadastroPublicoForm" class="auth-form cadastro-form">
@@ -1580,7 +1627,7 @@
     <div class="auth-card" id="loginCard">
       <div class="auth-header">
         <div class="logo">
-          <img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async">
+          <img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async">
         </div>
         <p class="auth-subtitle">Use email ou usuário admin.</p>
       </div>
@@ -1606,7 +1653,7 @@
     </div>
     <div class="auth-card" id="mustChangePasswordCard" style="display: none;">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle">Troque sua senha (primeiro acesso)</p>
       </div>
       <form id="mustChangePasswordForm" class="auth-form">
@@ -1629,7 +1676,7 @@
     </div>
     <div class="auth-card" id="forgotPasswordCard" style="display: none;">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle">Redefinição de senha</p>
       </div>
       <form id="forgotPasswordForm" class="auth-form">
@@ -1649,7 +1696,7 @@
     </div>
     <div class="auth-card" id="resetPasswordCard" style="display: none;">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle">Defina sua nova senha</p>
       </div>
       <form id="resetPasswordForm" class="auth-form">
@@ -1669,7 +1716,7 @@
     </div>
     <div class="auth-card" id="setupCard" style="display: none;">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle">Criar primeiro admin (após deploy)</p>
       </div>
       <form id="setupForm" class="auth-form">
@@ -1697,7 +1744,7 @@
     </div>
     <div class="auth-card" id="registerCard" style="display: none;">
       <div class="auth-header">
-        <div class="logo"><img src="assets/logo-hop-texto-claro.png" alt="Celeiro — House of Prayer" class="logo-img" width="1024" height="1024" decoding="async"></div>
+        <div class="logo"><img src="assets/logo-hop-dark-transparent.png" alt="Celeiro — House of Prayer" class="logo-img" width="894" height="363" decoding="async"></div>
         <p class="auth-subtitle">Cadastro de voluntário</p>
       </div>
       <form id="registerForm" class="auth-form">
@@ -2080,6 +2127,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=1.6.39"></script>
+  <script defer src="app.js?v=2.1.0"></script>
 </body>
 </html>

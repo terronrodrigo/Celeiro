@@ -770,8 +770,8 @@ function showToast(message, type) {
 let chartJsLoadPromise = null;
 function applyChartDefaults() {
   if (typeof Chart === 'undefined') return;
-  Chart.defaults.color = '#a0a0a0';
-  Chart.defaults.borderColor = '#2a2a2a';
+  Chart.defaults.color = '#6e6359';
+  Chart.defaults.borderColor = '#e9dfd0';
   Chart.defaults.font.family = "'DM Sans', sans-serif";
   Chart.defaults.animation = { duration: 380 };
 }
@@ -3462,8 +3462,8 @@ async function renderCharts(filteredInput) {
         datasets: [{
           label: 'Voluntários',
           data: topMin.map(a => a.value),
-          backgroundColor: 'rgba(245, 158, 11, 0.6)',
-          borderColor: '#f59e0b',
+          backgroundColor: 'rgba(138, 52, 44, 0.55)',
+          borderColor: '#8a342c',
           borderWidth: 1,
         }],
       },
@@ -3479,7 +3479,7 @@ async function renderCharts(filteredInput) {
           toggleFilter('ministerio', label);
         },
         scales: {
-          x: { beginAtZero: true, grid: { color: 'rgba(42,42,42,0.5)' } },
+          x: { beginAtZero: true, grid: { color: 'rgba(233,223,208,0.65)' } },
           y: { grid: { display: false } },
         },
       },
@@ -3489,7 +3489,7 @@ async function renderCharts(filteredInput) {
   const ctxDisp = document.getElementById('disponibilidadeChart');
   if (ctxDisp) {
     if (dispChart) dispChart.destroy();
-    const colors = ['#f59e0b', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6'];
+    const colors = ['#8a342c', '#d69e2e', '#2f855a', '#3b82f6', '#8b5cf6', '#ec4899'];
     const dispItems = dispData.map(([label, value]) => ({
       label,
       short: truncate(label, 20),
@@ -3502,7 +3502,7 @@ async function renderCharts(filteredInput) {
         datasets: [{
           data: dispItems.map(d => d.value),
           backgroundColor: dispItems.map((_, i) => colors[i % colors.length]),
-          borderColor: '#1a1a1a',
+          borderColor: '#ffffff',
           borderWidth: 2,
           hoverOffset: 8,
         }],
@@ -3556,7 +3556,7 @@ async function renderCharts(filteredInput) {
           toggleFilter('estado', label);
         },
         scales: {
-          x: { beginAtZero: true, grid: { color: 'rgba(42,42,42,0.5)' } },
+          x: { beginAtZero: true, grid: { color: 'rgba(233,223,208,0.65)' } },
           y: { grid: { display: false } },
         },
       },
@@ -3595,7 +3595,7 @@ async function renderCharts(filteredInput) {
           toggleFilter('cidade', label);
         },
         scales: {
-          x: { beginAtZero: true, grid: { color: 'rgba(42,42,42,0.5)' } },
+          x: { beginAtZero: true, grid: { color: 'rgba(233,223,208,0.65)' } },
           y: { grid: { display: false } },
         },
       },
@@ -4314,7 +4314,7 @@ function renderCheckinChart() {
         setCheckinFilter('ministerio', checkinFilters.ministerio === label ? '' : label);
       },
       scales: {
-        x: { beginAtZero: true, grid: { color: 'rgba(42,42,42,0.5)' } },
+        x: { beginAtZero: true, grid: { color: 'rgba(233,223,208,0.65)' } },
         y: { grid: { display: false } },
       },
     },
@@ -4706,8 +4706,8 @@ function renderResumoGlobal(data) {
           <div style="display:flex;align-items:center;gap:8px">
             <div style="flex:1;min-width:0">
               <div style="font-size:.88rem;color:var(--text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.nome)}</div>
-              <div style="height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden">
-                <div style="height:100%;width:${pct}%;background:#f59e0b"></div>
+              <div style="height:6px;background:#efe7da;border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#93423a,#6e2922);border-radius:3px"></div>
               </div>
             </div>
             <div style="font-weight:700;color:#1a1a2e;min-width:36px;text-align:right" title="check-ins">${t.total}</div>
@@ -4779,7 +4779,7 @@ async function renderResumoCheckins7d(serie) {
   // eslint-disable-next-line no-undef
   _resumoCkChart = new Chart(canvas.getContext('2d'), {
     type: 'bar',
-    data: { labels, datasets: [{ label: 'Check-ins', data: values, backgroundColor: '#f59e0b' }] },
+    data: { labels, datasets: [{ label: 'Check-ins', data: values, backgroundColor: '#8a342c', borderRadius: 6 }] },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -5101,29 +5101,42 @@ async function exportFormularioNovoMembroCsvForEvent(eventId, eventLabel) {
 
     const header = [
       'Nome completo',
-      'Celular/WhatsApp',
-      'Endereço',
       'E-mail',
-      'Idade',
+      'Telefone/WhatsApp',
+      'Data de nascimento',
+      'Bairro',
+      'Cidade',
+      'Gênero',
       'Estado civil',
       'Batizado',
-      'Tempo na igreja',
+      'Já é voluntário',
+      'Ministérios em que já serviu',
       'Interesse em servir',
       'Ministérios de interesse',
+      // Campos legados (formulários antigos)
+      'Endereço',
+      'Idade',
+      'Tempo na igreja',
       'Criado em',
     ];
 
     const rows = items.map((doc) => ([
       doc.nomeCompleto || '',
-      doc.telefoneWhatsapp || '',
-      doc.endereco || '',
       doc.email || '',
-      doc.idade || '',
+      doc.telefoneWhatsapp || '',
+      doc.dataNascimento || '',
+      doc.bairro || '',
+      doc.cidade || '',
+      doc.genero || '',
       doc.estadoCivil || '',
       (doc.batizado || '').trim(),
-      doc.tempoFrequentaIgreja || '',
+      (doc.jaVoluntario || '').trim(),
+      Array.isArray(doc.ministeriosServiu) ? doc.ministeriosServiu.join('; ') : '',
       (doc.interesseServir || '').trim(),
       Array.isArray(doc.ministeriosInteresse) ? doc.ministeriosInteresse.join('; ') : '',
+      doc.endereco || '',
+      doc.idade || '',
+      doc.tempoFrequentaIgreja || '',
       formatDateTimePtBR(doc.createdAt),
     ]).map(escapeCsv).join(','));
 
@@ -8663,29 +8676,56 @@ function showFormularioNovoMembroPublicOverlay() {
 }
 
 function renderNovoMembroMinisteriosCheckboxes(ministerios) {
-  const container = document.getElementById('formNovoMembroMinisteriosList');
-  if (!container) return;
   const list = Array.isArray(ministerios) ? ministerios.filter(Boolean) : [];
-  container.innerHTML = list.map((m) =>
-    `<label class="checkbox-label" style="display:block;margin-bottom:6px;"><input type="checkbox" name="formNovoMembroMinisterioCb" value="${escapeAttr(m)}"> ${escapeHtml(m)}</label>`,
+  const buildHtml = (cbName) => list.map((m) =>
+    `<label class="checkbox-label" style="display:block;margin-bottom:6px;"><input type="checkbox" name="${cbName}" value="${escapeAttr(m)}"> ${escapeHtml(m)}</label>`,
   ).join('');
-  container.querySelectorAll('input[name="formNovoMembroMinisterioCb"]').forEach((cb) => {
-    cb.addEventListener('change', () => {
-      const checked = container.querySelectorAll('input[name="formNovoMembroMinisterioCb"]:checked');
-      if (checked.length > 3) {
-        cb.checked = false;
-        alert('Selecione no máximo 3 ministérios.');
-      }
+
+  // Lista "interesse em servir" (máx. 3)
+  const container = document.getElementById('formNovoMembroMinisteriosList');
+  if (container) {
+    container.innerHTML = buildHtml('formNovoMembroMinisterioCb');
+    container.querySelectorAll('input[name="formNovoMembroMinisterioCb"]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const checked = container.querySelectorAll('input[name="formNovoMembroMinisterioCb"]:checked');
+        if (checked.length > 3) {
+          cb.checked = false;
+          alert('Selecione no máximo 3 ministérios.');
+        }
+      });
     });
-  });
+  }
+
+  // Lista "ministérios em que já serviu" (sem limite)
+  const serviuContainer = document.getElementById('formNovoMembroMinisteriosServiuList');
+  if (serviuContainer) {
+    serviuContainer.innerHTML = buildHtml('formNovoMembroMinisterioServiuCb');
+  }
 }
 
 function toggleNovoMembroMinisteriosVisibility() {
-  const sel = document.getElementById('formNovoMembroInteresseServir');
-  const wrap = document.getElementById('formNovoMembroMinisteriosWrap');
-  if (!sel || !wrap) return;
-  wrap.style.display = sel.value === 'sim' ? '' : 'none';
-  if (sel.value !== 'sim') {
+  const jaVoluntario = document.getElementById('formNovoMembroJaVoluntario');
+  const serviuWrap = document.getElementById('formNovoMembroMinisteriosServiuWrap');
+  const interesseWrap = document.getElementById('formNovoMembroInteresseWrap');
+  const interesseSel = document.getElementById('formNovoMembroInteresseServir');
+  const interesseListWrap = document.getElementById('formNovoMembroMinisteriosWrap');
+  if (!jaVoluntario) return;
+
+  const ehVoluntario = jaVoluntario.value === 'sim';
+  const naoEhVoluntario = jaVoluntario.value === 'não';
+
+  // Já é voluntário → mostra "ministérios em que já serviu"
+  if (serviuWrap) serviuWrap.style.display = ehVoluntario ? '' : 'none';
+  if (!ehVoluntario) {
+    document.querySelectorAll('input[name="formNovoMembroMinisterioServiuCb"]').forEach((cb) => { cb.checked = false; });
+  }
+
+  // Não é voluntário → pergunta interesse; se interesse = sim, mostra ministérios de interesse
+  if (interesseWrap) interesseWrap.style.display = naoEhVoluntario ? '' : 'none';
+  if (!naoEhVoluntario && interesseSel) interesseSel.value = '';
+  const mostraInteresseList = naoEhVoluntario && interesseSel && interesseSel.value === 'sim';
+  if (interesseListWrap) interesseListWrap.style.display = mostraInteresseList ? '' : 'none';
+  if (!mostraInteresseList) {
     document.querySelectorAll('input[name="formNovoMembroMinisterioCb"]').forEach((cb) => { cb.checked = false; });
   }
 }
@@ -8992,6 +9032,18 @@ document.getElementById('formularioConsolidacaoForm')?.addEventListener('submit'
 });
 
 document.getElementById('formNovoMembroInteresseServir')?.addEventListener('change', toggleNovoMembroMinisteriosVisibility);
+document.getElementById('formNovoMembroJaVoluntario')?.addEventListener('change', toggleNovoMembroMinisteriosVisibility);
+
+// Tela de boas-vindas dos formulários públicos: botão "Iniciar" revela o formulário
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.form-welcome-start');
+  if (!btn) return;
+  const card = btn.closest('.auth-card');
+  if (card) {
+    card.classList.remove('form-not-started');
+    card.querySelector('.auth-form input, .auth-form select')?.focus?.();
+  }
+});
 
 document.getElementById('formularioNovoMembroForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -9006,24 +9058,35 @@ document.getElementById('formularioNovoMembroForm')?.addEventListener('submit', 
     const v = (cb.value || '').trim();
     if (v) ministeriosInteresse.push(v);
   });
-  const interesseServir = (document.getElementById('formNovoMembroInteresseServir')?.value || '').trim();
+  const ministeriosServiu = [];
+  document.querySelectorAll('input[name="formNovoMembroMinisterioServiuCb"]:checked').forEach((cb) => {
+    const v = (cb.value || '').trim();
+    if (v) ministeriosServiu.push(v);
+  });
+  const jaVoluntario = (document.getElementById('formNovoMembroJaVoluntario')?.value || '').trim();
+  const interesseServir = jaVoluntario === 'não'
+    ? (document.getElementById('formNovoMembroInteresseServir')?.value || '').trim()
+    : '';
   const payload = {
     tipo: 'novo_membro',
     eventoId: formularioNovoMembroPublicEventoId,
     igrejaSlug: getTenantSlugForLinks(),
     nomeCompleto: (document.getElementById('formNovoMembroNome')?.value || '').trim(),
     telefoneWhatsapp: (document.getElementById('formNovoMembroCelular')?.value || '').trim(),
-    endereco: (document.getElementById('formNovoMembroEndereco')?.value || '').trim(),
     email: (document.getElementById('formNovoMembroEmail')?.value || '').trim().toLowerCase(),
-    idade: (document.getElementById('formNovoMembroIdade')?.value || '').trim(),
+    dataNascimento: (document.getElementById('formNovoMembroNascimento')?.value || '').trim(),
+    bairro: (document.getElementById('formNovoMembroBairro')?.value || '').trim(),
+    cidade: (document.getElementById('formNovoMembroCidade')?.value || '').trim(),
+    genero: (document.getElementById('formNovoMembroGenero')?.value || '').trim(),
     estadoCivil: (document.getElementById('formNovoMembroEstadoCivil')?.value || '').trim(),
     batizado: (document.getElementById('formNovoMembroBatizado')?.value || '').trim(),
-    tempoFrequentaIgreja: (document.getElementById('formNovoMembroTempoIgreja')?.value || '').trim(),
+    jaVoluntario,
+    ministeriosServiu: jaVoluntario === 'sim' ? ministeriosServiu : [],
     interesseServir,
     ministeriosInteresse: interesseServir === 'sim' ? ministeriosInteresse.slice(0, 3) : [],
   };
   if (!payload.nomeCompleto) { if (errEl) errEl.textContent = 'Nome completo é obrigatório.'; return; }
-  if (!payload.telefoneWhatsapp) { if (errEl) errEl.textContent = 'Celular é obrigatório.'; return; }
+  if (!payload.telefoneWhatsapp) { if (errEl) errEl.textContent = 'Telefone é obrigatório.'; return; }
   if (!payload.email || !payload.email.includes('@')) { if (errEl) errEl.textContent = 'E-mail é obrigatório e válido.'; return; }
   if (interesseServir === 'sim' && ministeriosInteresse.length > 3) { if (errEl) errEl.textContent = 'Selecione no máximo 3 ministérios.'; return; }
   if (btn) btn.disabled = true;

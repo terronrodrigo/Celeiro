@@ -3179,47 +3179,71 @@ app.post('/api/formulario-publico', async (req, res) => {
       const telefoneWhatsapp = (body.telefoneWhatsapp || body.celular || '').trim() || '';
       const endereco = (body.endereco || body.enderecoCompleto || '').trim() || '';
       const idade = (body.idade || '').toString().trim() || '';
+      const dataNascimento = (body.dataNascimento || '').toString().trim() || '';
+      const bairro = (body.bairro || '').trim() || '';
+      const cidade = (body.cidade || '').trim() || '';
+      const generoRaw = (body.genero || '').trim();
+      const genero = ['masculino', 'feminino'].includes(generoRaw.toLowerCase())
+        ? generoRaw.charAt(0).toUpperCase() + generoRaw.slice(1).toLowerCase()
+        : '';
       const estadoCivil = (body.estadoCivil || '').trim() || '';
       const batizadoRaw = (body.batizado || '').trim().toLowerCase();
       const tempoFrequentaIgreja = (body.tempoFrequentaIgreja || '').trim() || '';
-      const interesseServir = (body.interesseServir || '').trim() || '';
+      const jaVoluntarioRaw = (body.jaVoluntario || '').trim().toLowerCase();
+      const jaVoluntario = jaVoluntarioRaw === 'sim' ? 'sim' : (jaVoluntarioRaw === 'não' || jaVoluntarioRaw === 'nao') ? 'não' : '';
+      let ministeriosServiu = [];
+      if (jaVoluntario === 'sim' && Array.isArray(body.ministeriosServiu)) {
+        ministeriosServiu = body.ministeriosServiu.map((m) => String(m || '').trim()).filter(Boolean).slice(0, 30);
+      }
+      const interesseServir = jaVoluntario === 'sim' ? '' : ((body.interesseServir || '').trim() || '');
       let ministeriosInteresse = [];
       if (Array.isArray(body.ministeriosInteresse)) {
         ministeriosInteresse = body.ministeriosInteresse.map((m) => String(m || '').trim()).filter(Boolean).slice(0, 3);
       }
-      if (interesseServir === 'sim' && ministeriosInteresse.length > 3) {
-        return sendError(res, 400, 'Selecione no máximo 3 ministérios de interesse.');
-      }
+      if (interesseServir !== 'sim') ministeriosInteresse = [];
       const dados = {
         nomeCompleto,
         email,
         telefoneWhatsapp,
         endereco,
         idade,
+        dataNascimento,
+        bairro,
+        cidade,
+        genero,
         estadoCivil,
         batizado: batizadoRaw === 'sim' ? 'sim' : batizadoRaw === 'não' || batizadoRaw === 'nao' ? 'não' : batizadoRaw,
         tempoFrequentaIgreja,
+        jaVoluntario,
+        ministeriosServiu,
         interesseServir,
         ministeriosInteresse,
       };
       const batizadoBool = batizadoRaw === 'sim' ? true : (batizadoRaw === 'não' || batizadoRaw === 'nao') ? false : null;
       if (isPostgres()) {
         const id = await pgCreateFormularioNovoMembro(igrejaDoc._id, evento._id, dados);
+        const ministeriosVoluntario = jaVoluntario === 'sim' ? ministeriosServiu : ministeriosInteresse;
         await pgEnsureVoluntarioInList({
           email,
           nome: nomeCompleto,
           telefone: telefoneWhatsapp,
-          ministerio: ministeriosInteresse.join(', '),
+          ministerio: ministeriosVoluntario.join(', '),
           igrejaId: igrejaDoc._id,
           fonte: 'formulario_novo_membro',
           batizado: batizadoBool,
           dadosExtra: {
-            potencialVoluntario: true,
+            potencialVoluntario: jaVoluntario !== 'sim',
+            jaVoluntario,
+            ministeriosServiu,
             interesseServir,
             tempoFrequentaIgreja,
             estadoCivil,
+            genero,
+            dataNascimento,
             idade,
             endereco,
+            bairro,
+            cidade,
             ministeriosInteresse,
           },
         });
