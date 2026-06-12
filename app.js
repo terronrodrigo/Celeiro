@@ -978,7 +978,7 @@ function setView(view, options) {
   if (pageTitle) {
     pageTitle.textContent = (view === 'escalas' && isVol)
       ? 'Escalas'
-      : ((meta && meta.title) || 'Voluntários · Celeiro São Paulo');
+      : ((meta && meta.title) || 'Celeiro SP');
   }
   if (pageSubtitle) {
     if (view === 'escalas' && isVol) {
