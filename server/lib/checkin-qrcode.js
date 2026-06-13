@@ -11,10 +11,10 @@ const CARD_W = 720;
 const HEADER_H = 132;
 const PAD_X = 48;
 const QR_PAD = 16;
-const ACCENT = '#f59e0b';
-const INK = '#1a1a2e';
-const MUTED = '#6b7280';
-const BG = '#f4f4f5';
+const ACCENT = '#8a342c';
+const INK = '#2b241e';
+const MUTED = '#6e6359';
+const BG = '#f7f1e8';
 
 function escapeXml(s) {
   return String(s || '')
@@ -84,8 +84,8 @@ function buildCardSvg({
   </defs>
   <rect width="${CARD_W}" height="${totalH}" fill="${BG}"/>
   <rect x="24" y="24" width="${CARD_W - 48}" height="${totalH - 48}" rx="20" fill="#ffffff" filter="url(#shadow)"/>
-  <rect x="24" y="24" width="${CARD_W - 48}" height="${HEADER_H}" rx="20" fill="${INK}"/>
-  <rect x="24" y="${24 + HEADER_H - 20}" width="${CARD_W - 48}" height="20" fill="${INK}"/>
+  <rect x="24" y="24" width="${CARD_W - 48}" height="${HEADER_H}" rx="20" fill="${ACCENT}"/>
+  <rect x="24" y="${24 + HEADER_H - 20}" width="${CARD_W - 48}" height="20" fill="${ACCENT}"/>
   <rect x="${PAD_X}" y="${qrTop - QR_PAD}" width="${CARD_W - PAD_X * 2}" height="${qrBoxSize}" rx="14"
     fill="#ffffff" stroke="#e5e7eb" stroke-width="2"/>
   ${titleSvg}

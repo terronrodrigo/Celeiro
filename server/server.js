@@ -76,7 +76,7 @@ import {
   pgAssociarEventoCheckinAEscala,
 } from './db/postgres/escalas-checkin.js';
 import { buildCheckinPublicUrl, resolveAppBaseUrl } from './lib/checkin-public-url.js';
-import { generateCheckinQrPng } from './lib/checkin-qrcode.js';
+import { generateCheckinQrPng, generateCheckinQrEmailBuffer } from './lib/checkin-qrcode.js';
 import { sendCheckinAberturaEmailsForEvento, runCheckinAberturaEmailJob } from './lib/checkin-abertura-email.js';
 import { runCheckinAgradecimentoEmailJob } from './lib/checkin-agradecimento-email.js';
 import {
@@ -3122,6 +3122,31 @@ app.get('/f/:code', async (req, res) => {
   } catch (err) {
     console.error('short link /f/:code:', err?.message || err);
     return res.redirect('/');
+  }
+});
+
+/** QR code público para emails (imagem hospedada — evita anexo quebrado em clientes mobile). */
+app.get('/api/public/checkin-qr/:eventoId', async (req, res) => {
+  try {
+    const eventoId = String(req.params.eventoId || '').replace(/\.png$/i, '').trim();
+    if (!eventoId) return res.status(404).end();
+    const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (!igrejaDoc) return res.status(404).end();
+    if (!isPostgres()) return res.status(503).end();
+    const evento = await pgFindEventoCheckinById(eventoId, igrejaDoc._id);
+    if (!evento) return res.status(404).end();
+    const checkinUrl = buildCheckinPublicUrl({
+      appBase: resolveAppBaseUrl(req),
+      eventoId: evento._id,
+      igrejaSlug: igrejaDoc.slug || DEFAULT_IGREJA_SLUG,
+    });
+    const png = await generateCheckinQrEmailBuffer(checkinUrl);
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(png);
+  } catch (err) {
+    console.error('public checkin-qr:', err?.message || err);
+    res.status(500).end();
   }
 });
 

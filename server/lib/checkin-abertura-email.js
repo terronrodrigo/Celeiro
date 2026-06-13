@@ -1,10 +1,15 @@
 import { BRAND_NAME } from './brand.js';
 import { Resend } from 'resend';
 import { formatDataPtBr, escalaDataToYMD } from './brasilia.js';
-import { buildCheckinPublicUrl } from './checkin-public-url.js';
-import { generateCheckinQrEmailBuffer, CHECKIN_QR_EMAIL_CID } from './checkin-qrcode.js';
+import {
+  buildCheckinPublicUrl,
+  buildCheckinQrImageUrl,
+  buildCheckinShortLinkTarget,
+} from './checkin-public-url.js';
+import { buildCeleiroEmailHtml, EMAIL_COLORS, escapeHtml } from './email-layout.js';
 import { pgListVoluntarios } from '../db/postgres/operational-data.js';
 import { pgFindIgrejaById } from '../db/postgres/repos.js';
+import { pgGetOrCreateShortLink } from '../db/postgres/short-links.js';
 import {
   pgListEventosCheckinAberturaEmailPendentes,
   pgTryClaimEventoAberturaEmail,
@@ -25,38 +30,58 @@ export function buildCheckinAberturaEmailHtml({
   eventoDataLabel,
   horarioTexto,
   checkinUrl,
+  checkinUrlDisplay,
+  qrImageUrl,
   igrejaNome,
 }) {
-  const n = (nome || '').trim() || 'voluntário(a)';
-  const titulo = (eventoLabel || 'Check-in de presença').trim();
-  const ig = (igrejaNome || 'Celeiro São Paulo').trim();
-  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Check-in aberto</title></head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;"><tr><td align="center">
-<table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
-  <tr><td style="background:#1a1a2e;padding:28px 36px;text-align:center;">
-    <p style="margin:0;font-size:12px;color:#f59e0b;text-transform:uppercase;letter-spacing:.08em;font-weight:600;">${ig}</p>
-    <h1 style="margin:8px 0 0;font-size:22px;color:#fff;font-weight:700;">Check-in aberto</h1>
-  </td></tr>
-  <tr><td style="padding:36px;">
-    <p style="margin:0 0 14px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${n}</strong>!</p>
-    <p style="margin:0 0 14px;font-size:16px;color:#374151;line-height:1.6;">O check-in de presença está aberto para <strong>${titulo}</strong>${eventoDataLabel ? ` (${eventoDataLabel})` : ''}.</p>
-    <p style="margin:0 0 20px;font-size:15px;color:#6b7280;line-height:1.5;">Janela: ${horarioTexto}.</p>
-    <p style="margin:0 0 16px;text-align:center;">
-      <a href="${checkinUrl}" style="display:inline-block;background:#f59e0b;color:#1a1a2e;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;font-size:16px;">Fazer check-in agora</a>
-    </p>
-    <p style="margin:0 0 8px;text-align:center;font-size:13px;color:#9ca3af;">Ou escaneie o QR code:</p>
-    <table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr><td align="center" style="padding:0 0 20px;">
-      <img src="cid:${CHECKIN_QR_EMAIL_CID}" width="280" height="280" alt="QR code check-in"
-        style="display:block;margin:0 auto;border:1px solid #e5e7eb;border-radius:8px;padding:8px;background:#fff;max-width:280px;height:auto;">
-    </td></tr></table>
-    <p style="margin:0;font-size:13px;color:#9ca3af;word-break:break-all;text-align:center;">${checkinUrl}</p>
-  </td></tr>
-  <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:18px 36px;text-align:center;">
-    <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.5;">${BRAND_NAME}</p>
-  </td></tr>
-</table>
-</td></tr></table></body></html>`;
+  const n = escapeHtml((nome || '').trim() || 'voluntário(a)');
+  const titulo = escapeHtml((eventoLabel || 'Check-in de presença').trim());
+  const ig = escapeHtml((igrejaNome || 'Celeiro São Paulo').trim());
+  const dataPart = eventoDataLabel ? ` <span style="color:${EMAIL_COLORS.textSecondary};">(${escapeHtml(eventoDataLabel)})</span>` : '';
+  const linkDisplay = escapeHtml(checkinUrlDisplay || checkinUrl);
+  const qrBlock = qrImageUrl
+    ? `<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:24px 0 0;">
+      <tr><td align="center" style="padding:16px;background:${EMAIL_COLORS.bg};border:1px solid ${EMAIL_COLORS.border};border-radius:12px;">
+        <p style="margin:0 0 12px;font-size:13px;color:${EMAIL_COLORS.textMuted};">Ou escaneie o QR code:</p>
+        <img src="${escapeHtml(qrImageUrl)}" width="200" height="200" alt="QR code check-in"
+          style="display:block;margin:0 auto;border-radius:8px;background:#fff;max-width:200px;height:auto;">
+      </td></tr>
+    </table>`
+    : '';
+
+  const bodyHtml = `
+    <p style="margin:0 0 14px;">Olá, <strong>${n}</strong>!</p>
+    <p style="margin:0 0 14px;">O check-in de presença está aberto para <strong>${titulo}</strong>${dataPart}.</p>
+    <p style="margin:0 0 8px;font-size:15px;color:${EMAIL_COLORS.textSecondary};">Janela: ${escapeHtml(horarioTexto)}.</p>
+    <p style="margin:16px 0 0;font-size:14px;color:${EMAIL_COLORS.textSecondary};">Igreja: <strong>${ig}</strong></p>
+    ${qrBlock}
+    <p style="margin:20px 0 0;font-size:13px;color:${EMAIL_COLORS.textMuted};text-align:center;">
+      Link direto:<br>
+      <a href="${escapeHtml(checkinUrl)}" style="color:${EMAIL_COLORS.accent};text-decoration:none;font-weight:600;">${linkDisplay}</a>
+    </p>`;
+
+  return buildCeleiroEmailHtml({
+    title: 'Check-in aberto',
+    preheader: `Check-in aberto para ${(eventoLabel || 'culto').trim()}${eventoDataLabel ? ` — ${eventoDataLabel}` : ''}`,
+    bodyHtml,
+    ctaHref: checkinUrl,
+    ctaLabel: 'Fazer check-in agora',
+    footerNote: BRAND_NAME,
+  });
+}
+
+async function resolveCheckinShareUrl({ appBase, eventoId, igrejaSlug, igrejaId }) {
+  const longUrl = buildCheckinPublicUrl({ appBase, eventoId, igrejaSlug });
+  try {
+    const target = buildCheckinShortLinkTarget({ eventoId, igrejaSlug });
+    if (!target) return { href: longUrl, display: longUrl };
+    const code = await pgGetOrCreateShortLink(target, igrejaId || null);
+    if (!code) return { href: longUrl, display: longUrl };
+    const shortUrl = `${appBase.replace(/\/$/, '')}/f/${code}`;
+    return { href: shortUrl, display: shortUrl };
+  } catch (_) {
+    return { href: longUrl, display: longUrl };
+  }
 }
 
 /**
@@ -69,15 +94,17 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
 
   const igreja = await pgFindIgrejaById(evento.igrejaId);
   const appBase = (opts.appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
-  const checkinUrl = buildCheckinPublicUrl({
+  const igrejaSlug = igreja?.slug || 'celeiro-sp';
+  const { href: checkinUrl, display: checkinUrlDisplay } = await resolveCheckinShareUrl({
     appBase,
     eventoId: evento._id,
-    igrejaSlug: igreja?.slug || 'celeiro-sp',
+    igrejaSlug,
+    igrejaId: evento.igrejaId,
   });
+  const qrImageUrl = buildCheckinQrImageUrl({ appBase, eventoId: evento._id, igrejaSlug });
   const ymd = escalaDataToYMD(evento.data);
   const eventoDataLabel = ymd ? formatDataPtBr(ymd) : '';
   const eventoLabel = (evento.label || '').trim() || `Culto ${eventoDataLabel}`;
-  const qrBuffer = await generateCheckinQrEmailBuffer(checkinUrl);
   const horarioTexto = horarioCheckinLabel(evento);
 
   let ev = evento;
@@ -121,14 +148,10 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
           eventoDataLabel,
           horarioTexto,
           checkinUrl,
+          checkinUrlDisplay,
+          qrImageUrl,
           igrejaNome: igreja?.nome,
         }),
-        attachments: [{
-          filename: 'checkin-qrcode.png',
-          content: qrBuffer,
-          contentType: 'image/png',
-          contentId: CHECKIN_QR_EMAIL_CID,
-        }],
       });
       if (error) {
         failed += 1;
