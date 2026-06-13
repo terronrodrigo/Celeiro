@@ -4525,12 +4525,16 @@ async function fetchEscalas() {
     }
     authFetch(`${API_BASE}/api/escalas`).then(r2 => r2.ok ? r2.json() : null).then(full => {
       if (Array.isArray(full)) {
-        const prevEscalaId = candidaturasAnaliseFilters?.escalaId || document.getElementById('analiseFilterEscala')?.value;
         escalasList = sortByDataSmart(full, 'data');
-        renderEscalasCandidatos();
-        if (prevEscalaId) {
-          const sel = document.getElementById('analiseFilterEscala');
-          if (sel) { sel.value = prevEscalaId; candidaturasAnaliseFilters = { ...candidaturasAnaliseFilters, escalaId: prevEscalaId }; }
+        if (!refreshAnaliseEscalaSelectOptions()) {
+          const prevEscalaId = getAnaliseEscalaId();
+          renderEscalasCandidatos();
+          if (prevEscalaId) {
+            candidaturasAnaliseFilters = { ...candidaturasAnaliseFilters, escalaId: prevEscalaId };
+            restoreAnaliseFiltersToDom();
+            if (candidaturasAll.length) renderAnaliseTab();
+            else fetchCandidaturasPorEscala(prevEscalaId);
+          }
         }
       }
     }).catch(() => {});
@@ -4928,13 +4932,95 @@ function renderEscalasCandidatos() {
   else renderEscalasCandidatosLider();
 }
 
+function getAnaliseEscalaId() {
+  return (candidaturasAnaliseFilters?.escalaId || document.getElementById('analiseFilterEscala')?.value || '').trim();
+}
+
+function isCandidaturaPendente(c) {
+  return (c?.status || 'pendente') === 'pendente';
+}
+
+function restoreAnaliseFiltersToDom() {
+  const f = candidaturasAnaliseFilters || {};
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (!el || val == null || val === '') return;
+    if (el.tagName === 'SELECT') {
+      const has = [...el.options].some((o) => o.value === String(val));
+      if (has) el.value = String(val);
+    } else {
+      el.value = String(val);
+    }
+  };
+  setVal('analiseFilterEscala', f.escalaId);
+  setVal('analiseFilterNome', f.nome);
+  setVal('analiseFilterData', f.data);
+  setVal('analiseFilterMinisterio', f.ministerio);
+  setVal('analiseFilterHistorico', f.historicoServico);
+}
+
+/** Atualiza só o select de escala (sem destruir tabela/checkboxes). */
+function refreshAnaliseEscalaSelectOptions() {
+  const sel = document.getElementById('analiseFilterEscala');
+  if (!sel || !Array.isArray(escalasList) || !escalasList.length) return false;
+  const prev = getAnaliseEscalaId();
+  sel.innerHTML = '<option value="">— Selecione a escala —</option>'
+    + escalasList.map((e) => `<option value="${escapeAttr(String(e._id))}">${escapeHtml(e.nome)}</option>`).join('');
+  if (prev && escalasList.some((e) => String(e._id) === String(prev))) {
+    sel.value = prev;
+    candidaturasAnaliseFilters = { ...candidaturasAnaliseFilters, escalaId: prev };
+  }
+  return true;
+}
+
+function updateAnaliseSelectionUi() {
+  const panel = document.getElementById('escalasAnalisePanel');
+  if (!panel) return;
+  const selectable = panel.querySelectorAll('input.row-check-cand:not(:disabled)');
+  const selectedCount = panel.querySelectorAll('input.row-check-cand:checked').length;
+  const countSelectedEl = document.getElementById('escalasAnaliseCountSelected');
+  if (countSelectedEl) countSelectedEl.textContent = selectedCount;
+  const btnAprovar = document.getElementById('btnAnaliseAprovar');
+  if (btnAprovar) btnAprovar.disabled = selectedCount === 0;
+  const allChecked = selectable.length > 0 && selectedCount === selectable.length;
+  const selAll = document.getElementById('analiseSelectAll');
+  const selAllHdr = document.getElementById('analiseSelectAllHeader');
+  if (selAll) selAll.checked = allChecked;
+  if (selAllHdr) selAllHdr.checked = allChecked;
+}
+
+let escalaAnaliseDelegationBound = false;
+function ensureAnalisePanelDelegation() {
+  if (escalaAnaliseDelegationBound) return;
+  escalaAnaliseDelegationBound = true;
+  document.addEventListener('change', (e) => {
+    const t = e.target;
+    if (!t?.closest?.('#escalasAnalisePanel')) return;
+    if (t.matches('input.row-check-cand')) {
+      updateAnaliseSelectionUi();
+      return;
+    }
+    if (t.id === 'analiseSelectAll' || t.id === 'analiseSelectAllHeader') {
+      const panel = document.getElementById('escalasAnalisePanel');
+      const checked = !!t.checked;
+      panel?.querySelectorAll('input.row-check-cand:not(:disabled)').forEach((cb) => { cb.checked = checked; });
+      const other = t.id === 'analiseSelectAll'
+        ? document.getElementById('analiseSelectAllHeader')
+        : document.getElementById('analiseSelectAll');
+      if (other) other.checked = checked;
+      updateAnaliseSelectionUi();
+    }
+  });
+}
+
 function getFilteredCandidaturasAnalise() {
   const list = Array.isArray(candidaturasAll) ? candidaturasAll : [];
   const f = candidaturasAnaliseFilters || {};
-  if (!(f.escalaId || '').trim()) return [];
+  const escalaId = getAnaliseEscalaId();
+  if (!escalaId) return [];
   const q = (f.nome || '').trim().toLowerCase();
   return list.filter((c) => {
-    if (f.escalaId && c.escalaId && String(c.escalaId) !== String(f.escalaId)) return false;
+    if (escalaId && c.escalaId && String(c.escalaId) !== String(escalaId)) return false;
     if (q) {
       const match = (c.nome || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q) || (c.escalaNome || '').toLowerCase().includes(q);
       if (!match) return false;
@@ -5328,7 +5414,7 @@ function renderAnaliseTab() {
   const rows = filtered.map((c) => {
     const dataStr = formatEscalaDateOnly(c.escalaData);
     const checked = selectedIds.has(String(c._id));
-    const podeSelecionar = c.status !== 'aprovado';
+    const podeSelecionar = isCandidaturaPendente(c);
     const statusOpts = statusOptions.map((o) => `<option value="${escapeAttr(o.v)}" ${c.status === o.v ? 'selected' : ''}>${escapeHtml(o.l)}</option>`).join('');
     return `<tr>
       <td class="col-check"><input type="checkbox" class="row-check-cand" data-cand-id="${escapeAttr(String(c._id))}" ${podeSelecionar ? '' : 'disabled'} ${checked ? 'checked' : ''}></td>
@@ -5348,7 +5434,7 @@ function renderAnaliseTab() {
 
   const tbody = panel.querySelector('#escalasAnaliseBody');
   const selEscala = document.getElementById('analiseFilterEscala');
-  const escalaSelected = selEscala && (selEscala.value || '').trim();
+  const escalaSelected = getAnaliseEscalaId();
   const emptyMsg = !escalaSelected
     ? `<div class="escala-empty-state"><p class="escala-empty-state-title">Selecione uma escala</p><p class="escala-empty-state-text">No filtro <strong>Escala</strong> acima, escolha um culto para carregar candidaturas, totais e aprovações em lote.</p></div>`
     : `<div class="escala-empty-state"><p class="escala-empty-state-title">Nenhuma candidatura nesta visão</p><p class="escala-empty-state-text">Tente limpar filtros ou aguarde novas inscrições. Para outro culto, troque a escala no filtro.</p></div>`;
@@ -5356,17 +5442,10 @@ function renderAnaliseTab() {
 
   const countEl = document.getElementById('escalasAnaliseCount');
   if (countEl) countEl.textContent = filtered.length;
-  const selectedCount = panel.querySelectorAll('input.row-check-cand:checked').length;
-  const countSelectedEl = document.getElementById('escalasAnaliseCountSelected');
-  if (countSelectedEl) countSelectedEl.textContent = selectedCount;
-  const btnAprovar = document.getElementById('btnAnaliseAprovar');
-  if (btnAprovar) btnAprovar.disabled = selectedCount === 0;
+  updateAnaliseSelectionUi();
 
   panel.querySelectorAll('.link-voluntario').forEach((btn) => {
     btn.addEventListener('click', () => openPerfilVoluntario(btn.getAttribute('data-email')));
-  });
-  panel.querySelectorAll('input.row-check-cand').forEach((cb) => {
-    cb.addEventListener('change', () => renderAnaliseTab());
   });
   panel.querySelectorAll('select.escala-status-select').forEach((sel) => {
     sel.addEventListener('change', async (e) => {
@@ -5958,27 +6037,34 @@ async function loadVisaoConsolidada(opts = {}) {
   }
 }
 
+let visaoConsolidadaDelegationBound = false;
 function bindVisaoConsolidadaEvents() {
-  const reloadFromInput = () => {
-    const data = document.getElementById('visaoConsolidadaData')?.value || '';
-    loadVisaoConsolidada(data ? { data } : { proximoDomingo: true });
-  };
-  document.getElementById('visaoConsolidadaData')?.addEventListener('change', reloadFromInput);
-  document.getElementById('btnVisaoProximoDomingo')?.addEventListener('click', () => {
-    const dateInput = document.getElementById('visaoConsolidadaData');
-    if (dateInput) dateInput.value = '';
-    loadVisaoConsolidada({ proximoDomingo: true });
-  });
-  document.getElementById('btnVisaoConsolidadaCopiar')?.addEventListener('click', async () => {
-    const txt = document.getElementById('visaoConsolidadaTexto')?.dataset?.visaoTexto || document.getElementById('visaoConsolidadaTexto')?.textContent || '';
-    if (!txt.trim()) return;
-    try {
-      await navigator.clipboard.writeText(txt);
-      showToast('Relatório copiado!', 'success');
-    } catch (_) {
-      prompt('Copie o relatório:', txt);
-    }
-  });
+  if (!visaoConsolidadaDelegationBound) {
+    visaoConsolidadaDelegationBound = true;
+    document.addEventListener('change', (e) => {
+      if (e.target?.id !== 'visaoConsolidadaData') return;
+      const data = e.target.value || '';
+      loadVisaoConsolidada(data ? { data } : { proximoDomingo: true });
+    });
+    document.addEventListener('click', async (e) => {
+      if (e.target?.id === 'btnVisaoProximoDomingo') {
+        const dateInput = document.getElementById('visaoConsolidadaData');
+        if (dateInput) dateInput.value = '';
+        loadVisaoConsolidada({ proximoDomingo: true });
+        return;
+      }
+      if (e.target?.id === 'btnVisaoConsolidadaCopiar') {
+        const txt = document.getElementById('visaoConsolidadaTexto')?.dataset?.visaoTexto || document.getElementById('visaoConsolidadaTexto')?.textContent || '';
+        if (!txt.trim()) return;
+        try {
+          await navigator.clipboard.writeText(txt);
+          showToast('Relatório copiado!', 'success');
+        } catch (_) {
+          prompt('Copie o relatório:', txt);
+        }
+      }
+    });
+  }
   loadVisaoConsolidada({ proximoDomingo: true });
 }
 
@@ -6034,6 +6120,7 @@ function buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasUnicas) 
 }
 
 function bindAnalisePanelEvents(container) {
+  ensureAnalisePanelDelegation();
   bindVisaoConsolidadaEvents();
   const applyAnaliseFilters = () => {
     candidaturasAnaliseFilters = {
@@ -6072,22 +6159,13 @@ function bindAnalisePanelEvents(container) {
     candidaturasAll = [];
     renderAnaliseTab();
   });
-  document.getElementById('analiseSelectAll')?.addEventListener('change', (e) => {
-    document.getElementById('escalasAnalisePanel')?.querySelectorAll('input.row-check-cand:not(:disabled)').forEach((cb) => { cb.checked = e.target.checked; });
-    renderAnaliseTab();
-  });
-  document.getElementById('analiseSelectAllHeader')?.addEventListener('change', (e) => {
-    document.getElementById('analiseSelectAll').checked = e.target.checked;
-    document.getElementById('escalasAnalisePanel')?.querySelectorAll('input.row-check-cand:not(:disabled)').forEach((cb) => { cb.checked = e.target.checked; });
-    renderAnaliseTab();
-  });
   document.getElementById('btnAnaliseAprovar')?.addEventListener('click', async () => {
     const ids = [...(document.getElementById('escalasAnalisePanel')?.querySelectorAll('input.row-check-cand:checked') || [])].map((cb) => cb.getAttribute('data-cand-id')).filter(Boolean);
     if (!ids.length) { alert('Selecione ao menos uma candidatura.'); return; }
     try {
       const r = await authFetch(`${API_BASE}/api/candidaturas/bulk-status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, status: 'aprovado' }) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
-      const escalaId = candidaturasAnaliseFilters?.escalaId;
+      const escalaId = getAnaliseEscalaId();
       await fetchCandidaturasPorEscala(escalaId);
       const r2 = await authFetch(`${API_BASE}/api/escalas`);
       if (r2.ok) escalasList = await r2.json();
@@ -6264,7 +6342,10 @@ function renderEscalasCandidatosAdmin() {
 
   container.innerHTML = buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasOptions);
   bindAnalisePanelEvents(container);
-  renderAnaliseTab();
+  restoreAnaliseFiltersToDom();
+  const escalaId = getAnaliseEscalaId();
+  if (escalaId && !candidaturasAll.length) fetchCandidaturasPorEscala(escalaId);
+  else renderAnaliseTab();
 }
 
 /** Escala → Candidatos (lider): mesmo painel, sem tab criar */
@@ -6341,7 +6422,10 @@ function renderEscalasCandidatosLider() {
 
   container.innerHTML = openLinksHtml + buildAnalisePanelHtml(escalasOptions, ministeriosOptions, datasOptions);
   bindAnalisePanelEvents(container);
-  renderAnaliseTab();
+  restoreAnaliseFiltersToDom();
+  const escalaId = getAnaliseEscalaId();
+  if (escalaId && !candidaturasAll.length) fetchCandidaturasPorEscala(escalaId);
+  else renderAnaliseTab();
 
   container.querySelectorAll('[data-escala-open-copy]').forEach((btn) => {
     btn.addEventListener('click', async () => {

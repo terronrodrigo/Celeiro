@@ -949,6 +949,8 @@ body::before {
 }
 .col-check input {
   cursor: pointer;
+  position: relative;
+  z-index: 1;
 }
 .table-footer {
   display: flex;
@@ -2176,6 +2178,12 @@ body::before {
     z-index: 2;
     background: var(--bg-card);
     box-shadow: 4px 0 8px rgba(0, 0, 0, 0.15);
+  }
+  .data-table td.col-check input,
+  .data-table th.col-check input {
+    pointer-events: auto;
+    position: relative;
+    z-index: 3;
   }
 }
 
