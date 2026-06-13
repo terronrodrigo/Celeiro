@@ -3778,10 +3778,11 @@ function renderTable(list) {
     const tr = document.createElement('tr');
     const email = (v.email || '').toLowerCase();
     const checked = selectedEmails.has(email);
+    const temInscricaoNovoMembro = Number(v.totalInscricoesNovoMembro) > 0;
     const origemBadge = v.fonte === 'checkin'
       ? '<span title="Adicionado automaticamente após check-in" style="margin-left:6px;font-size:.7rem;background:#e0e7ff;color:#3730a3;border:1px solid #a5b4fc;padding:1px 6px;border-radius:6px;font-weight:600">via check-in</span>'
-      : v.fonte === 'formulario_novo_membro'
-        ? '<span title="Cadastrado pelo formulário de novos membros" style="margin-left:6px;font-size:.7rem;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;padding:1px 6px;border-radius:6px;font-weight:600">potencial voluntário</span>'
+      : (v.fonte === 'formulario_novo_membro' || temInscricaoNovoMembro)
+        ? '<span title="Inscrição no formulário de novos membros" style="margin-left:6px;font-size:.7rem;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;padding:1px 6px;border-radius:6px;font-weight:600">novos membros</span>'
         : '';
     tr.innerHTML = `
       <td class="col-check"><input type="checkbox" class="row-check" data-email="${escapeAttr(email)}" ${checked ? 'checked' : ''}></td>
@@ -5238,6 +5239,7 @@ async function exportFormularioNovoMembroCsvForEvent(eventId, eventLabel) {
       'Estado civil',
       'Batizado',
       'Já é voluntário',
+      'Já estava na base',
       'Ministérios em que já serviu',
       'Interesse em servir',
       'Ministérios de interesse',
@@ -5259,6 +5261,7 @@ async function exportFormularioNovoMembroCsvForEvent(eventId, eventLabel) {
       doc.estadoCivil || '',
       (doc.batizado || '').trim(),
       (doc.jaVoluntario || '').trim(),
+      doc.jaNaBase ? 'sim' : 'não',
       Array.isArray(doc.ministeriosServiu) ? doc.ministeriosServiu.join('; ') : '',
       (doc.interesseServir || '').trim(),
       Array.isArray(doc.ministeriosInteresse) ? doc.ministeriosInteresse.join('; ') : '',

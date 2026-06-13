@@ -3277,11 +3277,32 @@ app.post('/api/formulario-publico', async (req, res) => {
         ministeriosServiu,
         interesseServir,
         ministeriosInteresse,
+        eventoId: String(evento._id),
       };
       const batizadoBool = batizadoRaw === 'sim' ? true : (batizadoRaw === 'não' || batizadoRaw === 'nao') ? false : null;
+      const ministeriosVoluntario = jaVoluntario === 'sim' ? ministeriosServiu : ministeriosInteresse;
+      const voluntarioExtras = {
+        potencialVoluntario: jaVoluntario !== 'sim',
+        jaVoluntario,
+        ministeriosServiu,
+        interesseServir,
+        tempoFrequentaIgreja,
+        estadoCivil,
+        genero,
+        dataNascimento,
+        idade,
+        endereco,
+        bairro,
+        cidade,
+        ministeriosInteresse,
+      };
+      const inscricaoNovoMembro = { eventoId: String(evento._id), jaVoluntario };
+
       if (isPostgres()) {
+        const jaNaBase = !!(await pgFindVoluntarioByEmail(igrejaDoc._id, email));
+        dados.jaNaBase = jaNaBase;
+        inscricaoNovoMembro.jaNaBase = jaNaBase;
         const id = await pgCreateFormularioNovoMembro(igrejaDoc._id, evento._id, dados);
-        const ministeriosVoluntario = jaVoluntario === 'sim' ? ministeriosServiu : ministeriosInteresse;
         await pgEnsureVoluntarioInList({
           email,
           nome: nomeCompleto,
@@ -3290,30 +3311,52 @@ app.post('/api/formulario-publico', async (req, res) => {
           igrejaId: igrejaDoc._id,
           fonte: 'formulario_novo_membro',
           batizado: batizadoBool,
-          dadosExtra: {
-            potencialVoluntario: jaVoluntario !== 'sim',
-            jaVoluntario,
-            ministeriosServiu,
-            interesseServir,
-            tempoFrequentaIgreja,
-            estadoCivil,
-            genero,
-            dataNascimento,
-            idade,
-            endereco,
-            bairro,
-            cidade,
-            ministeriosInteresse,
-          },
+          dadosExtra: voluntarioExtras,
+          inscricaoNovoMembro,
         });
-        return res.status(201).json({ ok: true, message: 'Formulário enviado com sucesso! Obrigado por se cadastrar.', id });
+        invalidateCache();
+        return res.status(201).json({
+          ok: true,
+          message: jaNaBase
+            ? 'Inscrição registrada com sucesso!'
+            : 'Formulário enviado com sucesso! Obrigado por se cadastrar.',
+          id,
+          jaNaBase,
+        });
       }
+      const jaNaBaseMongo = !!(await Voluntario.findOne({ email, igrejaId: igrejaDoc._id }).select('_id').lean());
+      dados.jaNaBase = jaNaBaseMongo;
+      inscricaoNovoMembro.jaNaBase = jaNaBaseMongo;
       const doc = await FormularioNovoMembro.create({
         igrejaId: igrejaDoc._id,
         eventoId: evento._id,
         ...dados,
       });
-      return res.status(201).json({ ok: true, message: 'Formulário enviado com sucesso! Obrigado por se cadastrar.', id: doc._id });
+      const volFilter = { email, igrejaId: igrejaDoc._id };
+      const volExisting = await Voluntario.findOne(volFilter).lean();
+      const volPatch = {
+        nome: nomeCompleto || volExisting?.nome,
+        telefone: telefoneWhatsapp || volExisting?.telefone,
+        ministerio: ministeriosVoluntario.join(', ') || volExisting?.ministerio,
+        ativo: true,
+      };
+      if (batizadoBool === true || batizadoBool === false) {
+        if (volExisting?.batizado !== true && volExisting?.batizado !== false) volPatch.batizado = batizadoBool;
+      }
+      if (!volExisting) {
+        await Voluntario.create({ ...volPatch, email, igrejaId: igrejaDoc._id, fonte: 'manual' });
+      } else {
+        await Voluntario.updateOne(volFilter, { $set: volPatch });
+      }
+      invalidateCache();
+      return res.status(201).json({
+        ok: true,
+        message: jaNaBaseMongo
+          ? 'Inscrição registrada com sucesso!'
+          : 'Formulário enviado com sucesso! Obrigado por se cadastrar.',
+        id: doc._id,
+        jaNaBase: jaNaBaseMongo,
+      });
     }
 
     // apresentação
@@ -6731,6 +6774,8 @@ app.get('/api/dashboard/resumo', requireAuth, resolveTenant, async (req, res) =>
       topMinisterios,
       formularios: {
         membros: (m1.rows[0]?.n || 0) + (m1b.rows[0]?.n || 0),
+        novosMembros: m1b.rows[0]?.n || 0,
+        membrosLegado: m1.rows[0]?.n || 0,
         consolidacao: m2.rows[0]?.n || 0,
         batismo: m3.rows[0]?.n || 0,
         apresentacao: m4.rows[0]?.n || 0,

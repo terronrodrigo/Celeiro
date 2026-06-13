@@ -38,6 +38,8 @@ function mapVoluntarioFromRow(row) {
     batizado: normBatizadoPerfil(d.batizado),
     ativo: row.ativo !== false,
     fonte: row.fonte || 'postgres',
+    totalInscricoesNovoMembro: Number(d.totalInscricoesNovoMembro) || 0,
+    ultimaInscricaoNovoMembro: d.ultimaInscricaoNovoMembro || null,
   };
 }
 
@@ -276,13 +278,40 @@ export async function pgResolveDestinatariosEscalaEmail(igrejaId, { destinatario
   return [...byEmail.values()];
 }
 
+function applyInscricaoNovoMembro(dados, inscricaoNovoMembro) {
+  if (!inscricaoNovoMembro || typeof inscricaoNovoMembro !== 'object') return;
+  const entry = {
+    eventoId: inscricaoNovoMembro.eventoId || null,
+    em: new Date().toISOString(),
+    jaVoluntario: inscricaoNovoMembro.jaVoluntario || '',
+    jaNaBase: !!inscricaoNovoMembro.jaNaBase,
+  };
+  const hist = Array.isArray(dados.inscricoesNovoMembro) ? [...dados.inscricoesNovoMembro] : [];
+  hist.unshift(entry);
+  dados.inscricoesNovoMembro = hist.slice(0, 50);
+  dados.totalInscricoesNovoMembro = Number(dados.totalInscricoesNovoMembro || 0) + 1;
+  dados.ultimaInscricaoNovoMembro = entry;
+}
+
+function mergeNovoMembroProfileFields(dados, patchExtra) {
+  if (!patchExtra || typeof patchExtra !== 'object') return;
+  for (const key of ['bairro', 'cidade', 'genero', 'estadoCivil', 'dataNascimento', 'idade', 'endereco']) {
+    const incoming = String(patchExtra[key] ?? '').trim();
+    const current = String(dados[key] ?? '').trim();
+    if (incoming && !current) dados[key] = incoming;
+  }
+}
+
 /** Garante email na lista de voluntários (cadastro, check-in, registro de conta). */
 /**
  * Garante que o email esteja em `voluntarios` para a igreja.
  * fonte: 'cadastro' (default), 'checkin', 'planilha', etc. — registra como veio.
  * Se já existe, atualiza nome/ministerio (não sobrescreve fonte para preservar histórico).
+ * inscricaoNovoMembro: registra inscrição no evento mesmo quando a pessoa já estava na base.
  */
-export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igrejaId, fonte = 'cadastro', telefone, batizado, dadosExtra } = {}) {
+export async function pgEnsureVoluntarioInList({
+  email, nome, ministerio, igrejaId, fonte = 'cadastro', telefone, batizado, dadosExtra, inscricaoNovoMembro,
+} = {}) {
   const em = (email || '').toString().trim().toLowerCase();
   if (!em || !em.includes('@') || !igrejaId) return null;
   const pool = getPostgresPool();
@@ -314,7 +343,9 @@ export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igreja
         dados.batizado = batMerge;
       }
     }
+    mergeNovoMembroProfileFields(dados, patchExtra);
     if (patchExtra) Object.assign(dados, patchExtra);
+    applyInscricaoNovoMembro(dados, inscricaoNovoMembro);
     await pool.query(
       `UPDATE voluntarios SET dados = $3::jsonb, nome = COALESCE(NULLIF($4, ''), nome)
        WHERE id = $1 AND igreja_id = $2`,
@@ -327,7 +358,9 @@ export async function pgEnsureVoluntarioInList({ email, nome, ministerio, igreja
   const dados = { nome: nomeStr || em, ministerios: mins0, ministerio: mins0.join(', ') };
   if (telStr) dados.telefone = telStr;
   if (batMerge !== null) dados.batizado = batMerge;
+  mergeNovoMembroProfileFields(dados, patchExtra);
   if (patchExtra) Object.assign(dados, patchExtra);
+  applyInscricaoNovoMembro(dados, inscricaoNovoMembro);
   await pool.query(
     `INSERT INTO voluntarios (id, igreja_id, email, nome, dados, ativo, fonte)
      VALUES ($1, $2, $3, $4, $5::jsonb, TRUE, $6)`,
