@@ -1,4 +1,7 @@
-/* Plataforma de gestão de voluntários — Celeiro São Paulo (front-end + Resend) */
+/* Celeiro São Paulo — House of Prayer (front-end) */
+const BRAND_NAME = 'Celeiro São Paulo - House of Prayer';
+const BRAND_SHORT = 'Celeiro São Paulo';
+const BRAND_TAGLINE = 'House of Prayer';
 // API na mesma origem (frontend servido pelo Express em / e API em /api/*)
 const API_BASE = '';
 const AUTH_STORAGE_KEY = 'celeiro_admin_auth';
@@ -916,7 +919,7 @@ let checkinSortOrder = 'date-desc';
 let checkinMinisterioSortOrder = 'date-desc';
 
 const VIEW_META = {
-  resumo: { title: 'Resumo', subtitle: 'Visão geral da plataforma e indicadores.', role: 'admin' },
+  resumo: { title: 'Resumo', subtitle: 'Visão geral — Celeiro São Paulo, House of Prayer.', role: 'admin' },
   voluntarios: { title: 'Voluntários', subtitle: 'Lista, filtros e envio de email.', role: 'admin' },
   ministros: { title: 'Ministérios', subtitle: 'Crie ministérios e defina líderes.', role: 'admin' },
   usuarios: { title: 'Usuários', subtitle: 'Perfis e permissões.', role: 'admin' },
@@ -978,7 +981,7 @@ function setView(view, options) {
   if (pageTitle) {
     pageTitle.textContent = (view === 'escalas' && isVol)
       ? 'Escalas'
-      : ((meta && meta.title) || 'Celeiro SP');
+      : ((meta && meta.title) || BRAND_SHORT);
   }
   if (pageSubtitle) {
     if (view === 'escalas' && isVol) {
@@ -988,7 +991,7 @@ function setView(view, options) {
     } else if (view === 'historico' && (authRole === 'lider' || isLider)) {
       pageSubtitle.textContent = 'Participação dos voluntários nos ministérios sob sua liderança.';
     } else {
-      pageSubtitle.textContent = (meta && meta.subtitle) || '';
+      pageSubtitle.textContent = (meta && meta.subtitle) || BRAND_TAGLINE;
     }
   }
   if (searchBox) searchBox.style.display = (isAdmin || isLider || authRole === 'lider') && view === 'voluntarios' ? 'flex' : 'none';
@@ -4720,7 +4723,7 @@ function renderResumoGlobal(data) {
 
   setTxt('resumoPresencaTaxa', pm.taxa != null ? `${pm.taxa}%` : '—');
   if (pm.taxa != null && pm.baseEscalas > 0) {
-    setTxt('resumoPresencaDetalhe', `${pm.presentes || 0} presentes de ${pm.aprovados || 0} aprovados · ${pm.baseEscalas} escala(s) no mês`);
+    setTxt('resumoPresencaDetalhe', `${pm.presentes || 0} fizeram check-in de ${pm.aprovados || 0} aprovados · ${pm.baseEscalas} escala(s) no mês`);
   } else {
     setTxt('resumoPresencaDetalhe', 'Média de aprovados que fizeram check-in (escalas encerradas no mês)');
   }
@@ -4860,7 +4863,6 @@ async function fetchEscalaEmDestaque() {
       const totals = item.totals || { aprovados: 0, inscritos: 0, presentes: 0, faltaram: 0, pendentes: 0, taxa: 0, checkinsTotal: 0, checkinsComEscala: 0, checkinsSemEscala: 0 };
       const ckTotal = totals.checkinsTotal ?? 0;
       const ckSemEscala = totals.checkinsSemEscala ?? 0;
-      const ckNaEscala = totals.checkinsComEscala ?? totals.presentes ?? 0;
       const taxaBase = totals.inscritos > 0 ? totals.inscritos : totals.aprovados;
       const taxa = totals.taxa ?? (taxaBase > 0 ? Math.round((totals.presentes / taxaBase) * 100) : 0);
       const [bg, fg, sitLabel] = sitMap[item.situacao] || sitMap.futura;
@@ -4880,10 +4882,9 @@ async function fetchEscalaEmDestaque() {
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             ${tile('Check-ins', ckTotal, '#0f766e')}
-            ${tile('Na escala', ckNaEscala, '#166534')}
+            ${tile('Presentes', totals.presentes, '#15803d')}
             ${tile('Sem escala', ckSemEscala, '#b45309')}
             ${tile('Inscritos', totals.inscritos ?? totals.aprovados, '#1a1a2e')}
-            ${tile('Presentes', totals.presentes, '#15803d')}
             ${tile('Aguardando', totals.pendentes, '#3730a3')}
             ${tile('Faltaram', totals.faltaram, '#991b1b')}
           </div>

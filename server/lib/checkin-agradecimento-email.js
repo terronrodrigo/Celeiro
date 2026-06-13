@@ -1,3 +1,4 @@
+import { BRAND_NAME } from './brand.js';
 import { Resend } from 'resend';
 import {
   addDaysYmd,
@@ -122,7 +123,7 @@ export function buildCheckinAgradecimentoEmailHtml({
     <p style="margin:16px 0 0;font-size:14px;color:#6b7280;line-height:1.5;">Contamos com você. Até o próximo culto!</p>
   </td></tr>
   <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:18px 36px;text-align:center;">
-    <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.5;">Equipe de Voluntários · ${ig}</p>
+    <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.5;">${BRAND_NAME}</p>
   </td></tr>
 </table>
 </td></tr></table></body></html>`;

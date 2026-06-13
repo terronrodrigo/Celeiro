@@ -746,7 +746,7 @@ export async function pgCheckinsBreakdownByDay(igrejaId, dataYmd = null) {
   }
   const pool = getPostgresPool();
   const { rows } = await pool.query(
-    `WITH checkins_dia AS (
+    `     WITH checkins_dia AS (
        SELECT ch.id, ch.email, ch.evento_id, ch.candidatura_id,
               LOWER(TRIM(ch.email)) AS em
        FROM checkins ch
@@ -756,6 +756,11 @@ export async function pgCheckinsBreakdownByDay(igrejaId, dataYmd = null) {
            OR (
              ch.timestamp_ms IS NOT NULL
              AND (to_timestamp(ch.timestamp_ms / 1000.0) AT TIME ZONE 'America/Sao_Paulo')::date = $4::date
+           )
+           OR EXISTS (
+             SELECT 1 FROM eventos_checkin ec
+             WHERE ec.id = ch.evento_id AND ec.igreja_id = ch.igreja_id
+               AND ec.data = $4::date
            )
          )
      ),
@@ -810,4 +815,14 @@ export async function pgCheckinsBreakdownByDay(igrejaId, dataYmd = null) {
     }
   }
   return { total, comEscala, semEscala, byEvento, dataYmd: ymd };
+}
+
+/** Total de check-ins vinculados a um evento de culto (mesma base de "presentes" na escala). */
+export async function pgCountCheckinsByEvento(igrejaId, eventoId) {
+  if (!igrejaId || !eventoId) return 0;
+  const { rows } = await getPostgresPool().query(
+    `SELECT COUNT(*)::int AS n FROM checkins WHERE igreja_id = $1 AND evento_id = $2`,
+    [igrejaId, eventoId],
+  );
+  return rows[0]?.n || 0;
 }

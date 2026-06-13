@@ -1,3 +1,4 @@
+import { BRAND_NAME } from './brand.js';
 import { Resend } from 'resend';
 import { pgFindIgrejaById } from '../db/postgres/repos.js';
 import { pgResolveDestinatariosReengajamento } from '../db/postgres/voluntarios-engajamento.js';
@@ -37,7 +38,7 @@ export function buildVoluntarioReengajamentoEmailHtml({ nome, mensagemHtml, igre
     <p style="margin:0;font-size:14px;color:#6b7280;line-height:1.5;">Obrigado por fazer parte da equipe de voluntários. Contamos com você!</p>
   </td></tr>
   <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:18px 36px;text-align:center;">
-    <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.5;">Equipe de Voluntários · ${escapeHtmlEmail(ig).replace(/&lt;br&gt;/g, '<br>')}</p>
+    <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.5;">${BRAND_NAME}</p>
   </td></tr>
 </table>
 </td></tr></table></body></html>`;
@@ -69,7 +70,7 @@ export async function sendVoluntarioReengajamentoEmails({
   const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
   const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
   const resend = new Resend(apiKey);
-  const igNome = igreja?.nome || 'Voluntários Celeiro';
+  const igNome = igreja?.nome || BRAND_NAME;
   const subject = `${igNome} — confira seu check-in e participação em escalas`;
 
   let sent = 0;

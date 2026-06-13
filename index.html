@@ -8,10 +8,10 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
-  <title>Celeiro SP</title>
-  <meta name="description" content="Igreja Celeiro São Paulo.">
-  <meta property="og:title" content="Celeiro SP">
-  <meta property="og:description" content="Igreja Celeiro São Paulo.">
+  <title>Celeiro São Paulo - House of Prayer</title>
+  <meta name="description" content="Celeiro São Paulo — House of Prayer.">
+  <meta property="og:title" content="Celeiro São Paulo - House of Prayer">
+  <meta property="og:description" content="Celeiro São Paulo — House of Prayer.">
   <meta property="og:type" content="website">
   <!--OG_META_START-->
   <meta property="og:url" content="__OG_BASE_URL__/">
@@ -152,8 +152,8 @@
           <span></span><span></span><span></span>
         </button>
         <div class="page-title">
-          <h1 id="pageTitle">Voluntários</h1>
-          <p class="subtitle" id="pageSubtitle">Plataforma de gestão de voluntários — Igreja Celeiro São Paulo.</p>
+          <h1 id="pageTitle">Celeiro São Paulo</h1>
+          <p class="subtitle" id="pageSubtitle">House of Prayer</p>
         </div>
         <div class="top-actions">
           <div class="igreja-select-wrap" id="igrejaSelectWrap" style="display: none;" title="Troca o contexto de dados (admin global)">
@@ -353,14 +353,6 @@
               </div>
             </div>
             <div class="kpi-card">
-              <div class="kpi-header"><span class="kpi-label" id="resumoCkLabel">Check-ins · último culto</span></div>
-              <div class="kpi-value" id="resumoCkUltimoCulto">—</div>
-              <div class="kpi-footer">
-                <span id="resumoCkUltimoCultoNome">—</span><br>
-                Semana: <span id="resumoCkSemana">0</span> · Mês: <span id="resumoCkMes">0</span>
-              </div>
-            </div>
-            <div class="kpi-card">
               <div class="kpi-header"><span class="kpi-label">Taxa de presença (mês)</span></div>
               <div class="kpi-value" id="resumoPresencaTaxa">—</div>
               <div class="kpi-footer"><span id="resumoPresencaDetalhe">—</span></div>
@@ -414,24 +406,44 @@
             </div>
           </section>
 
-          <!-- Série 7d + Top ministérios -->
-          <section class="charts-row">
-            <div class="chart-card chart-main">
-              <div class="chart-header">
-                <h2>Check-ins · últimos 7 dias</h2>
-                <p class="auth-subtitle" style="margin:4px 0 0">Total de presenças registradas por dia</p>
-              </div>
-              <div class="chart-container">
-                <canvas id="resumoCheckins7dChart"></canvas>
-              </div>
-            </div>
-            <div class="chart-card chart-side">
+          <!-- Gráficos de atividade (antes dos check-ins) -->
+          <section class="charts-row" style="margin-bottom:16px">
+            <div class="chart-card chart-side" style="flex:1 1 280px">
               <div class="chart-header">
                 <h2>Ministérios mais ativos</h2>
                 <p class="auth-subtitle" style="margin:4px 0 0">Check-ins por ministério neste mês</p>
               </div>
               <div class="chart-container" id="resumoTopMinisteriosBox" style="padding:8px 12px;display:flex;flex-direction:column;gap:8px"></div>
             </div>
+          </section>
+
+          <!-- Check-ins (final da página) -->
+          <section id="resumoCheckinsSection" style="margin-bottom:8px">
+            <div class="chart-header" style="margin-bottom:12px">
+              <h2>Check-ins</h2>
+              <p class="auth-subtitle" style="margin:4px 0 0">Presenças registradas por culto e tendência da semana</p>
+            </div>
+            <section class="kpi-grid" style="margin-bottom:16px">
+              <div class="kpi-card">
+                <div class="kpi-header"><span class="kpi-label" id="resumoCkLabel">Check-ins · último culto</span></div>
+                <div class="kpi-value" id="resumoCkUltimoCulto">—</div>
+                <div class="kpi-footer">
+                  <span id="resumoCkUltimoCultoNome">—</span><br>
+                  Semana: <span id="resumoCkSemana">0</span> · Mês: <span id="resumoCkMes">0</span>
+                </div>
+              </div>
+            </section>
+            <section class="charts-row">
+              <div class="chart-card chart-main">
+                <div class="chart-header">
+                  <h2>Últimos 7 dias</h2>
+                  <p class="auth-subtitle" style="margin:4px 0 0">Total de presenças registradas por dia</p>
+                </div>
+                <div class="chart-container">
+                  <canvas id="resumoCheckins7dChart"></canvas>
+                </div>
+              </div>
+            </section>
           </section>
         </section>
 
@@ -2127,6 +2139,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=2.1.3"></script>
+  <script defer src="app.js?v=2.1.5"></script>
 </body>
 </html>
