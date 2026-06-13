@@ -2,6 +2,8 @@
 const BRAND_NAME = 'Celeiro São Paulo - House of Prayer';
 const BRAND_SHORT = 'Celeiro São Paulo';
 const BRAND_TAGLINE = 'House of Prayer';
+/** Ícone SVG inline (sprite em index.html) para botões gerados por JS */
+const ICON_MAIL = '<span class="btn-icon-inline" aria-hidden="true"><svg><use href="#icon-mail"/></svg></span>';
 // API na mesma origem (frontend servido pelo Express em / e API em /api/*)
 const API_BASE = '';
 const AUTH_STORAGE_KEY = 'celeiro_admin_auth';
@@ -1919,7 +1921,7 @@ function renderEventoCheckinRowHtml(e) {
   const statusText = ativo ? 'Ativo' : 'Inativo';
   const btnLabel = ativo ? 'Desligar' : 'Ligar';
   const emailSentBadge = e.emailAberturaEnviadoEm
-    ? ' <span class="evento-status evento-status-ativo" style="font-size:.75rem;margin-left:4px" title="Email de abertura enviado">✉️</span>'
+    ? ` <span title="Email de abertura enviado" aria-label="Email enviado" style="display:inline-flex;vertical-align:middle;margin-left:4px">${ICON_MAIL}</span>`
     : '';
   const vinc = Array.isArray(e.escalasVinculadas) ? e.escalasVinculadas : [];
   const escalaBadge = vinc.length
@@ -2667,7 +2669,7 @@ async function fetchFormularios() {
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
             <td>${filled}</td>
             <td><button type="button" class="btn btn-sm btn-primary" data-form-link="novo-membro" data-event-id="${escapeAttr(eventId)}" data-short-code="${escapeAttr(e.shortCode || '')}" title="Copiar link">Copiar link</button></td>
-            <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-novo-membro="${escapeAttr(eventId)}" title="Enviar e-mail às pessoas que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-novo-membro="${escapeAttr(eventId)}" title="Enviar e-mail às pessoas que preencheram este evento" ${filled ? '' : 'disabled'}>${ICON_MAIL} E-mail</button></td>
             <td>
               <button type="button" class="btn btn-sm btn-ghost" data-export-novo-membro-csv="${escapeAttr(eventId)}" data-export-novo-membro-label="${escapeAttr(label)}" title="Baixar CSV só deste evento">Baixar CSV</button>
               <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-form-toggle-formulario-ativo="${escapeAttr(eventId)}" data-ativo="${ativo ? 'true' : 'false'}" title="${ativo ? 'O link público deixa de aceitar novas inscrições' : 'Permitir novas inscrições pelo link'}">${ativo ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
@@ -2726,7 +2728,7 @@ async function fetchFormularios() {
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
             <td>${filled}</td>
             <td><button type="button" class="btn btn-sm btn-primary" data-form-link="batismo" data-event-id="${escapeAttr(eventId)}" data-short-code="${escapeAttr(e.shortCode || '')}" title="Copiar link">Copiar link</button></td>
-            <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-batismo="${escapeAttr(eventId)}" title="Enviar e-mail às pessoas que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-batismo="${escapeAttr(eventId)}" title="Enviar e-mail às pessoas que preencheram este evento" ${filled ? '' : 'disabled'}>${ICON_MAIL} E-mail</button></td>
             <td>
               <button type="button" class="btn btn-sm btn-ghost" data-export-batismo-csv="${escapeAttr(eventId)}" data-export-batismo-label="${escapeAttr(label)}" title="Baixar CSV só deste evento">Baixar CSV</button>
               <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-form-toggle-formulario-ativo="${escapeAttr(eventId)}" data-ativo="${ativo ? 'true' : 'false'}" title="${ativo ? 'O link público deixa de aceitar novas inscrições' : 'Permitir novas inscrições pelo link'}">${ativo ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
@@ -2784,7 +2786,7 @@ async function fetchFormularios() {
             <td><span class="evento-status ${ativo ? 'evento-status-ativo' : 'evento-status-inativo'}">${statusText}</span></td>
             <td>${filled}</td>
             <td><button type="button" class="btn btn-sm btn-primary" data-form-link="apresentacao" data-event-id="${escapeAttr(eventId)}" data-short-code="${escapeAttr(e.shortCode || '')}" title="Copiar link">Copiar link</button></td>
-            <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-apresentacao="${escapeAttr(eventId)}" title="Enviar e-mail aos responsáveis que preencheram este evento" ${filled ? '' : 'disabled'}>✉️ E-mail</button></td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-form-email-apresentacao="${escapeAttr(eventId)}" title="Enviar e-mail aos responsáveis que preencheram este evento" ${filled ? '' : 'disabled'}>${ICON_MAIL} E-mail</button></td>
             <td>
               <button type="button" class="btn btn-sm btn-ghost" data-export-apresentacao-csv="${escapeAttr(eventId)}" data-export-apresentacao-label="${escapeAttr(label)}" title="Baixar CSV só deste evento">Baixar CSV</button>
               <button type="button" class="btn btn-sm ${ativo ? 'btn-ghost' : 'btn-primary'}" data-form-toggle-formulario-ativo="${escapeAttr(eventId)}" data-ativo="${ativo ? 'true' : 'false'}" title="${ativo ? 'O link público deixa de aceitar novas inscrições' : 'Permitir novas inscrições pelo link'}">${ativo ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
