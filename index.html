@@ -23,7 +23,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=2.2.2">
+  <link rel="stylesheet" href="styles.css?v=2.2.3">
 </head>
 <body>
   <!-- Sprite de ícones Celeiro — traço minimalista, paleta bordô -->
@@ -358,9 +358,6 @@
         </section>
 
         <section class="view active" data-view="resumo">
-          <!-- Widget escala em destaque (Fase 5) -->
-          <div id="escalaDestaqueWidget" style="margin-bottom:16px"></div>
-
           <!-- Cards globais (consumidos de /api/dashboard/resumo) -->
           <section class="kpi-grid" id="kpiGridResumoGlobal" style="margin-bottom:16px">
             <div class="kpi-card">
@@ -951,6 +948,9 @@
 
         <!-- Check-in (admin) -->
         <section class="view" data-view="checkin">
+          <!-- Cultos hoje/amanhã (movido do Resumo) -->
+          <div id="escalaDestaqueWidget" style="margin-bottom:16px"></div>
+
           <section class="filters-row">
             <div class="filters-card">
               <div class="filters-left">
@@ -2265,6 +2265,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=2.2.2"></script>
+  <script defer src="app.js?v=2.2.3"></script>
 </body>
 </html>

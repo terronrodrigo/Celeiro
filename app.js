@@ -1025,12 +1025,8 @@ function setView(view, options) {
       updateFilters();
     }
     if (view === 'resumo' && (isAdmin || isLider || authRole === 'lider')) {
-      fetchEscalaEmDestaque();
       fetchResumoGlobal();
       fetchResumoVoluntariosEngajamento();
-    } else {
-      const w = document.getElementById('escalaDestaqueWidget');
-      if (w) w.innerHTML = '';
     }
   }
   if (view === 'checkin' && isAdmin) {
@@ -1051,6 +1047,7 @@ function setView(view, options) {
       return fetchCheckinsWithFilters({ data: checkinData?.value || hoje });
     }).catch(() => fetchCheckinsWithFilters({ data: hoje }))
       .finally(() => setViewLoading('checkin', false));
+    fetchEscalaEmDestaque();
     fetchCheckinResumoSection();
   }
   const canSeeResumoVoluntarios = isAdmin || isLider || authRole === 'lider';
@@ -4922,7 +4919,7 @@ async function renderResumoCheckins7d(serie) {
   });
 }
 
-/** Widget no resumo — cultos de hoje/amanhã + check-ins abertos */
+/** Widget na aba Check-ins — cultos de hoje/amanhã + check-ins abertos */
 async function fetchEscalaEmDestaque() {
   const wrap = document.getElementById('escalaDestaqueWidget');
   if (!wrap || !authToken) return;
