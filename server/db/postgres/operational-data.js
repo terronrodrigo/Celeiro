@@ -45,6 +45,10 @@ function mapVoluntarioFromRow(row) {
     telefone: d.telefone || d.whatsapp || '',
     whatsapp: d.whatsapp || d.telefone || '',
     nascimento: d.nascimento || '',
+    pais: d.pais || '',
+    tempoIgreja: d.tempoIgreja || '',
+    horasSemana: d.horasSemana || '',
+    endereco: (d.endereco || d.enderecoCompleto || '').toString().trim(),
     evangelico: d.evangelico || '',
     igreja: d.igreja || '',
     batizado: normBatizadoPerfil(d.batizado),
@@ -105,6 +109,51 @@ export function computePerfilCheckinGap(dados) {
   if (!(d.cidade || '').toString().trim()) missing.push('cidade');
   if (!(d.estado || '').toString().trim()) missing.push('estado');
   return { needsComplement: missing.length > 0, missing };
+}
+
+/**
+ * Campos essenciais do cadastro de voluntário + membro na plataforma.
+ * @returns {{ missing: string[], labels: string[], completo: boolean }}
+ */
+export function computePerfilVoluntarioGaps(vol) {
+  const v = vol || {};
+  const missing = [];
+  const labels = [];
+  const push = (field, label, ok) => {
+    if (!ok) {
+      missing.push(field);
+      labels.push(label);
+    }
+  };
+
+  push('nome', 'Nome completo', String(v.nome || '').trim());
+  push('nascimento', 'Data de nascimento', String(v.nascimento || '').trim());
+  push('telefone', 'WhatsApp', String(v.telefone || v.whatsapp || '').trim());
+  push('pais', 'País', String(v.pais || '').trim());
+  push('estado', 'Estado (UF)', String(v.estado || '').trim());
+  push('cidade', 'Cidade', String(v.cidade || '').trim());
+  push('endereco', 'Endereço', String(v.endereco || '').trim());
+  push('evangelico', 'É cristão/evangélico', String(v.evangelico || '').trim());
+  push('igreja', 'Igreja onde congrega', String(v.igreja || '').trim());
+  push('tempoIgreja', 'Tempo na igreja', String(v.tempoIgreja || '').trim());
+
+  const mins = Array.isArray(v.ministerios) && v.ministerios.length
+    ? v.ministerios
+    : String(v.ministerio || '').split(',').map((x) => x.trim()).filter(Boolean);
+  push('ministerio', 'Ministérios em que serve', mins.length > 0);
+
+  const disp = String(v.disponibilidade || '').trim();
+  push('disponibilidade', 'Disponibilidade semanal', disp.length > 0);
+  push('horasSemana', 'Horas/semana', String(v.horasSemana || '').trim());
+
+  const bat = normBatizadoPerfil(v.batizado);
+  push('batizado', 'Informação de batismo', bat === true || bat === false);
+
+  return { missing, labels, completo: missing.length === 0 };
+}
+
+export function isVoluntarioPerfilCompleto(vol) {
+  return computePerfilVoluntarioGaps(vol).completo;
 }
 
 /** Atualiza JSON `dados` do voluntário com complemento único ou skip. */

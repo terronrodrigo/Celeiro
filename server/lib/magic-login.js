@@ -141,17 +141,20 @@ export function buildPlatformAccessEmailBlock({
   magicLoginUrl,
   title = 'Acesse sua conta na plataforma',
   hint = 'Entre com um clique — sem precisar de senha neste link.',
+  ctaLabel = 'Acessar minha conta →',
+  platformExtra = ' Veja suas escalas, histórico de check-ins e mantenha seu perfil atualizado.',
 }) {
   const url = String(magicLoginUrl || '').trim();
   if (!url) return '';
   const display = escapeHtml(url);
+  const extra = platformExtra ? escapeHtml(platformExtra) : '';
   return `
     <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:28px 0 0;padding:20px;background:${EMAIL_COLORS.accentSoft};border:1px solid ${EMAIL_COLORS.border};border-radius:12px;">
       <tr><td>
         <p style="margin:0 0 8px;font-size:14px;font-weight:700;color:${EMAIL_COLORS.text};">${escapeHtml(title)}</p>
-        <p style="margin:0 0 14px;font-size:14px;color:${EMAIL_COLORS.textSecondary};line-height:1.55;">${escapeHtml(hint)} Veja suas escalas, histórico de check-ins e mantenha seu perfil atualizado.</p>
+        <p style="margin:0 0 14px;font-size:14px;color:${EMAIL_COLORS.textSecondary};line-height:1.55;">${escapeHtml(hint)}${extra}</p>
         <table cellpadding="0" cellspacing="0" role="presentation"><tr><td style="border-radius:10px;background:${EMAIL_COLORS.accent};">
-          <a href="${escapeHtml(url)}" style="display:inline-block;padding:12px 22px;font-size:15px;font-weight:700;color:#fff;text-decoration:none;border-radius:10px;">Acessar minha conta →</a>
+          <a href="${escapeHtml(url)}" style="display:inline-block;padding:12px 22px;font-size:15px;font-weight:700;color:#fff;text-decoration:none;border-radius:10px;">${escapeHtml(ctaLabel)}</a>
         </td></tr></table>
         <p style="margin:14px 0 0;font-size:12px;color:${EMAIL_COLORS.textMuted};word-break:break-all;">${display}</p>
       </td></tr>

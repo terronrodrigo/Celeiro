@@ -5,6 +5,7 @@ import { getPostgresPool } from './init.js';
 import {
   pgEmailsComAtividadeRecente,
   pgListVoluntariosParaEmailBroadcast,
+  computePerfilVoluntarioGaps,
 } from './operational-data.js';
 import { normBatizadoPerfil } from './repos.js';
 import {
@@ -22,8 +23,22 @@ CREATE TABLE IF NOT EXISTS voluntario_nunca_serviu_emails (
 );
 `;
 
+const PERFIL_INCOMPLETO_EMAIL_SQL = `
+CREATE TABLE IF NOT EXISTS voluntario_perfil_incompleto_emails (
+  igreja_id TEXT NOT NULL REFERENCES igrejas(id) ON DELETE CASCADE,
+  terca_ymd DATE NOT NULL,
+  enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  emails_enviados INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (igreja_id, terca_ymd)
+);
+`;
+
 export async function pgEnsureVoluntarioNuncaServiuEmailSchema() {
   await getPostgresPool().query(NUNCA_SERVIU_EMAIL_SQL);
+}
+
+export async function pgEnsureVoluntarioPerfilIncompletoEmailSchema() {
+  await getPostgresPool().query(PERFIL_INCOMPLETO_EMAIL_SQL);
 }
 
 export async function pgWasVoluntarioNuncaServiuEmailEnviado(igrejaId, semanaYmd) {
@@ -43,6 +58,26 @@ export async function pgMarkVoluntarioNuncaServiuEmailEnviado(igrejaId, semanaYm
        enviado_em = NOW(),
        emails_enviados = EXCLUDED.emails_enviados`,
     [igrejaId, semanaYmd, emailsEnviados],
+  );
+}
+
+export async function pgWasVoluntarioPerfilIncompletoEmailEnviado(igrejaId, tercaYmd) {
+  const { rows } = await getPostgresPool().query(
+    `SELECT 1 FROM voluntario_perfil_incompleto_emails
+     WHERE igreja_id = $1 AND terca_ymd = $2::date LIMIT 1`,
+    [igrejaId, tercaYmd],
+  );
+  return rows.length > 0;
+}
+
+export async function pgMarkVoluntarioPerfilIncompletoEmailEnviado(igrejaId, tercaYmd, emailsEnviados = 0) {
+  await getPostgresPool().query(
+    `INSERT INTO voluntario_perfil_incompleto_emails (igreja_id, terca_ymd, emails_enviados)
+     VALUES ($1, $2::date, $3)
+     ON CONFLICT (igreja_id, terca_ymd) DO UPDATE SET
+       enviado_em = NOW(),
+       emails_enviados = EXCLUDED.emails_enviados`,
+    [igrejaId, tercaYmd, emailsEnviados],
   );
 }
 
@@ -436,6 +471,29 @@ export async function pgResolveDestinatariosReengajamento(igrejaId, { ministerio
     out.push({ email: em, nome: (v.nome || '').trim() || em.split('@')[0] || em });
   }
 
+  out.sort((a, b) => (a.nome || a.email).localeCompare(b.nome || b.email, 'pt-BR'));
+  return out;
+}
+
+/**
+ * Voluntários ativos com cadastro incompleto (form voluntário + membro na plataforma).
+ * @returns {{ email: string, nome: string, missing: string[], missingLabels: string[] }[]}
+ */
+export async function pgResolveDestinatariosPerfilIncompleto(igrejaId) {
+  const voluntarios = await pgListVoluntariosParaEmailBroadcast(igrejaId);
+  const out = [];
+  for (const v of voluntarios) {
+    const em = normEmail(v.email);
+    if (!em || !em.includes('@')) continue;
+    const gaps = computePerfilVoluntarioGaps(v);
+    if (gaps.completo) continue;
+    out.push({
+      email: em,
+      nome: (v.nome || '').trim() || em.split('@')[0] || em,
+      missing: gaps.missing,
+      missingLabels: gaps.labels,
+    });
+  }
   out.sort((a, b) => (a.nome || a.email).localeCompare(b.nome || b.email, 'pt-BR'));
   return out;
 }

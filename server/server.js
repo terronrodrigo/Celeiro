@@ -103,6 +103,9 @@ import {
   runVoluntarioNuncaServiuEmailJob,
 } from './lib/voluntario-nunca-serviu-email.js';
 import {
+  runVoluntarioPerfilIncompletoEmailJob,
+} from './lib/voluntario-perfil-incompleto-email.js';
+import {
   pgListEventosFormulario, pgFindEventoFormularioById, pgCreateEventoFormulario,
   pgUpdateEventoFormulario, pgDeleteEventoFormulario, pgFindEventoFormularioByShortCode,
   pgCreateFormularioMembro, pgListFormulariosMembro,
@@ -7395,6 +7398,23 @@ async function start() {
         console.error('runVoluntarioNuncaServiuEmailJob falhou:', err.message || err);
       }
     }, VOL_NUNCA_SERVIU_MS).unref?.();
+
+    const VOL_PERFIL_INCOMPLETO_MS = Number(process.env.VOL_PERFIL_INCOMPLETO_INTERVAL_MS) || 30 * 60 * 1000;
+    setTimeout(() => {
+      runVoluntarioPerfilIncompletoEmailJob().catch((err) => {
+        console.error('perfil incompleto email (boot):', err?.message || err);
+      });
+    }, 90_000);
+    setInterval(async () => {
+      try {
+        const r = await runVoluntarioPerfilIncompletoEmailJob();
+        if ((r.sent || 0) > 0) {
+          console.log(`⏱️  perfil incompleto (terça ${r.tercaYmd}): ${r.sent} enviado(s).`);
+        }
+      } catch (err) {
+        console.error('runVoluntarioPerfilIncompletoEmailJob falhou:', err.message || err);
+      }
+    }, VOL_PERFIL_INCOMPLETO_MS).unref?.();
   }
 
   app.listen(PORT, '0.0.0.0', () => {
