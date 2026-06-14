@@ -197,6 +197,7 @@
       </div>
 
       <div id="content" style="display: none;">
+        <div id="voluntarioProximaEscalaBanner" class="voluntario-proxima-escala-banner" style="display: none;" role="region" aria-label="Próxima escala disponível"></div>
         <!-- Voluntários: uma única view (filtros + KPIs + tabela + gráficos). Antes havia dois blocos com o mesmo data-view, o que quebrava loading/indicadores. -->
         <section class="view" data-view="voluntarios">
           <section class="filters-row">
@@ -1395,9 +1396,14 @@
           </select>
         </div>
         <p id="checkinPublicError" class="auth-error"></p>
-        <p id="checkinPublicSuccess" class="auth-success" style="display: none;"></p>
         <button type="submit" class="btn btn-primary" id="btnCheckinPublicSubmit">Confirmar check-in</button>
       </form>
+      <div id="checkinPublicThankYou" class="public-form-thankyou" role="status" aria-live="polite">
+        <div class="form-welcome-icon form-welcome-icon--presence" aria-hidden="true"><svg><use href="#icon-check-circle"/></svg></div>
+        <h2 class="form-welcome-title" data-thank-title>Check-in confirmado!</h2>
+        <p class="form-welcome-text" data-thank-message>Obrigado por confirmar sua presença. Seu registro já foi salvo.</p>
+        <p class="form-welcome-hint">Não é necessário enviar novamente.</p>
+      </div>
     </div>
   </div>
 
@@ -1439,9 +1445,13 @@
         <div class="form-group"><label for="formConsPreferenciaContato">De que maneira prefere ser contactado(a)?</label><select id="formConsPreferenciaContato"><option value="">—</option><option value="Mensagem via WhatsApp">Mensagem via WhatsApp</option><option value="Ligação">Ligação</option></select></div>
         <div class="form-group"><label for="formConsPedidoOracao">Existe algo em que a igreja possa te ajudar ou orar por você neste momento?</label><textarea id="formConsPedidoOracao" rows="4" required placeholder="Compartilhe com a gente..."></textarea></div>
         <p id="formularioConsolidacaoError" class="auth-error"></p>
-        <p id="formularioConsolidacaoSuccess" class="auth-success" style="display: none;"></p>
         <button type="submit" class="btn btn-primary" id="btnFormularioConsolidacaoSubmit">Enviar</button>
       </form>
+      <div id="formularioConsolidacaoThankYou" class="public-form-thankyou" role="status" aria-live="polite">
+        <div class="form-welcome-icon" aria-hidden="true"><svg><use href="#icon-heart"/></svg></div>
+        <h2 class="form-welcome-title" data-thank-title>Formulário enviado!</h2>
+        <p class="form-welcome-text" data-thank-message>Obrigado por compartilhar. Nossa equipe entrará em contato quando aplicável.</p>
+      </div>
       <p class="auth-footer-link"><a href="#" id="linkSairFormularioConsolidacao">Voltar ao login</a></p>
     </div>
   </div>
@@ -1492,9 +1502,13 @@
           <div id="formNovoMembroMinisteriosList" class="checkbox-list"></div>
         </div>
         <p id="formularioNovoMembroError" class="auth-error"></p>
-        <p id="formularioNovoMembroSuccess" class="auth-success" style="display: none;"></p>
         <button type="submit" class="btn btn-primary" id="btnFormularioNovoMembroSubmit">Enviar</button>
       </form>
+      <div id="formularioNovoMembroThankYou" class="public-form-thankyou" role="status" aria-live="polite">
+        <div class="form-welcome-icon" aria-hidden="true"><svg><use href="#icon-heart"/></svg></div>
+        <h2 class="form-welcome-title" data-thank-title>Inscrição recebida!</h2>
+        <p class="form-welcome-text" data-thank-message>Obrigado por se inscrever. Em breve você receberá um e-mail de boas-vindas.</p>
+      </div>
     </div>
   </div>
 
@@ -1525,9 +1539,13 @@
         <div class="form-group"><label for="formMembroCompromisso">Se compromete a respeitar e honrar a visão, cultura, princípios e valores da Celeiro São Paulo, frequentando e participando ativamente da igreja?</label><select id="formMembroCompromisso"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
         <div class="form-group"><label for="formMembroTestemunho">Breve testemunho</label><textarea id="formMembroTestemunho" placeholder="Conte um pouco da sua história com Jesus..." rows="4"></textarea></div>
         <p id="formularioMembroError" class="auth-error"></p>
-        <p id="formularioMembroSuccess" class="auth-success" style="display: none;"></p>
         <button type="submit" class="btn btn-primary" id="btnFormularioMembroSubmit">Enviar</button>
       </form>
+      <div id="formularioMembroThankYou" class="public-form-thankyou" role="status" aria-live="polite">
+        <div class="form-welcome-icon" aria-hidden="true"><svg><use href="#icon-heart"/></svg></div>
+        <h2 class="form-welcome-title" data-thank-title>Inscrição recebida!</h2>
+        <p class="form-welcome-text" data-thank-message>Formulário enviado com sucesso! Obrigado por se cadastrar.</p>
+      </div>
       <p class="auth-footer-link"><a href="#" id="linkSairFormularioMembro">Voltar ao login</a></p>
     </div>
   </div>
@@ -1556,9 +1574,13 @@
         <div class="form-group"><label for="formBatismoProximo">Vai se batizar no próximo batismo?</label><select id="formBatismoProximo"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
         <div class="form-group"><label for="formBatismoCurso">Se compromete a participar do Curso de Batismo?</label><select id="formBatismoCurso"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
         <p id="formularioBatismoError" class="auth-error"></p>
-        <p id="formularioBatismoSuccess" class="auth-success" style="display: none;"></p>
         <button type="submit" class="btn btn-primary" id="btnFormularioBatismoSubmit">Enviar</button>
       </form>
+      <div id="formularioBatismoThankYou" class="public-form-thankyou" role="status" aria-live="polite">
+        <div class="form-welcome-icon form-welcome-icon--presence" aria-hidden="true"><svg><use href="#icon-check-circle"/></svg></div>
+        <h2 class="form-welcome-title" data-thank-title>Inscrição recebida!</h2>
+        <p class="form-welcome-text" data-thank-message>Formulário de batismo enviado com sucesso!</p>
+      </div>
     </div>
   </div>
 
@@ -1587,9 +1609,13 @@
         <div class="form-group"><label for="formApresWhatsapp">WhatsApp para contato</label><input type="tel" id="formApresWhatsapp" placeholder="(11) 99999-9999" maxlength="16"></div>
         <div class="form-group"><label for="formApresCompromisso">Os pais se comprometem a educar seu(s) filho(s) nos caminhos do Senhor, frequentando a igreja e ensinando princípios bíblicos?</label><select id="formApresCompromisso"><option value="">Selecione</option><option value="sim">Sim</option><option value="não">Não</option></select></div>
         <p id="formularioApresentacaoError" class="auth-error"></p>
-        <p id="formularioApresentacaoSuccess" class="auth-success" style="display: none;"></p>
         <button type="submit" class="btn btn-primary" id="btnFormularioApresentacaoSubmit">Enviar</button>
       </form>
+      <div id="formularioApresentacaoThankYou" class="public-form-thankyou" role="status" aria-live="polite">
+        <div class="form-welcome-icon form-welcome-icon--family" aria-hidden="true"><svg><use href="#icon-family"/></svg></div>
+        <h2 class="form-welcome-title" data-thank-title>Inscrição recebida!</h2>
+        <p class="form-welcome-text" data-thank-message>Formulário de apresentação enviado com sucesso!</p>
+      </div>
     </div>
   </div>
 
@@ -1646,9 +1672,13 @@
         <div class="form-group"><label for="cadastroAreas">Áreas de interesse</label><input type="text" id="cadastroAreas" placeholder="Ex: Mídia, Louvor"></div>
         <div class="form-group"><label for="cadastroTestemunho">Testemunho</label><p class="form-hint">Preencha o testemunho de como sua vida foi mudada através de Jesus (não obrigatório).</p><textarea id="cadastroTestemunho" placeholder="Conte um pouco da sua história com Jesus..." rows="4"></textarea></div>
         <p id="cadastroPublicoError" class="auth-error"></p>
-        <p id="cadastroPublicoSuccess" class="auth-success" style="display: none;"></p>
         <button type="submit" class="btn btn-primary" id="btnCadastroPublico">Enviar inscrição</button>
       </form>
+      <div id="cadastroPublicoThankYou" class="public-form-thankyou" role="status" aria-live="polite">
+        <div class="form-welcome-icon form-welcome-icon--presence" aria-hidden="true"><svg><use href="#icon-check-circle"/></svg></div>
+        <h2 class="form-welcome-title" data-thank-title>Inscrição recebida!</h2>
+        <p class="form-welcome-text" data-thank-message>Cadastro realizado com sucesso! Em breve você receberá um e-mail de acolhimento.</p>
+      </div>
       <p class="auth-footer-link"><a href="#" id="linkSairCadastro">Voltar ao login</a></p>
     </div>
   </div>

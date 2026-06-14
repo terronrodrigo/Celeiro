@@ -17,6 +17,7 @@ import {
   pgWasEscalaLembreteEnviado,
 } from '../db/postgres/escalas-checkin.js';
 import { splitVoluntarioMinisterios } from './ministerio-match.js';
+import { createMagicLoginLinkForEmail, buildPlatformAccessEmailBlock } from './magic-login.js';
 
 /** 1=segunda … 4=quinta; horário de Brasília. */
 export const ESCALA_LEMBRETE_SCHEDULE = {
@@ -92,6 +93,7 @@ export function buildEscalaLembreteEmailHtml({
   escalasResumo,
   ministerioLinks,
   igrejaNome,
+  platformAccessHtml = '',
 }) {
   const n = (nome || '').trim() || 'voluntário(a)';
   const cfg = ESCALA_LEMBRETE_SCHEDULE[tipo] || { label: 'Culto' };
@@ -130,6 +132,7 @@ export function buildEscalaLembreteEmailHtml({
     <h2 style="margin:0 0 12px;font-size:15px;color:#111827;text-transform:uppercase;letter-spacing:.04em;">Seus ministérios</h2>
     <p style="margin:0 0 14px;font-size:14px;color:#6b7280;line-height:1.5;">Links diretos com base nos ministérios em que você já serviu (do mais recente ao mais antigo):</p>
     ${ministeriosHtml}
+    ${platformAccessHtml}
   </td></tr>
   <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:18px 36px;text-align:center;">
     <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.5;">${BRAND_NAME}</p>
@@ -229,6 +232,18 @@ export async function sendEscalaLembreteEmailsForIgreja({
     }).filter(Boolean);
 
     try {
+      let platformAccessHtml = '';
+      try {
+        const magic = await createMagicLoginLinkForEmail({
+          igrejaId,
+          email,
+          nome: voluntario.nome,
+          appBase: base,
+          redirectView: 'escalas',
+        });
+        if (magic?.url) platformAccessHtml = buildPlatformAccessEmailBlock({ magicLoginUrl: magic.url });
+      } catch (_) { /* opcional */ }
+
       const { error } = await resend.emails.send({
         from,
         to: email,
@@ -241,6 +256,7 @@ export async function sendEscalaLembreteEmailsForIgreja({
           escalasResumo,
           ministerioLinks,
           igrejaNome: igreja?.nome,
+          platformAccessHtml,
         }),
       });
       if (error) {

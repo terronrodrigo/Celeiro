@@ -412,6 +412,12 @@ function updateAuthUi() {
   if (btnRefresh) {
     btnRefresh.style.display = isLogged && (isAdmin || isLider || authRole === 'lider') ? '' : 'none';
   }
+  if (isLogged && isVoluntario && authVerified && !authMustChangePassword) {
+    refreshVoluntarioProximaEscalaBanner();
+  } else {
+    const volBanner = document.getElementById('voluntarioProximaEscalaBanner');
+    if (volBanner) volBanner.style.display = 'none';
+  }
   const btnReeng = document.getElementById('btnEmailReengajamento');
   if (btnReeng) btnReeng.style.display = isLogged && isAdmin ? '' : 'none';
   const cadastroLinkSection = document.getElementById('cadastroLinkSection');
@@ -889,7 +895,7 @@ function getDefaultView() {
   const isVol = String(authRole || '').toLowerCase() === 'voluntario';
   const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
   const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
-  if (isVol) return 'perfil';
+  if (isVol) return 'escalas';
   if (authRole === 'lider' || (isLider && authRole !== 'admin')) return 'checkin-ministerio';
   return 'resumo';
 }
@@ -4495,6 +4501,7 @@ async function fetchEscalas() {
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
       const payload = await r.json().catch(() => ({}));
       renderMeusCultos(Array.isArray(payload?.itens) ? payload.itens : []);
+      refreshVoluntarioProximaEscalaBanner();
     } catch (e) {
       if (e.message === 'AUTH_REQUIRED') return;
       if (container) container.innerHTML = `<div class="filters-card"><p class="auth-subtitle">${escapeHtml(e.message || 'Erro ao carregar')}. <button id="btnRetryMeusCultos" class="btn btn-ghost btn-sm">Tentar novamente</button></p></div>`;
@@ -7557,8 +7564,7 @@ async function handleLogin(e) {
     const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
     const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
     const isLiderRole = authRole === 'lider' || isLider;
-    const defaultView = isVol ? 'perfil' : (isLiderRole && authRole !== 'admin' ? 'checkin-ministerio' : 'resumo');
-    setView(defaultView);
+    setView(getDefaultView());
     try {
       if (authRole === 'admin') await fetchAllData();
       else if (isLiderRole && authRole !== 'admin') { await fetchCheckinsMinisterio(); await fetchMeusCheckins(); await fetchPerfil(); }
@@ -8420,8 +8426,7 @@ document.getElementById('mustChangePasswordForm')?.addEventListener('submit', as
     const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
     const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
     const isLiderRole = authRole === 'lider' || isLider;
-    const defaultView = isVol ? 'perfil' : (isLiderRole && authRole !== 'admin' ? 'checkin-ministerio' : 'resumo');
-    setView(defaultView);
+    setView(getDefaultView());
     if (authRole === 'admin') await fetchAllData();
     else if (isLiderRole && authRole !== 'admin') { await fetchCheckinsMinisterio(); await fetchMeusCheckins(); await fetchPerfil(); }
     else { await fetchEventosHoje(); await fetchMeusCheckins(); await fetchPerfil(); }
@@ -8565,6 +8570,7 @@ function getCadastroLinkUrl() {
 }
 
 function showCadastroPublico() {
+  resetPublicFormThankYou({ formId: 'cadastroPublicoForm', thankYouId: 'cadastroPublicoThankYou' });
   const overlay = document.getElementById('cadastroOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
@@ -8595,9 +8601,7 @@ document.getElementById('linkSairCadastro')?.addEventListener('click', (e) => {
 document.getElementById('cadastroPublicoForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('cadastroPublicoError');
-  const okEl = document.getElementById('cadastroPublicoSuccess');
   if (errEl) errEl.textContent = '';
-  if (okEl) { okEl.style.display = 'none'; okEl.textContent = ''; }
   const payload = {
     nome: (document.getElementById('cadastroNome')?.value || '').trim(),
     email: (document.getElementById('cadastroEmail')?.value || '').trim().toLowerCase(),
@@ -8633,13 +8637,13 @@ document.getElementById('cadastroPublicoForm')?.addEventListener('submit', async
       if (errEl) errEl.textContent = data.error || 'Falha ao enviar. Tente novamente.';
       return;
     }
-    if (okEl) { okEl.textContent = data.message || 'Inscrição enviada com sucesso!'; okEl.style.display = 'block'; }
+    showPublicFormThankYou({
+      formId: 'cadastroPublicoForm',
+      thankYouId: 'cadastroPublicoThankYou',
+      title: r.status === 200 ? 'Cadastro atualizado!' : 'Inscrição recebida!',
+      message: data.message || 'Cadastro realizado com sucesso! Em breve você receberá um e-mail de acolhimento.',
+    });
     if (errEl) errEl.textContent = '';
-    document.getElementById('cadastroPublicoForm')?.reset();
-    if (document.getElementById('cadastroEstado')) document.getElementById('cadastroEstado').innerHTML = '<option value="">Selecione o estado (UF)</option>' + UFS_BR.map(uf => `<option value="${uf}">${uf}</option>`).join('');
-    renderMinisterioSelect('cadastroMinisterio');
-    const outro = document.getElementById('cadastroMinisterioOutro');
-    if (outro) { outro.value = ''; outro.style.display = 'none'; }
   } catch (err) {
     if (errEl) errEl.textContent = err.message || 'Erro de rede. Tente novamente.';
   } finally {
@@ -8716,6 +8720,7 @@ let novoMembroMinisteriosPublic = [];
 function showFormularioMembroPublico() {
   preparePublicFormSession();
   hideAllPublicOverlays();
+  resetPublicFormThankYou({ formId: 'formularioMembroForm', thankYouId: 'formularioMembroThankYou', restartWelcome: true });
   const overlay = document.getElementById('formularioMembroOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
@@ -8734,6 +8739,7 @@ function hideFormularioMembroPublico() {
 function showFormularioConsolidacaoPublico() {
   preparePublicFormSession();
   hideAllPublicOverlays();
+  resetPublicFormThankYou({ formId: 'formularioConsolidacaoForm', thankYouId: 'formularioConsolidacaoThankYou', restartWelcome: true });
   const overlay = document.getElementById('formularioConsolidacaoOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
@@ -8776,10 +8782,177 @@ function hideAllPublicOverlays() {
   }
 }
 
+let volProximaEscalaBannerGen = 0;
+
+/** Banner fixo na área logada: próxima escala com check-in aberto ou inscrição disponível. */
+async function refreshVoluntarioProximaEscalaBanner() {
+  const banner = document.getElementById('voluntarioProximaEscalaBanner');
+  if (!banner) return;
+  const isVol = String(authRole || '').toLowerCase() === 'voluntario';
+  if (!authToken || !authVerified || authMustChangePassword || !isVol) {
+    banner.style.display = 'none';
+    banner.innerHTML = '';
+    return;
+  }
+  const gen = ++volProximaEscalaBannerGen;
+  try {
+    const r = await authFetch(`${API_BASE}/api/me/cultos`);
+    if (gen !== volProximaEscalaBannerGen) return;
+    if (!r.ok) {
+      banner.style.display = 'none';
+      return;
+    }
+    const payload = await r.json().catch(() => ({}));
+    const list = Array.isArray(payload?.itens) ? payload.itens : [];
+    let target = list.find((it) => it.situacao === 'checkin-aberto');
+    let mode = 'checkin';
+    if (!target) {
+      target = list.find((it) => it.situacao === 'aberta-nao-inscrita' && it.candidaturaAberta !== false);
+      mode = 'inscrever';
+    }
+    if (!target) {
+      banner.style.display = 'none';
+      banner.innerHTML = '';
+      return;
+    }
+    const dataFmt = formatEscalaDateOnly(target.escalaData);
+    const nome = target.escalaNome || 'Próximo culto';
+    const ministerio = target.ministerio ? ` · ${target.ministerio}` : '';
+    const ctaLabel = mode === 'checkin' ? 'Fazer check-in' : 'Me inscrever';
+    const titulo = mode === 'checkin' ? 'Check-in aberto agora' : 'Escala disponível para inscrição';
+    banner.innerHTML = `
+      <div class="voluntario-proxima-escala-banner__inner">
+        <div>
+          <p class="voluntario-proxima-escala-banner__title">${escapeHtml(titulo)}</p>
+          <p class="voluntario-proxima-escala-banner__meta">${escapeHtml(nome)} — ${escapeHtml(dataFmt)}${escapeHtml(ministerio)}</p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary" id="volBannerPrimaryCta">${escapeHtml(ctaLabel)}</button>
+          <button type="button" class="btn btn-ghost" id="volBannerVerEscalas">Ver escalas</button>
+        </div>
+      </div>`;
+    banner.style.display = 'block';
+    document.getElementById('volBannerPrimaryCta')?.addEventListener('click', async () => {
+      if (mode === 'checkin') {
+        const eventoId = target.eventoCheckinId;
+        const ministerio = target.ministerio || '';
+        if (!eventoId) {
+          setView('escalas');
+          return;
+        }
+        const btn = document.getElementById('volBannerPrimaryCta');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Confirmando…';
+        }
+        try {
+          const r2 = await authFetch(`${API_BASE}/api/checkins/confirmar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ eventoId, ministerio }),
+          });
+          const data2 = await r2.json().catch(() => ({}));
+          if (!r2.ok) throw new Error(data2?.error || 'Falha ao confirmar check-in.');
+          await maybeOfferPerfilCheckinComplemento(() => {
+            showToast('Check-in confirmado!');
+            refreshVoluntarioProximaEscalaBanner();
+            if (currentView === 'escalas') fetchEscalas();
+          });
+        } catch (err) {
+          showToast(err.message || 'Erro ao confirmar.', 'error');
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = ctaLabel;
+          }
+        }
+        return;
+      }
+      const escalaId = target.escalaId;
+      if (escalaId) {
+        setView('escalas');
+        showEscalaPublicOverlay();
+        loadEscalaPublic(escalaId, '');
+      } else {
+        setView('escalas');
+      }
+    });
+    document.getElementById('volBannerVerEscalas')?.addEventListener('click', () => setView('escalas'));
+  } catch (_) {
+    if (gen !== volProximaEscalaBannerGen) return;
+    banner.style.display = 'none';
+  }
+}
+
+/** Consome ?entrar=TOKEN do email e abre a área logada diretamente. */
+async function tryConsumeMagicLinkFromUrl() {
+  let token = '';
+  let redirectView = '';
+  try {
+    const url = new URL(window.location.href);
+    token = (url.searchParams.get('entrar') || '').trim();
+    redirectView = (url.searchParams.get('view') || '').trim();
+  } catch (_) {
+    return false;
+  }
+  if (!token) return false;
+
+  loginInProgress = true;
+  try {
+    const r = await fetch(`${API_BASE}/api/auth/magic-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      clearAuthSession();
+      updateAuthUi();
+      showLoginError('Link de acesso inválido ou expirado.', data?.error || 'Use email e senha ou aguarde um novo email.');
+      clearPublicOverlayQueryParamsAndHash();
+      return true;
+    }
+    hideAllPublicOverlays();
+    setAuthSession(data, { verified: true });
+    if (data.sessionWarning) showToast(data.sessionWarning, 'info');
+    clearPublicOverlayQueryParamsAndHash();
+    if (authMustChangePassword) return true;
+    if (authOverlay) authOverlay.style.display = 'none';
+    const view = data.redirectView || redirectView || getDefaultView();
+    setView(view);
+    const isLiderRole = authRole === 'lider'
+      || ((authRole === 'lider' || authRole === 'admin')
+        && ((authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome));
+    try {
+      if (authRole === 'admin') await fetchAllData();
+      else if (isLiderRole && authRole !== 'admin') {
+        await fetchCheckinsMinisterio();
+        await fetchMeusCheckins();
+        await fetchPerfil();
+      } else {
+        await fetchEventosHoje();
+        await fetchMeusCheckins();
+        await fetchPerfil();
+      }
+    } catch (loadErr) {
+      if (loadErr.message !== 'AUTH_REQUIRED') {
+        showToast('Entrou, mas alguns dados não carregaram: ' + (loadErr.message || 'erro'), 'error');
+      }
+    }
+    showToast('Bem-vindo à plataforma!', 'success');
+    return true;
+  } catch (err) {
+    showLoginError('Erro ao validar link de acesso.', err.message || String(err));
+    return true;
+  } finally {
+    loginInProgress = false;
+  }
+}
+
 function clearPublicOverlayQueryParamsAndHash() {
   try {
     const url = new URL(window.location.href);
-    ['checkin', 'batismo', 'apresentacao', 'novo-membro', 'escala', 'convite-lider'].forEach((k) => url.searchParams.delete(k));
+    ['checkin', 'batismo', 'apresentacao', 'novo-membro', 'escala', 'convite-lider', 'entrar', 'view'].forEach((k) => url.searchParams.delete(k));
     url.hash = '';
     const qs = url.searchParams.toString();
     url.search = qs ? `?${qs}` : '';
@@ -8789,9 +8962,49 @@ function clearPublicOverlayQueryParamsAndHash() {
   }
 }
 
+/** Exibe tela de agradecimento e esconde o formulário (evita envio duplicado). */
+function showPublicFormThankYou({ formId, thankYouId, title, message } = {}) {
+  const form = formId ? document.getElementById(formId) : null;
+  const thankYou = thankYouId ? document.getElementById(thankYouId) : null;
+  const card = form?.closest('.auth-card') || thankYou?.closest('.auth-card');
+  if (form) form.style.display = 'none';
+  card?.querySelector('.form-welcome:not(.public-form-thankyou)')?.style.setProperty('display', 'none');
+  card?.classList.remove('form-not-started');
+  if (thankYou) {
+    const titleEl = thankYou.querySelector('[data-thank-title]');
+    const msgEl = thankYou.querySelector('[data-thank-message]');
+    if (titleEl && title) titleEl.textContent = title;
+    if (msgEl && message) msgEl.textContent = message;
+    thankYou.classList.add('is-visible');
+  }
+}
+
+/** Restaura formulário ao abrir/recarregar overlay público. */
+function resetPublicFormThankYou({ formId, thankYouId, restartWelcome = false } = {}) {
+  const form = formId ? document.getElementById(formId) : null;
+  const thankYou = thankYouId ? document.getElementById(thankYouId) : null;
+  const card = form?.closest('.auth-card') || thankYou?.closest('.auth-card');
+  if (thankYou) thankYou.classList.remove('is-visible');
+  if (form) {
+    form.style.display = '';
+    form.querySelectorAll('.auth-success').forEach((el) => {
+      el.style.display = 'none';
+      el.textContent = '';
+    });
+  }
+  const welcome = card?.querySelector('.form-welcome:not(.public-form-thankyou)');
+  if (restartWelcome && card && welcome) {
+    card.classList.add('form-not-started');
+    welcome.style.display = '';
+  } else if (welcome) {
+    welcome.style.display = '';
+  }
+}
+
 function showFormularioNovoMembroPublicOverlay() {
   preparePublicFormSession();
   hideAllPublicOverlays();
+  resetPublicFormThankYou({ formId: 'formularioNovoMembroForm', thankYouId: 'formularioNovoMembroThankYou', restartWelcome: true });
   const overlay = document.getElementById('formularioNovoMembroPublicOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
@@ -8856,11 +9069,10 @@ function toggleNovoMembroMinisteriosVisibility() {
 }
 
 async function loadFormularioNovoMembroPublic(eventoId) {
+  resetPublicFormThankYou({ formId: 'formularioNovoMembroForm', thankYouId: 'formularioNovoMembroThankYou', restartWelcome: true });
   const errEl = document.getElementById('formularioNovoMembroError');
-  const successEl = document.getElementById('formularioNovoMembroSuccess');
   const labelEl = document.getElementById('formularioNovoMembroEventLabel');
   if (errEl) errEl.textContent = '';
-  if (successEl) successEl.style.display = 'none';
   if (labelEl) labelEl.textContent = 'Carregando...';
   try {
     const ig = encodeURIComponent(getTenantSlugForLinks());
@@ -8883,6 +9095,7 @@ async function loadFormularioNovoMembroPublic(eventoId) {
 function showFormularioBatismoPublicOverlay() {
   preparePublicFormSession();
   hideAllPublicOverlays();
+  resetPublicFormThankYou({ formId: 'formularioBatismoForm', thankYouId: 'formularioBatismoThankYou', restartWelcome: true });
   const overlay = document.getElementById('formularioBatismoPublicOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
@@ -8894,6 +9107,7 @@ function showFormularioBatismoPublicOverlay() {
 function showFormularioApresentacaoPublicOverlay() {
   preparePublicFormSession();
   hideAllPublicOverlays();
+  resetPublicFormThankYou({ formId: 'formularioApresentacaoForm', thankYouId: 'formularioApresentacaoThankYou', restartWelcome: true });
   const overlay = document.getElementById('formularioApresentacaoPublicOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
@@ -8904,11 +9118,10 @@ function showFormularioApresentacaoPublicOverlay() {
 }
 
 async function loadFormularioBatismoPublic(eventoId) {
+  resetPublicFormThankYou({ formId: 'formularioBatismoForm', thankYouId: 'formularioBatismoThankYou', restartWelcome: true });
   const errEl = document.getElementById('formularioBatismoError');
-  const successEl = document.getElementById('formularioBatismoSuccess');
   const labelEl = document.getElementById('formularioBatismoEventLabel');
   if (errEl) errEl.textContent = '';
-  if (successEl) successEl.style.display = 'none';
   if (labelEl) labelEl.textContent = 'Carregando...';
   try {
     const r = await fetch(`${API_BASE}/api/formulario-publico/batismo/${encodeURIComponent(eventoId)}`);
@@ -8925,11 +9138,10 @@ async function loadFormularioBatismoPublic(eventoId) {
 }
 
 async function loadFormularioApresentacaoPublic(eventoId) {
+  resetPublicFormThankYou({ formId: 'formularioApresentacaoForm', thankYouId: 'formularioApresentacaoThankYou', restartWelcome: true });
   const errEl = document.getElementById('formularioApresentacaoError');
-  const successEl = document.getElementById('formularioApresentacaoSuccess');
   const labelEl = document.getElementById('formularioApresentacaoEventLabel');
   if (errEl) errEl.textContent = '';
-  if (successEl) successEl.style.display = 'none';
   if (labelEl) labelEl.textContent = 'Carregando...';
   try {
     const r = await fetch(`${API_BASE}/api/formulario-publico/apresentacao/${encodeURIComponent(eventoId)}`);
@@ -8970,6 +9182,7 @@ function renderApresentacaoCriancasFields() {
 
 function showCheckinPublicOverlay() {
   preparePublicFormSession();
+  resetPublicFormThankYou({ formId: 'checkinPublicForm', thankYouId: 'checkinPublicThankYou' });
   const overlay = document.getElementById('checkinPublicOverlay');
   const auth = document.getElementById('authOverlay');
   const content = document.getElementById('content');
@@ -8979,12 +9192,11 @@ function showCheckinPublicOverlay() {
 }
 
 async function loadCheckinPublic(eventoId) {
+  resetPublicFormThankYou({ formId: 'checkinPublicForm', thankYouId: 'checkinPublicThankYou' });
   const errEl = document.getElementById('checkinPublicError');
-  const successEl = document.getElementById('checkinPublicSuccess');
   const eventLabel = document.getElementById('checkinPublicEventLabel');
   const ministerioSel = document.getElementById('checkinPublicMinisterio');
   if (errEl) errEl.textContent = '';
-  if (successEl) successEl.style.display = 'none';
   if (eventLabel) eventLabel.textContent = 'Carregando...';
   if (ministerioSel) ministerioSel.selectedIndex = 0;
   try {
@@ -9012,10 +9224,8 @@ async function loadCheckinPublic(eventoId) {
 document.getElementById('checkinPublicForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('checkinPublicError');
-  const successEl = document.getElementById('checkinPublicSuccess');
   const btn = document.getElementById('btnCheckinPublicSubmit');
   if (errEl) errEl.textContent = '';
-  if (successEl) successEl.style.display = 'none';
   const email = (document.getElementById('checkinPublicEmail')?.value || '').trim().toLowerCase();
   const nome = (document.getElementById('checkinPublicNome')?.value || '').trim();
   const ministerio = (document.getElementById('checkinPublicMinisterio')?.value || '').trim();
@@ -9038,13 +9248,15 @@ document.getElementById('checkinPublicForm')?.addEventListener('submit', async (
       if (errEl) errEl.textContent = data.error || 'Não foi possível registrar o check-in.';
       return;
     }
-    if (successEl) { successEl.textContent = data.message || 'Check-in realizado!'; successEl.style.display = 'block'; }
+    const cultoLabel = (document.getElementById('checkinPublicEventLabel')?.textContent || 'culto').trim();
+    checkinPublicEventoId = null;
+    showPublicFormThankYou({
+      formId: 'checkinPublicForm',
+      thankYouId: 'checkinPublicThankYou',
+      title: 'Check-in confirmado!',
+      message: `Sua presença em ${cultoLabel} foi registrada com sucesso. Obrigado por servir!`,
+    });
     if (errEl) errEl.textContent = '';
-    document.getElementById('checkinPublicEmail').value = '';
-    document.getElementById('checkinPublicNome').value = '';
-    document.getElementById('checkinPublicMinisterio').value = '';
-    const batizadoEl = document.getElementById('checkinPublicBatizado');
-    if (batizadoEl) batizadoEl.value = '';
   } catch (err) {
     if (errEl) errEl.textContent = err.message || 'Erro de rede. Tente novamente.';
   } finally {
@@ -9077,10 +9289,8 @@ document.getElementById('formConsWhatsapp')?.addEventListener('blur', function (
 document.getElementById('formularioMembroForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('formularioMembroError');
-  const successEl = document.getElementById('formularioMembroSuccess');
   const btn = document.getElementById('btnFormularioMembroSubmit');
   if (errEl) errEl.textContent = '';
-  if (successEl) successEl.style.display = 'none';
   const payload = {
     nomeCompleto: (document.getElementById('formMembroNome')?.value || '').trim(),
     dataNascimento: (document.getElementById('formMembroNascimento')?.value || '').trim() || undefined,
@@ -9102,9 +9312,12 @@ document.getElementById('formularioMembroForm')?.addEventListener('submit', asyn
     const r = await fetch(`${API_BASE}/api/formularios/membro?igreja=${encodeURIComponent(getTenantSlugForLinks())}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao enviar.'; return; }
-    if (successEl) { successEl.textContent = data.message || 'Formulário enviado com sucesso!'; successEl.style.display = 'block'; }
+    showPublicFormThankYou({
+      formId: 'formularioMembroForm',
+      thankYouId: 'formularioMembroThankYou',
+      message: data.message || 'Formulário enviado com sucesso! Obrigado por se cadastrar.',
+    });
     if (errEl) errEl.textContent = '';
-    document.getElementById('formularioMembroForm')?.reset();
   } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
   finally { if (btn) btn.disabled = false; }
 });
@@ -9112,10 +9325,8 @@ document.getElementById('formularioMembroForm')?.addEventListener('submit', asyn
 document.getElementById('formularioConsolidacaoForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('formularioConsolidacaoError');
-  const successEl = document.getElementById('formularioConsolidacaoSuccess');
   const btn = document.getElementById('btnFormularioConsolidacaoSubmit');
   if (errEl) errEl.textContent = '';
-  if (successEl) successEl.style.display = 'none';
   const emailOpcional = (document.getElementById('formConsEmailOpcional')?.value || '').trim().toLowerCase();
   if (emailOpcional && !emailOpcional.includes('@')) {
     if (errEl) errEl.textContent = 'E-mail opcional inválido.';
@@ -9149,9 +9360,12 @@ document.getElementById('formularioConsolidacaoForm')?.addEventListener('submit'
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao enviar.'; return; }
-    if (successEl) { successEl.textContent = data.message || 'Formulário enviado com sucesso!'; successEl.style.display = 'block'; }
+    showPublicFormThankYou({
+      formId: 'formularioConsolidacaoForm',
+      thankYouId: 'formularioConsolidacaoThankYou',
+      message: data.message || 'Obrigado por compartilhar. Nossa equipe entrará em contato quando aplicável.',
+    });
     if (errEl) errEl.textContent = '';
-    document.getElementById('formularioConsolidacaoForm')?.reset();
   } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
   finally { if (btn) btn.disabled = false; }
 });
@@ -9173,10 +9387,8 @@ document.addEventListener('click', (e) => {
 document.getElementById('formularioNovoMembroForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('formularioNovoMembroError');
-  const successEl = document.getElementById('formularioNovoMembroSuccess');
   const btn = document.getElementById('btnFormularioNovoMembroSubmit');
   if (errEl) errEl.textContent = '';
-  if (successEl) successEl.style.display = 'none';
   if (!formularioNovoMembroPublicEventoId) { if (errEl) errEl.textContent = 'Sessão expirada. Abra o link novamente.'; return; }
   const ministeriosInteresse = [];
   document.querySelectorAll('input[name="formNovoMembroMinisterioCb"]:checked').forEach((cb) => {
@@ -9219,10 +9431,13 @@ document.getElementById('formularioNovoMembroForm')?.addEventListener('submit', 
     const r = await fetch(`${API_BASE}/api/formulario-publico`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao enviar.'; return; }
-    if (successEl) { successEl.textContent = data.message || 'Formulário enviado com sucesso!'; successEl.style.display = 'block'; }
+    formularioNovoMembroPublicEventoId = null;
+    showPublicFormThankYou({
+      formId: 'formularioNovoMembroForm',
+      thankYouId: 'formularioNovoMembroThankYou',
+      message: data.message || 'Obrigado por se inscrever. Em breve você receberá um e-mail de boas-vindas.',
+    });
     if (errEl) errEl.textContent = '';
-    document.getElementById('formularioNovoMembroForm')?.reset();
-    toggleNovoMembroMinisteriosVisibility();
   } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
   finally { if (btn) btn.disabled = false; }
 });
@@ -9230,10 +9445,8 @@ document.getElementById('formularioNovoMembroForm')?.addEventListener('submit', 
 document.getElementById('formularioBatismoForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('formularioBatismoError');
-  const successEl = document.getElementById('formularioBatismoSuccess');
   const btn = document.getElementById('btnFormularioBatismoSubmit');
   if (errEl) errEl.textContent = '';
-  if (successEl) successEl.style.display = 'none';
   if (!formularioBatismoPublicEventoId) { if (errEl) errEl.textContent = 'Sessão expirada. Abra o link novamente.'; return; }
   const payload = {
     tipo: 'batismo',
@@ -9254,9 +9467,13 @@ document.getElementById('formularioBatismoForm')?.addEventListener('submit', asy
     const r = await fetch(`${API_BASE}/api/formulario-publico`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao enviar.'; return; }
-    if (successEl) { successEl.textContent = data.message || 'Formulário enviado com sucesso!'; successEl.style.display = 'block'; }
+    formularioBatismoPublicEventoId = null;
+    showPublicFormThankYou({
+      formId: 'formularioBatismoForm',
+      thankYouId: 'formularioBatismoThankYou',
+      message: data.message || 'Formulário de batismo enviado com sucesso!',
+    });
     if (errEl) errEl.textContent = '';
-    document.getElementById('formularioBatismoForm')?.reset();
   } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
   finally { if (btn) btn.disabled = false; }
 });
@@ -9264,10 +9481,8 @@ document.getElementById('formularioBatismoForm')?.addEventListener('submit', asy
 document.getElementById('formularioApresentacaoForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('formularioApresentacaoError');
-  const successEl = document.getElementById('formularioApresentacaoSuccess');
   const btn = document.getElementById('btnFormularioApresentacaoSubmit');
   if (errEl) errEl.textContent = '';
-  if (successEl) successEl.style.display = 'none';
   if (!formularioApresentacaoPublicEventoId) { if (errEl) errEl.textContent = 'Sessão expirada. Abra o link novamente.'; return; }
   const quantidade = Math.min(20, Math.max(1, parseInt(document.getElementById('formApresQuantidade')?.value, 10) || 1));
   const criancas = [];
@@ -9297,10 +9512,13 @@ document.getElementById('formularioApresentacaoForm')?.addEventListener('submit'
     const r = await fetch(`${API_BASE}/api/formulario-publico`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) { if (errEl) errEl.textContent = data.error || 'Falha ao enviar.'; return; }
-    if (successEl) { successEl.textContent = data.message || 'Formulário enviado com sucesso!'; successEl.style.display = 'block'; }
+    formularioApresentacaoPublicEventoId = null;
+    showPublicFormThankYou({
+      formId: 'formularioApresentacaoForm',
+      thankYouId: 'formularioApresentacaoThankYou',
+      message: data.message || 'Formulário de apresentação enviado com sucesso!',
+    });
     if (errEl) errEl.textContent = '';
-    document.getElementById('formularioApresentacaoForm')?.reset();
-    renderApresentacaoCriancasFields();
   } catch (err) { if (errEl) errEl.textContent = err.message || 'Erro de rede.'; }
   finally { if (btn) btn.disabled = false; }
 });
@@ -9497,8 +9715,9 @@ window.addEventListener('pageshow', function(ev) {
   }
 });
 
-(() => {
+(async () => {
   hidePublicOverlayElements();
+  if (await tryConsumeMagicLinkFromUrl()) return;
   if (initPublicFormOrShell()) return;
   if (window.location.hash === '#cadastro') {
     showCadastroPublico();
@@ -9550,12 +9769,10 @@ window.addEventListener('pageshow', function(ev) {
     if (ok) {
       hideAllPublicOverlays();
       clearPublicOverlayQueryParamsAndHash();
-      const isVol = authRole === 'voluntario';
       const hasMinisterios = (authMinisterioNomes && authMinisterioNomes.length > 0) || authMinisterioNome;
       const isLider = (authRole === 'lider' || authRole === 'admin') && hasMinisterios;
       const isLiderRole = authRole === 'lider' || isLider;
-      const defaultView = isVol ? 'perfil' : (isLiderRole && authRole !== 'admin' ? 'checkin-ministerio' : 'resumo');
-      setView(defaultView);
+      setView(getDefaultView());
       if (authRole === 'admin') prefetchAllCheckinsForKpis();
       else if (isLiderRole && authRole !== 'admin') { fetchCheckinsMinisterio(); fetchMeusCheckins(); fetchPerfil(); }
       else { fetchEventosHoje(); fetchMeusCheckins(); fetchPerfil(); }

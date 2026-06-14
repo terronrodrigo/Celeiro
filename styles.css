@@ -1508,6 +1508,10 @@ body::before {
 .auth-card.form-not-started .auth-footer-link {
   display: none;
 }
+.auth-card:has(.public-form-thankyou.is-visible) .auth-form,
+.auth-card:has(.public-form-thankyou.is-visible) .form-welcome:not(.public-form-thankyou) {
+  display: none !important;
+}
 @keyframes form-welcome-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1560,6 +1564,48 @@ body::before {
   font-size: 0.85rem;
   color: var(--text-muted);
   margin: 0;
+}
+
+/* Tela de agradecimento após envio (substitui o formulário) */
+.public-form-thankyou {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  padding: 24px 8px 16px;
+  animation: form-welcome-in 0.3s ease;
+}
+.public-form-thankyou.is-visible {
+  display: flex;
+}
+
+/* Banner fixo: próxima escala / check-in para voluntários logados */
+.voluntario-proxima-escala-banner {
+  margin: 0 0 16px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--border-color, #e9dfd0);
+  background: linear-gradient(135deg, rgba(138, 52, 44, 0.08) 0%, rgba(247, 241, 232, 0.95) 100%);
+  box-shadow: 0 8px 24px rgba(82, 58, 38, 0.08);
+}
+.voluntario-proxima-escala-banner__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.voluntario-proxima-escala-banner__title {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.voluntario-proxima-escala-banner__meta {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
 }
 
 /* Formulários públicos (membro/batismo/apresentação): comportamento de página normal, não modal */

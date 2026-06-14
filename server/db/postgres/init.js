@@ -248,6 +248,9 @@ export async function initPostgres(connectionString) {
   const { migrateAuthSessionsSchema, pgPurgeExpiredAuthSessions } = await import('./auth-sessions.js');
   await migrateAuthSessionsSchema();
   await pgPurgeExpiredAuthSessions().catch(() => {});
+  const { migrateMagicLoginSchema, pgPurgeExpiredMagicLoginTokens } = await import('./magic-login.js');
+  await migrateMagicLoginSchema();
+  await pgPurgeExpiredMagicLoginTokens().catch(() => {});
   await seedIfEmpty();
   const { migratePlatformSettingsSchema } = await import('./platform-settings.js');
   await migratePlatformSettingsSchema();

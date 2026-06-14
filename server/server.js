@@ -67,6 +67,7 @@ import {
   pgListMinhasCandidaturasParaEscalas, pgFindEventosCheckinByIds, pgListMeusCheckins,
   pgReabrirEscalasDoDia,
   pgClearEventoAberturaEmailEnviado,
+  pgClearCheckinAberturaEmailsForEvento,
   pgClearEscalaLembreteEnviado,
   pgWasEscalaLembreteEnviado,
   pgListEventosCheckinSemEscalaAtiva,
@@ -78,6 +79,11 @@ import {
 import { buildCheckinPublicUrl, resolveAppBaseUrl } from './lib/checkin-public-url.js';
 import { generateCheckinQrPng, generateCheckinQrEmailBuffer } from './lib/checkin-qrcode.js';
 import { sendCheckinAberturaEmailsForEvento, runCheckinAberturaEmailJob } from './lib/checkin-abertura-email.js';
+import {
+  sendVoluntarioCadastroAcolhimentoEmail,
+  sendNovoMembroAcolhimentoEmail,
+} from './lib/form-acolhimento-email.js';
+import { consumeMagicLoginToken } from './lib/magic-login.js';
 import { runCheckinAgradecimentoEmailJob } from './lib/checkin-agradecimento-email.js';
 import {
   runEscalaLembreteEmailJob,
@@ -359,6 +365,7 @@ const publicCheckinLimiter = rateLimit({
 app.use('/api/login', authLimiter);
 app.use('/api/setup', authLimiter);
 app.use('/api/auth/login-email', authLimiter);
+app.use('/api/auth/magic-link', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/register-lider', cadastroLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
@@ -401,6 +408,28 @@ function guardMongoData(res, emptyPayload, message = 'Banco de dados indisponív
     return false;
   }
   return true;
+}
+
+function fireVoluntarioAcolhimentoEmail(igrejaDoc, { email, nome, ministerio }) {
+  if (!(process.env.RESEND_API_KEY || '').trim()) return;
+  sendVoluntarioCadastroAcolhimentoEmail({
+    igrejaId: String(igrejaDoc._id),
+    email,
+    nome,
+    ministerio,
+    igrejaNome: igrejaDoc.nome,
+    igrejaSlug: igrejaDoc.slug,
+  }).catch((err) => console.warn('acolhimento voluntario:', err?.message || err));
+}
+
+function fireNovoMembroAcolhimentoEmail(igrejaDoc, { email, nome }) {
+  if (!(process.env.RESEND_API_KEY || '').trim()) return;
+  sendNovoMembroAcolhimentoEmail({
+    igrejaId: String(igrejaDoc._id),
+    email,
+    nome,
+    igrejaNome: igrejaDoc.nome,
+  }).catch((err) => console.warn('acolhimento novo membro:', err?.message || err));
 }
 
 // POST /api/cadastro - Cadastro público de voluntários (sem auth). Quem se cadastra é considerado voluntário. Padroniza estado (UF) e cidade.
@@ -492,6 +521,9 @@ app.post('/api/cadastro', async (req, res) => {
       const existing = await pgFindVoluntarioByEmail(igrejaId, email);
       await pgUpsertVoluntarioPerfil(igrejaId, email, clean);
       invalidateCache();
+      if (!existing) {
+        fireVoluntarioAcolhimentoEmail(igrejaDoc, { email, nome, ministerio });
+      }
       return res.status(existing ? 200 : 201).json({
         ok: true,
         message: existing ? 'Cadastro atualizado com sucesso.' : 'Cadastro realizado com sucesso.',
@@ -506,6 +538,7 @@ app.post('/api/cadastro', async (req, res) => {
     }
     await Voluntario.create({ ...clean, igrejaId: igrejaDoc._id });
     invalidateCache();
+    fireVoluntarioAcolhimentoEmail(igrejaDoc, { email, nome, ministerio });
     return res.status(201).json({ ok: true, message: 'Cadastro realizado com sucesso.' });
   } catch (err) {
     console.error(err);
@@ -1130,7 +1163,7 @@ async function createUserWithLegacyIndexSelfHeal(payload) {
   }
 }
 
-async function finalizeDbUserLogin(res, user, { withCheckinLink = false } = {}) {
+async function finalizeDbUserLogin(res, user, { withCheckinLink = false, redirectView = null } = {}) {
   let ministerioIds = Array.isArray(user.ministerioIds) ? user.ministerioIds : [];
   if (ministerioIds.length === 0 && user.ministerioId) {
     ministerioIds = [user.ministerioId];
@@ -1174,6 +1207,7 @@ async function finalizeDbUserLogin(res, user, { withCheckinLink = false } = {}) 
   if (!sessionPersisted) {
     payload.sessionWarning = 'Sessão não gravada no banco; login pode falhar após reinício do servidor.';
   }
+  if (redirectView) payload.redirectView = redirectView;
   return res.json(payload);
 }
 
@@ -2543,6 +2577,7 @@ app.post('/api/eventos-checkin/:id/enviar-email-abertura', requireAuth, resolveT
     }
     if (force && evento.emailAberturaEnviadoEm) {
       await pgClearEventoAberturaEmailEnviado(evento._id, req.tenantIgrejaId);
+      await pgClearCheckinAberturaEmailsForEvento(req.tenantIgrejaId, evento._id);
     }
     const emails = await pgListVoluntarioEmails(req.tenantIgrejaId);
     const total = emails.length;
@@ -3340,6 +3375,7 @@ app.post('/api/formulario-publico', async (req, res) => {
           inscricaoNovoMembro,
         });
         invalidateCache();
+        fireNovoMembroAcolhimentoEmail(igrejaDoc, { email, nome: nomeCompleto });
         return res.status(201).json({
           ok: true,
           message: jaNaBase
@@ -3374,6 +3410,7 @@ app.post('/api/formulario-publico', async (req, res) => {
         await Voluntario.updateOne(volFilter, { $set: volPatch });
       }
       invalidateCache();
+      fireNovoMembroAcolhimentoEmail(igrejaDoc, { email, nome: nomeCompleto });
       return res.status(201).json({
         ok: true,
         message: jaNaBaseMongo
@@ -4405,6 +4442,24 @@ app.post('/api/auth/reset-password', async (req, res) => {
   } catch (err) {
     console.error('reset-password:', err?.message || err);
     return sendError(res, 500, err.message || 'Erro ao redefinir senha.');
+  }
+});
+
+// POST /api/auth/magic-link — login sem senha via link do email (?entrar=TOKEN)
+app.post('/api/auth/magic-link', async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Magic link disponível em modo PostgreSQL.');
+    const token = String(req.body?.token || '').trim();
+    if (!token) return sendError(res, 400, 'Token é obrigatório.');
+    const result = await consumeMagicLoginToken(token);
+    if (!result.ok) return res.status(401).json({ error: result.error || 'Link inválido.' });
+    return finalizeDbUserLogin(res, result.user, {
+      withCheckinLink: true,
+      redirectView: result.redirectView || 'escalas',
+    });
+  } catch (err) {
+    console.error('magic-link:', err?.message || err);
+    return sendError(res, 500, err.message || 'Erro ao validar link de acesso.');
   }
 });
 

@@ -17,6 +17,7 @@ import {
   pgListCheckinAgradecimentoPendentes,
   pgMarkCheckinAgradecimentoEnviado,
 } from '../db/postgres/escalas-checkin.js';
+import { createMagicLoginLinkForEmail, buildPlatformAccessEmailBlock } from './magic-login.js';
 
 function escapeHtmlEmail(s) {
   return String(s || '')
@@ -30,7 +31,7 @@ export function isCheckinAgradecimentoMorningWindow(now = new Date()) {
   return isEscalaLembreteMorningWindow(now);
 }
 
-async function listProximasEscalasAbertas(igrejaId, { limit = 3, appBase, igrejaSlug } = {}) {
+export async function listProximasEscalasAbertas(igrejaId, { limit = 3, appBase, igrejaSlug } = {}) {
   const hoje = getHojeDateString();
   const escalas = await pgListEscalas(igrejaId, {
     ativoOnly: true,
@@ -69,6 +70,7 @@ export function buildCheckinAgradecimentoEmailHtml({
   vezesCheckin,
   proximasEscalas,
   igrejaNome,
+  platformAccessHtml = '',
 }) {
   const n = escapeHtmlEmail((nome || '').trim() || 'voluntário(a)');
   const ig = escapeHtmlEmail((igrejaNome || 'Celeiro São Paulo').trim());
@@ -120,6 +122,7 @@ export function buildCheckinAgradecimentoEmailHtml({
     <h2 style="margin:0 0 12px;font-size:14px;color:#111827;text-transform:uppercase;letter-spacing:.04em;">Próximas escalas abertas</h2>
     <p style="margin:0 0 14px;font-size:14px;color:#6b7280;line-height:1.5;">Que tal já se inscrever para servir de novo?</p>
     <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 8px;">${escalasHtml}</table>` : ''}
+    ${platformAccessHtml}
     <p style="margin:16px 0 0;font-size:14px;color:#6b7280;line-height:1.5;">Contamos com você. Até o próximo culto!</p>
   </td></tr>
   <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:18px 36px;text-align:center;">
@@ -158,6 +161,18 @@ export async function sendCheckinAgradecimentoEmail({
   const dataLabel = formatDataPtBr(checkinYmd);
   const subject = `Obrigado por servir — ${dataLabel}`;
 
+  let platformAccessHtml = '';
+  try {
+    const magic = await createMagicLoginLinkForEmail({
+      igrejaId,
+      email: em,
+      nome,
+      appBase: base,
+      redirectView: 'escalas',
+    });
+    if (magic?.url) platformAccessHtml = buildPlatformAccessEmailBlock({ magicLoginUrl: magic.url });
+  } catch (_) { /* opcional */ }
+
   const { error } = await resend.emails.send({
     from,
     to: em,
@@ -171,6 +186,7 @@ export async function sendCheckinAgradecimentoEmail({
       vezesCheckin: resumo?.vezesCheckin ?? 0,
       proximasEscalas,
       igrejaNome: igreja?.nome,
+      platformAccessHtml,
     }),
   });
 

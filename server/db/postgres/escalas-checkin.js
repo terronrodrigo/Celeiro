@@ -29,6 +29,31 @@ CREATE TABLE IF NOT EXISTS checkin_agradecimento_emails (
   enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (igreja_id, email, checkin_ymd)
 );
+
+CREATE TABLE IF NOT EXISTS checkin_abertura_emails (
+  igreja_id TEXT NOT NULL REFERENCES igrejas(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  evento_id TEXT NOT NULL,
+  enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (igreja_id, email, evento_id)
+);
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'checkin_abertura_emails' AND column_name = 'evento_ymd'
+  ) THEN
+    DROP TABLE checkin_abertura_emails;
+    CREATE TABLE checkin_abertura_emails (
+      igreja_id TEXT NOT NULL REFERENCES igrejas(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      evento_id TEXT NOT NULL,
+      enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (igreja_id, email, evento_id)
+    );
+  END IF;
+END $$;
 `;
 
 export async function migrateEventosCheckinSchema() {
@@ -944,6 +969,45 @@ export async function pgClearEventoAberturaEmailEnviado(id, igrejaId) {
      WHERE id = $1 AND igreja_id = $2`,
     [id, igrejaId],
   );
+}
+
+/** Reserva envio por destinatário (máx. 1 email de abertura por pessoa/evento). */
+export async function pgTryClaimCheckinAberturaEmail(igrejaId, email, eventoId) {
+  const em = String(email || '').toLowerCase().trim();
+  const evId = String(eventoId || '').trim();
+  if (!em || !evId || !igrejaId) return false;
+  const { rows } = await getPostgresPool().query(
+    `INSERT INTO checkin_abertura_emails (igreja_id, email, evento_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (igreja_id, email, evento_id) DO NOTHING
+     RETURNING email`,
+    [igrejaId, em, evId],
+  );
+  return rows.length > 0;
+}
+
+/** Libera reserva se o envio falhar (permite nova tentativa). */
+export async function pgReleaseCheckinAberturaEmail(igrejaId, email, eventoId) {
+  const em = String(email || '').toLowerCase().trim();
+  const evId = String(eventoId || '').trim();
+  if (!em || !evId || !igrejaId) return;
+  await getPostgresPool().query(
+    `DELETE FROM checkin_abertura_emails
+     WHERE igreja_id = $1 AND email = $2 AND evento_id = $3`,
+    [igrejaId, em, evId],
+  );
+}
+
+/** Limpa registros do evento (reenvio manual com force). */
+export async function pgClearCheckinAberturaEmailsForEvento(igrejaId, eventoId) {
+  const evId = String(eventoId || '').trim();
+  if (!evId || !igrejaId) return 0;
+  const { rowCount } = await getPostgresPool().query(
+    `DELETE FROM checkin_abertura_emails
+     WHERE igreja_id = $1 AND evento_id = $2`,
+    [igrejaId, evId],
+  );
+  return rowCount || 0;
 }
 
 /**

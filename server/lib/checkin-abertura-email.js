@@ -7,12 +7,15 @@ import {
   buildCheckinShortLinkTarget,
 } from './checkin-public-url.js';
 import { buildCeleiroEmailHtml, EMAIL_COLORS, escapeHtml } from './email-layout.js';
+import { createMagicLoginLinkForEmail, buildPlatformAccessEmailBlock } from './magic-login.js';
 import { pgListVoluntarios } from '../db/postgres/operational-data.js';
 import { pgFindIgrejaById } from '../db/postgres/repos.js';
 import { pgGetOrCreateShortLink } from '../db/postgres/short-links.js';
 import {
   pgListEventosCheckinAberturaEmailPendentes,
   pgTryClaimEventoAberturaEmail,
+  pgTryClaimCheckinAberturaEmail,
+  pgReleaseCheckinAberturaEmail,
 } from '../db/postgres/escalas-checkin.js';
 
 function horarioCheckinLabel(evento) {
@@ -33,6 +36,7 @@ export function buildCheckinAberturaEmailHtml({
   checkinUrlDisplay,
   qrImageUrl,
   igrejaNome,
+  platformAccessHtml = '',
 }) {
   const n = escapeHtml((nome || '').trim() || 'voluntário(a)');
   const titulo = escapeHtml((eventoLabel || 'Check-in de presença').trim());
@@ -58,7 +62,8 @@ export function buildCheckinAberturaEmailHtml({
     <p style="margin:20px 0 0;font-size:13px;color:${EMAIL_COLORS.textMuted};text-align:center;">
       Link direto:<br>
       <a href="${escapeHtml(checkinUrl)}" style="color:${EMAIL_COLORS.accent};text-decoration:none;font-weight:600;">${linkDisplay}</a>
-    </p>`;
+    </p>
+    ${platformAccessHtml}`;
 
   return buildCeleiroEmailHtml({
     title: 'Check-in aberto',
@@ -135,8 +140,31 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
 
   let sent = 0;
   let failed = 0;
+  let skippedDedup = 0;
   for (const [email, nome] of recipients) {
+    const claimed = await pgTryClaimCheckinAberturaEmail(ev.igrejaId, email, ev._id);
+    if (!claimed) {
+      skippedDedup += 1;
+      continue;
+    }
     try {
+      let platformAccessHtml = '';
+      try {
+        const magic = await createMagicLoginLinkForEmail({
+          igrejaId: ev.igrejaId,
+          email,
+          nome,
+          appBase,
+          redirectView: 'checkin-hoje',
+        });
+        if (magic?.url) {
+          platformAccessHtml = buildPlatformAccessEmailBlock({
+            magicLoginUrl: magic.url,
+            hint: 'Veja seus cultos, confirme check-in e acompanhe seu histórico.',
+          });
+        }
+      } catch (_) { /* segue sem bloco de plataforma */ }
+
       const { error } = await resend.emails.send({
         from,
         to: email,
@@ -151,16 +179,19 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
           checkinUrlDisplay,
           qrImageUrl,
           igrejaNome: igreja?.nome,
+          platformAccessHtml,
         }),
       });
       if (error) {
         failed += 1;
+        await pgReleaseCheckinAberturaEmail(ev.igrejaId, email, ev._id);
         console.warn(`checkin abertura email ${email}:`, error.message || error);
       } else {
         sent += 1;
       }
     } catch (e) {
       failed += 1;
+      await pgReleaseCheckinAberturaEmail(ev.igrejaId, email, ev._id);
       console.warn(`checkin abertura email ${email}:`, e?.message || e);
     }
     if (recipients.length > 1) {
@@ -168,7 +199,7 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
     }
   }
 
-  return { sent, failed, total: recipients.length, checkinUrl };
+  return { sent, failed, skippedDedup, total: recipients.length, checkinUrl };
 }
 
 /** Job periódico: dispara emails quando a janela de check-in abre. */
@@ -189,6 +220,8 @@ export async function runCheckinAberturaEmailJob() {
       totalFailed += r.failed || 0;
       if ((r.sent || 0) > 0) {
         console.log(`✉️ Check-in abertura: ${r.sent}/${r.total} email(s) — ${ev.label || ev._id}`);
+      } else if ((r.skippedDedup || 0) > 0) {
+        console.log(`✉️ Check-in abertura: 0 novos (${r.skippedDedup} já receberam neste evento) — ${ev.label || ev._id}`);
       }
     } catch (e) {
       console.error('runCheckinAberturaEmailJob evento', ev._id, e?.message || e);
