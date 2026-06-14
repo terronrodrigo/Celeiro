@@ -18,6 +18,7 @@ import {
   pgMarkCheckinAgradecimentoEnviado,
 } from '../db/postgres/escalas-checkin.js';
 import { createMagicLoginLinkForEmail, buildPlatformAccessEmailBlock } from './magic-login.js';
+import { buildCeleiroEmailHtml, EMAIL_COLORS } from './email-layout.js';
 
 function escapeHtmlEmail(s) {
   return String(s || '')
@@ -71,22 +72,24 @@ export function buildCheckinAgradecimentoEmailHtml({
   proximasEscalas,
   igrejaNome,
   platformAccessHtml = '',
+  appBase,
 }) {
+  const c = EMAIL_COLORS;
   const n = escapeHtmlEmail((nome || '').trim() || 'voluntário(a)');
   const ig = escapeHtmlEmail((igrejaNome || 'Celeiro São Paulo').trim());
   const dataLabel = escapeHtmlEmail(checkinDataLabel || 'ontem');
   const minOntem = escapeHtmlEmail(ministerioOntem || '');
 
   const kpiBlock = `
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background:#f9fafb;border-radius:10px;border:1px solid #e5e7eb;">
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 24px;background:${c.accentSoft};border-radius:12px;border:1px solid ${c.border};">
       <tr>
-        <td style="padding:16px 20px;width:50%;text-align:center;border-right:1px solid #e5e7eb;">
-          <p style="margin:0;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;">Participações em escala</p>
-          <p style="margin:6px 0 0;font-size:28px;font-weight:700;color:#1a1a2e;">${Number(vezesEscalaInscricao) || 0}</p>
+        <td style="padding:16px 20px;width:50%;text-align:center;border-right:1px solid ${c.border};">
+          <p style="margin:0;font-size:11px;color:${c.textMuted};text-transform:uppercase;letter-spacing:.06em;">Participações em escala</p>
+          <p style="margin:6px 0 0;font-size:28px;font-weight:700;color:${c.text};">${Number(vezesEscalaInscricao) || 0}</p>
         </td>
         <td style="padding:16px 20px;width:50%;text-align:center;">
-          <p style="margin:0;font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;">Check-ins realizados</p>
-          <p style="margin:6px 0 0;font-size:28px;font-weight:700;color:#15803d;">${Number(vezesCheckin) || 0}</p>
+          <p style="margin:0;font-size:11px;color:${c.textMuted};text-transform:uppercase;letter-spacing:.06em;">Check-ins realizados</p>
+          <p style="margin:6px 0 0;font-size:28px;font-weight:700;color:${c.accent};">${Number(vezesCheckin) || 0}</p>
         </td>
       </tr>
     </table>`;
@@ -94,42 +97,37 @@ export function buildCheckinAgradecimentoEmailHtml({
   const escalasHtml = (proximasEscalas || []).length
     ? (proximasEscalas || []).map((e) => `
       <tr>
-        <td style="padding:10px 0;border-bottom:1px solid #e5e7eb;">
-          <p style="margin:0 0 4px;font-size:15px;color:#111827;font-weight:600;">${escapeHtmlEmail(e.nome)}</p>
-          <p style="margin:0 0 8px;font-size:13px;color:#6b7280;">${escapeHtmlEmail(e.dataLabel)}</p>
-          <a href="${e.url}" style="font-size:14px;color:#f59e0b;font-weight:600;text-decoration:none;">Inscrever-se na escala →</a>
+        <td style="padding:10px 0;border-bottom:1px solid ${c.border};">
+          <p style="margin:0 0 4px;font-size:15px;color:${c.text};font-weight:600;">${escapeHtmlEmail(e.nome)}</p>
+          <p style="margin:0 0 8px;font-size:13px;color:${c.textSecondary};">${escapeHtmlEmail(e.dataLabel)}</p>
+          <a href="${e.url}" style="font-size:14px;color:${c.accent};font-weight:600;text-decoration:none;">Inscrever-se na escala →</a>
         </td>
       </tr>`).join('')
     : '';
 
-  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Obrigado por servir</title></head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;"><tr><td align="center">
-<table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
-  <tr><td style="background:#1a1a2e;padding:28px 36px;text-align:center;">
-    <p style="margin:0;font-size:12px;color:#f59e0b;text-transform:uppercase;letter-spacing:.08em;font-weight:600;">${ig}</p>
-    <h1 style="margin:8px 0 0;font-size:22px;color:#fff;font-weight:700;">Obrigado por servir!</h1>
-  </td></tr>
-  <tr><td style="padding:36px;">
-    <p style="margin:0 0 14px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${n}</strong>!</p>
-    <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6;">
-      Registramos seu check-in em <strong>${dataLabel}</strong>${minOntem ? ` no ministério <strong>${minOntem}</strong>` : ''}.
+  const bodyHtml = `
+    <p style="margin:0 0 6px;font-size:13px;color:${c.textMuted};text-transform:uppercase;letter-spacing:.06em;">${ig}</p>
+    <p style="margin:0 0 14px;">Olá, <strong>${n}</strong>!</p>
+    <p style="margin:0 0 20px;color:${c.textSecondary};">
+      Registramos seu check-in em <strong style="color:${c.text};">${dataLabel}</strong>${minOntem ? ` no ministério <strong style="color:${c.text};">${minOntem}</strong>` : ''}.
       Muito obrigado por servir conosco — sua participação faz toda a diferença!
     </p>
-    <h2 style="margin:0 0 12px;font-size:14px;color:#111827;text-transform:uppercase;letter-spacing:.04em;">Sua jornada até aqui</h2>
+    <h2 style="margin:0 0 12px;font-size:14px;color:${c.text};text-transform:uppercase;letter-spacing:.04em;">Sua jornada até aqui</h2>
     ${kpiBlock}
     ${escalasHtml ? `
-    <h2 style="margin:0 0 12px;font-size:14px;color:#111827;text-transform:uppercase;letter-spacing:.04em;">Próximas escalas abertas</h2>
-    <p style="margin:0 0 14px;font-size:14px;color:#6b7280;line-height:1.5;">Que tal já se inscrever para servir de novo?</p>
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 8px;">${escalasHtml}</table>` : ''}
-    ${platformAccessHtml}
-    <p style="margin:16px 0 0;font-size:14px;color:#6b7280;line-height:1.5;">Contamos com você. Até o próximo culto!</p>
-  </td></tr>
-  <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:18px 36px;text-align:center;">
-    <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.5;">${BRAND_NAME}</p>
-  </td></tr>
-</table>
-</td></tr></table></body></html>`;
+    <h2 style="margin:0 0 12px;font-size:14px;color:${c.text};text-transform:uppercase;letter-spacing:.04em;">Próximas escalas abertas</h2>
+    <p style="margin:0 0 14px;font-size:14px;color:${c.textSecondary};">Que tal já se inscrever para servir de novo?</p>
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 8px;">${escalasHtml}</table>` : ''}
+    <p style="margin:16px 0 0;font-size:14px;color:${c.textMuted};">Contamos com você. Até o próximo culto!</p>`;
+
+  return buildCeleiroEmailHtml({
+    title: 'Obrigado por servir!',
+    preheader: `Check-in registrado em ${checkinDataLabel || 'ontem'}`,
+    bodyHtml,
+    afterCtaHtml: platformAccessHtml,
+    footerNote: BRAND_NAME,
+    appBase,
+  });
 }
 
 export async function sendCheckinAgradecimentoEmail({
@@ -187,6 +185,7 @@ export async function sendCheckinAgradecimentoEmail({
       proximasEscalas,
       igrejaNome: igreja?.nome,
       platformAccessHtml,
+      appBase: base,
     }),
   });
 

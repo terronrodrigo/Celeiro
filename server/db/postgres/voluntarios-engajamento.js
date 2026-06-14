@@ -1,5 +1,5 @@
 /**
- * KPIs de engajamento de voluntários e cohort de re-engajamento por email.
+ * KPIs de engajamento de voluntários, cohorts de email e controle de envios semanais.
  */
 import { getPostgresPool } from './init.js';
 import {
@@ -10,6 +10,40 @@ import {
   candidaturaMatchesLiderMinisterios,
   voluntarioMatchesLiderMinisterios,
 } from '../../lib/ministerio-match.js';
+
+const NUNCA_SERVIU_EMAIL_SQL = `
+CREATE TABLE IF NOT EXISTS voluntario_nunca_serviu_emails (
+  igreja_id TEXT NOT NULL REFERENCES igrejas(id) ON DELETE CASCADE,
+  semana_ymd DATE NOT NULL,
+  enviado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  emails_enviados INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (igreja_id, semana_ymd)
+);
+`;
+
+export async function pgEnsureVoluntarioNuncaServiuEmailSchema() {
+  await getPostgresPool().query(NUNCA_SERVIU_EMAIL_SQL);
+}
+
+export async function pgWasVoluntarioNuncaServiuEmailEnviado(igrejaId, semanaYmd) {
+  const { rows } = await getPostgresPool().query(
+    `SELECT 1 FROM voluntario_nunca_serviu_emails
+     WHERE igreja_id = $1 AND semana_ymd = $2::date LIMIT 1`,
+    [igrejaId, semanaYmd],
+  );
+  return rows.length > 0;
+}
+
+export async function pgMarkVoluntarioNuncaServiuEmailEnviado(igrejaId, semanaYmd, emailsEnviados = 0) {
+  await getPostgresPool().query(
+    `INSERT INTO voluntario_nunca_serviu_emails (igreja_id, semana_ymd, emails_enviados)
+     VALUES ($1, $2::date, $3)
+     ON CONFLICT (igreja_id, semana_ymd) DO UPDATE SET
+       enviado_em = NOW(),
+       emails_enviados = EXCLUDED.emails_enviados`,
+    [igrejaId, semanaYmd, emailsEnviados],
+  );
+}
 
 function normEmail(v) {
   return String(v || '').toLowerCase().trim();
@@ -33,11 +67,13 @@ function isWithinDays(ms, days) {
   return ms >= Date.now() - days * 24 * 60 * 60 * 1000;
 }
 
-/** @returns {Map<string, { ever: boolean, msMax: number, ministries: Set<string> }>} */
+/** @returns {Map<string, { ever: boolean, msMax: number, msFirst: number, ministries: Set<string> }>} */
 function buildEmailActivityMap(candRows, ckRows) {
   const map = new Map();
   function ensure(em) {
-    if (!map.has(em)) map.set(em, { ever: false, msMax: 0, ministries: new Set() });
+    if (!map.has(em)) {
+      map.set(em, { ever: false, msMax: 0, msFirst: Infinity, ministries: new Set() });
+    }
     return map.get(em);
   }
   for (const r of candRows) {
@@ -46,7 +82,10 @@ function buildEmailActivityMap(candRows, ckRows) {
     const s = ensure(em);
     s.ever = true;
     const ms = activityMsFromCandidatura(r);
-    if (ms > s.msMax) s.msMax = ms;
+    if (ms > 0) {
+      if (ms < s.msFirst) s.msFirst = ms;
+      if (ms > s.msMax) s.msMax = ms;
+    }
     const m = String(r.ministerio || '').trim();
     if (m) s.ministries.add(m);
   }
@@ -56,7 +95,10 @@ function buildEmailActivityMap(candRows, ckRows) {
     const s = ensure(em);
     s.ever = true;
     const ms = activityMsFromCheckin(r);
-    if (ms > s.msMax) s.msMax = ms;
+    if (ms > 0) {
+      if (ms < s.msFirst) s.msFirst = ms;
+      if (ms > s.msMax) s.msMax = ms;
+    }
     const m = String(r.ministerio || '').trim();
     if (m) s.ministries.add(m);
   }
@@ -108,12 +150,64 @@ function servedInLastDays(email, activityMap, recentSet, days) {
   return act ? isWithinDays(act.msMax, days) : false;
 }
 
+/** Cadastros + formulários com email válido (base ampliada para engajamento). */
+export async function pgListPessoasVoluntariosBase(igrejaId) {
+  const byEmail = new Map();
+  const voluntarios = await pgListVoluntariosParaEmailBroadcast(igrejaId);
+  for (const v of voluntarios) {
+    const em = normEmail(v.email);
+    if (!em || !em.includes('@') || byEmail.has(em)) continue;
+    byEmail.set(em, {
+      email: em,
+      nome: (v.nome || '').trim() || em.split('@')[0] || em,
+      fonte: 'voluntario',
+      vol: v,
+    });
+  }
+
+  const pool = getPostgresPool();
+  const formSql = [
+    `SELECT LOWER(TRIM(dados->>'email')) AS em,
+            COALESCE(NULLIF(TRIM(dados->>'nome'), ''), NULLIF(TRIM(dados->>'nomeCompleto'), '')) AS nome,
+            'formulario_membro' AS fonte
+     FROM formulario_membro
+     WHERE igreja_id = $1 AND LOWER(TRIM(COALESCE(dados->>'email', ''))) LIKE '%@%'`,
+    `SELECT LOWER(TRIM(dados->>'email')) AS em,
+            NULLIF(TRIM(dados->>'nome'), '') AS nome,
+            'formulario_novo_membro' AS fonte
+     FROM formulario_novo_membro
+     WHERE igreja_id = $1 AND LOWER(TRIM(COALESCE(dados->>'email', ''))) LIKE '%@%'`,
+    `SELECT LOWER(TRIM(dados->>'email')) AS em,
+            COALESCE(NULLIF(TRIM(dados->>'nome'), ''), NULLIF(TRIM(dados->>'nomeCompleto'), '')) AS nome,
+            'formulario_consolidacao' AS fonte
+     FROM formulario_consolidacao
+     WHERE igreja_id = $1 AND LOWER(TRIM(COALESCE(dados->>'email', ''))) LIKE '%@%'`,
+  ];
+
+  for (const sql of formSql) {
+    const { rows } = await pool.query(sql, [igrejaId]);
+    for (const r of rows) {
+      const em = normEmail(r.em);
+      if (!em || !em.includes('@')) continue;
+      if (byEmail.has(em)) continue;
+      byEmail.set(em, {
+        email: em,
+        nome: (r.nome || '').trim() || em.split('@')[0] || em,
+        fonte: r.fonte || 'formulario',
+        vol: null,
+      });
+    }
+  }
+
+  return [...byEmail.values()];
+}
+
 /**
- * Resumo de engajamento de voluntários cadastrados.
- * @returns {{ total, nuncaServiram, serviram30, serviram60, serviram90 }}
+ * Resumo de engajamento de voluntários cadastrados (+ formulários).
+ * @returns {{ total, nuncaServiram, serviram30, serviram60, serviram90, primeiraVez7d, primeiraVez30d, cadastrosFormularios }}
  */
 export async function pgVoluntariosEngajamentoResumo(igrejaId, { ministerioFiltro } = {}) {
-  const voluntarios = await pgListVoluntariosParaEmailBroadcast(igrejaId);
+  const pessoas = await pgListPessoasVoluntariosBase(igrejaId);
   const { candRows, ckRows } = await loadActivityRows(igrejaId);
   const activityMap = buildEmailActivityMap(candRows, ckRows);
 
@@ -128,11 +222,15 @@ export async function pgVoluntariosEngajamentoResumo(igrejaId, { ministerioFiltr
   let serviram30 = 0;
   let serviram60 = 0;
   let serviram90 = 0;
+  let primeiraVez7d = 0;
+  let primeiraVez30d = 0;
+  let cadastrosFormularios = 0;
 
-  for (const v of voluntarios) {
-    const em = normEmail(v.email);
+  for (const p of pessoas) {
+    const em = normEmail(p.email);
     if (!em || !em.includes('@')) continue;
-    if (!volunteerInMinistryCohort(v, em, activityMap, ministerioFiltro)) continue;
+    const vol = p.vol || p;
+    if (!volunteerInMinistryCohort(vol, em, activityMap, ministerioFiltro)) continue;
 
     total += 1;
     const act = activityMap.get(em);
@@ -140,14 +238,51 @@ export async function pgVoluntariosEngajamentoResumo(igrejaId, { ministerioFiltr
 
     if (!ever) {
       nuncaServiram += 1;
+      if (p.fonte && p.fonte !== 'voluntario' && p.fonte !== 'user') cadastrosFormularios += 1;
     } else {
       if (servedInLastDays(em, activityMap, recent30, 30)) serviram30 += 1;
       if (servedInLastDays(em, activityMap, recent60, 60)) serviram60 += 1;
       if (servedInLastDays(em, activityMap, recent90, 90)) serviram90 += 1;
+      const firstMs = act.msFirst !== Infinity ? act.msFirst : 0;
+      if (firstMs && isWithinDays(firstMs, 7)) primeiraVez7d += 1;
+      if (firstMs && isWithinDays(firstMs, 30)) primeiraVez30d += 1;
     }
   }
 
-  return { total, nuncaServiram, serviram30, serviram60, serviram90 };
+  return {
+    total,
+    nuncaServiram,
+    serviram30,
+    serviram60,
+    serviram90,
+    primeiraVez7d,
+    primeiraVez30d,
+    cadastrosFormularios,
+  };
+}
+
+/**
+ * Pessoas que nunca tiveram candidatura nem check-in (cadastro + formulários).
+ * @returns {{ email: string, nome: string }[]}
+ */
+export async function pgResolveDestinatariosNuncaServiram(igrejaId, { ministerioFiltro } = {}) {
+  const pessoas = await pgListPessoasVoluntariosBase(igrejaId);
+  const { candRows, ckRows } = await loadActivityRows(igrejaId);
+  const activityMap = buildEmailActivityMap(candRows, ckRows);
+
+  const out = [];
+  for (const p of pessoas) {
+    const em = normEmail(p.email);
+    if (!em || !em.includes('@')) continue;
+    const act = activityMap.get(em);
+    if (act?.ever) continue;
+    const vol = p.vol || p;
+    if (!volunteerInMinistryCohort(vol, em, activityMap, ministerioFiltro)) continue;
+    out.push({ email: em, nome: (p.nome || '').trim() || em.split('@')[0] || em });
+  }
+
+  out.sort((a, b) => (a.nome || a.email).localeCompare(b.nome || b.email, 'pt-BR'));
+  return out;
 }
 
 /**

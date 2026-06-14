@@ -49,6 +49,7 @@ export function buildVoluntarioCadastroAcolhimentoHtml({
   whatsappUrl,
   igrejaNome,
   platformAccessHtml = '',
+  appBase,
 }) {
   const n = escapeHtml((nome || '').trim() || 'voluntário(a)');
   const ig = escapeHtml((igrejaNome || 'Celeiro São Paulo').trim());
@@ -65,7 +66,6 @@ export function buildVoluntarioCadastroAcolhimentoHtml({
       </td></tr>
     </table>
     ${escalasBlock(proximasEscalas)}
-    ${platformAccessHtml}
     <p style="margin:20px 0 0;font-size:14px;color:${EMAIL_COLORS.textMuted};">Estamos muito felizes em ter você conosco. Qualquer dúvida, responda este e-mail.</p>`;
 
   const primaryEscala = proximasEscalas?.[0];
@@ -75,7 +75,9 @@ export function buildVoluntarioCadastroAcolhimentoHtml({
     bodyHtml,
     ctaHref: primaryEscala?.url || wa,
     ctaLabel: primaryEscala ? 'Inscrever-se na escala' : 'Entrar no grupo WhatsApp',
+    afterCtaHtml: platformAccessHtml,
     footerNote: BRAND_NAME,
+    appBase,
   });
 }
 
@@ -84,6 +86,7 @@ export function buildNovoMembroAcolhimentoHtml({
   voluntarioUrl,
   igrejaNome,
   platformAccessHtml = '',
+  appBase,
 }) {
   const n = escapeHtml((nome || '').trim() || 'amigo(a)');
   const ig = escapeHtml((igrejaNome || 'Celeiro São Paulo').trim());
@@ -97,8 +100,7 @@ export function buildNovoMembroAcolhimentoHtml({
       Link do cadastro:<br>
       <a href="${formUrl}" style="color:${EMAIL_COLORS.accent};text-decoration:none;font-weight:600;">${formUrl}</a>
     </p>
-    <p style="margin:20px 0 0;font-size:14px;color:${EMAIL_COLORS.textMuted};">Estamos à disposição para acolher você. Responda este e-mail se precisar de ajuda.</p>
-    ${platformAccessHtml}`;
+    <p style="margin:20px 0 0;font-size:14px;color:${EMAIL_COLORS.textMuted};">Estamos à disposição para acolher você. Responda este e-mail se precisar de ajuda.</p>`;
 
   return buildCeleiroEmailHtml({
     title: 'Bem-vindo(a) ao Celeiro!',
@@ -106,7 +108,9 @@ export function buildNovoMembroAcolhimentoHtml({
     bodyHtml,
     ctaHref: voluntarioUrl || voluntarioFormUrl(),
     ctaLabel: 'Cadastro de voluntários',
+    afterCtaHtml: platformAccessHtml,
     footerNote: BRAND_NAME,
+    appBase,
   });
 }
 
@@ -162,6 +166,7 @@ export async function sendVoluntarioCadastroAcolhimentoEmail({
       whatsappUrl: wa,
       igrejaNome: igreja?.nome,
       platformAccessHtml,
+      appBase: base,
     }),
   });
 
@@ -217,6 +222,7 @@ export async function sendNovoMembroAcolhimentoEmail({
       voluntarioUrl: formUrl,
       igrejaNome: igNome,
       platformAccessHtml,
+      appBase: (appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, ''),
     }),
   });
 

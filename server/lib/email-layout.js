@@ -21,9 +21,35 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+/** URL absoluta do logo preto (mesmo da plataforma: fundo claro). */
+export function emailLogoUrl(appBase) {
+  const base = (appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
+  return `${base}/assets/logo-hop-dark-transparent.png`;
+}
+
+/** Bloco de logo centralizado para headers de email. */
+export function buildEmailLogoBlock(appBase) {
+  const url = emailLogoUrl(appBase);
+  return `<img src="${escapeHtml(url)}" alt="${escapeHtml(BRAND_SHORT)} — ${escapeHtml(BRAND_TAGLINE)}" width="240" style="display:block;margin:0 auto 12px;max-width:240px;height:auto;border:0;" />`;
+}
+
+/** Header padrão Celeiro v3: fundo claro + logo preto + título escuro. */
+export function buildEmailHeaderHtml({ title, appBase }) {
+  const c = EMAIL_COLORS;
+  const logoBlock = buildEmailLogoBlock(appBase);
+  return `
+      <tr>
+        <td style="background:${c.card};padding:28px 32px 22px;text-align:center;border-bottom:3px solid ${c.accent};">
+          ${logoBlock}
+          <p style="margin:0 0 6px;font-size:11px;color:${c.textMuted};text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">${escapeHtml(BRAND_TAGLINE)}</p>
+          <h1 style="margin:0;font-size:22px;color:${c.text};font-weight:700;line-height:1.3;">${escapeHtml(title)}</h1>
+        </td>
+      </tr>`;
+}
+
 /**
  * Shell HTML transacional Celeiro v3 (creme + bordô).
- * @param {{ title: string, preheader?: string, bodyHtml: string, ctaHref?: string, ctaLabel?: string, footerNote?: string }} opts
+ * @param {{ title: string, preheader?: string, bodyHtml: string, ctaHref?: string, ctaLabel?: string, afterCtaHtml?: string, footerNote?: string, appBase?: string }} opts
  */
 export function buildCeleiroEmailHtml({
   title,
@@ -31,7 +57,9 @@ export function buildCeleiroEmailHtml({
   bodyHtml,
   ctaHref,
   ctaLabel,
+  afterCtaHtml = '',
   footerNote,
+  appBase,
 }) {
   const c = EMAIL_COLORS;
   const pre = preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(preheader)}</div>` : '';
@@ -40,6 +68,7 @@ export function buildCeleiroEmailHtml({
       <a href="${ctaHref}" style="display:inline-block;padding:14px 32px;font-family:'DM Sans','Segoe UI',Arial,sans-serif;font-size:16px;font-weight:700;color:#fff;text-decoration:none;border-radius:12px;">${escapeHtml(ctaLabel)}</a>
     </td></tr></table>`
     : '';
+  const headerHtml = buildEmailHeaderHtml({ title, appBase });
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -53,17 +82,12 @@ ${pre}
 <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:${c.bg};padding:32px 16px;">
   <tr><td align="center">
     <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width:560px;background:${c.card};border:1px solid ${c.border};border-radius:16px;overflow:hidden;box-shadow:0 12px 40px rgba(82,58,38,0.1);">
-      <tr>
-        <td style="background:linear-gradient(135deg,${c.accentDark} 0%,${c.accent} 100%);padding:28px 32px;text-align:center;">
-          <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.82);text-transform:uppercase;letter-spacing:0.12em;font-weight:600;">${escapeHtml(BRAND_SHORT)}</p>
-          <p style="margin:6px 0 0;font-size:13px;color:rgba(255,255,255,0.9);letter-spacing:0.04em;">${escapeHtml(BRAND_TAGLINE)}</p>
-          <h1 style="margin:14px 0 0;font-size:22px;color:#fff;font-weight:700;line-height:1.3;">${escapeHtml(title)}</h1>
-        </td>
-      </tr>
+      ${headerHtml}
       <tr>
         <td style="padding:32px 28px 28px;color:${c.text};font-size:16px;line-height:1.65;">
           ${bodyHtml}
           ${ctaBlock}
+          ${afterCtaHtml}
         </td>
       </tr>
       <tr>

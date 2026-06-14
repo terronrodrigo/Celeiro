@@ -100,6 +100,9 @@ import {
   sendVoluntarioReengajamentoEmails,
 } from './lib/voluntario-reengajamento-email.js';
 import {
+  runVoluntarioNuncaServiuEmailJob,
+} from './lib/voluntario-nunca-serviu-email.js';
+import {
   pgListEventosFormulario, pgFindEventoFormularioById, pgCreateEventoFormulario,
   pgUpdateEventoFormulario, pgDeleteEventoFormulario, pgFindEventoFormularioByShortCode,
   pgCreateFormularioMembro, pgListFormulariosMembro,
@@ -6874,6 +6877,9 @@ app.get('/api/dashboard/resumo/voluntarios-engajamento', requireAuth, resolveTen
         serviram30: 0,
         serviram60: 0,
         serviram90: 0,
+        primeiraVez7d: 0,
+        primeiraVez30d: 0,
+        cadastrosFormularios: 0,
         ministeriosDisponiveis: [],
       });
     }
@@ -7327,6 +7333,23 @@ async function start() {
         console.error('runCheckinAgradecimentoEmailJob falhou:', err.message || err);
       }
     }, CHECKIN_AGRADECIMENTO_MS).unref?.();
+
+    const VOL_NUNCA_SERVIU_MS = Number(process.env.VOL_NUNCA_SERVIU_INTERVAL_MS) || 30 * 60 * 1000;
+    setTimeout(() => {
+      runVoluntarioNuncaServiuEmailJob().catch((err) => {
+        console.error('nunca serviu email (boot):', err?.message || err);
+      });
+    }, 75_000);
+    setInterval(async () => {
+      try {
+        const r = await runVoluntarioNuncaServiuEmailJob();
+        if ((r.sent || 0) > 0) {
+          console.log(`⏱️  nunca serviu (segunda ${r.semanaYmd}): ${r.sent} enviado(s).`);
+        }
+      } catch (err) {
+        console.error('runVoluntarioNuncaServiuEmailJob falhou:', err.message || err);
+      }
+    }, VOL_NUNCA_SERVIU_MS).unref?.();
   }
 
   app.listen(PORT, '0.0.0.0', () => {

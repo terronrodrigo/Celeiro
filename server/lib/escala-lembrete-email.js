@@ -18,6 +18,7 @@ import {
 } from '../db/postgres/escalas-checkin.js';
 import { splitVoluntarioMinisterios } from './ministerio-match.js';
 import { createMagicLoginLinkForEmail, buildPlatformAccessEmailBlock } from './magic-login.js';
+import { buildCeleiroEmailHtml, EMAIL_COLORS } from './email-layout.js';
 
 /** 1=segunda … 4=quinta; horário de Brasília. */
 export const ESCALA_LEMBRETE_SCHEDULE = {
@@ -94,51 +95,48 @@ export function buildEscalaLembreteEmailHtml({
   ministerioLinks,
   igrejaNome,
   platformAccessHtml = '',
+  appBase,
 }) {
+  const c = EMAIL_COLORS;
   const n = (nome || '').trim() || 'voluntário(a)';
   const cfg = ESCALA_LEMBRETE_SCHEDULE[tipo] || { label: 'Culto' };
   const ig = (igrejaNome || 'Celeiro São Paulo').trim();
 
   const escalasHtml = (escalasResumo || []).map((e) => `
     <tr>
-      <td style="padding:10px 0;border-bottom:1px solid #e5e7eb;">
-        <p style="margin:0 0 6px;font-size:15px;color:#111827;font-weight:600;">${e.nome}</p>
-        <p style="margin:0 0 8px;font-size:13px;color:#6b7280;">${e.dataLabel}</p>
-        <a href="${e.url}" style="font-size:14px;color:#f59e0b;font-weight:600;text-decoration:none;">Ver escala e inscrever-se →</a>
+      <td style="padding:10px 0;border-bottom:1px solid ${c.border};">
+        <p style="margin:0 0 6px;font-size:15px;color:${c.text};font-weight:600;">${e.nome}</p>
+        <p style="margin:0 0 8px;font-size:13px;color:${c.textSecondary};">${e.dataLabel}</p>
+        <a href="${e.url}" style="font-size:14px;color:${c.accent};font-weight:600;text-decoration:none;">Ver escala e inscrever-se →</a>
       </td>
     </tr>`).join('');
 
   const ministeriosHtml = (ministerioLinks || []).length
     ? (ministerioLinks || []).map((m, i) => `
       <p style="margin:0 0 10px;">
-        <a href="${m.url}" style="display:inline-block;background:${i === 0 ? '#1a1a2e' : '#374151'};color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">${m.ministerio}</a>
+        <a href="${m.url}" style="display:inline-block;background:${i === 0 ? c.accent : c.textSecondary};color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px;">${m.ministerio}</a>
       </p>`).join('')
-    : `<p style="margin:0;font-size:14px;color:#6b7280;">Acesse o link da escala acima e escolha o ministério em que deseja servir.</p>`;
+    : `<p style="margin:0;font-size:14px;color:${c.textSecondary};">Acesse o link da escala acima e escolha o ministério em que deseja servir.</p>`;
 
-  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Lembrete de escala</title></head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;"><tr><td align="center">
-<table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
-  <tr><td style="background:#1a1a2e;padding:28px 36px;text-align:center;">
-    <p style="margin:0;font-size:12px;color:#f59e0b;text-transform:uppercase;letter-spacing:.08em;font-weight:600;">${ig}</p>
-    <h1 style="margin:8px 0 0;font-size:22px;color:#fff;font-weight:700;">Inscrições na escala — ${cfg.label}</h1>
-  </td></tr>
-  <tr><td style="padding:36px;">
-    <p style="margin:0 0 14px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${n}</strong>!</p>
-    <p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6;">As inscrições para o culto de <strong>${cfg.label.toLowerCase()}</strong>${cultoDataLabel ? ` (${cultoDataLabel})` : ''} estão abertas. Que tal se inscrever para servir?</p>
+  const bodyHtml = `
+    <p style="margin:0 0 6px;font-size:13px;color:${c.textMuted};text-transform:uppercase;letter-spacing:.06em;">${ig}</p>
+    <p style="margin:0 0 14px;">Olá, <strong>${n}</strong>!</p>
+    <p style="margin:0 0 20px;color:${c.textSecondary};">As inscrições para o culto de <strong style="color:${c.text};">${cfg.label.toLowerCase()}</strong>${cultoDataLabel ? ` (${cultoDataLabel})` : ''} estão abertas. Que tal se inscrever para servir?</p>
     ${escalasResumo?.length ? `
-    <h2 style="margin:0 0 12px;font-size:15px;color:#111827;text-transform:uppercase;letter-spacing:.04em;">Escalas disponíveis</h2>
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;">${escalasHtml}</table>` : ''}
-    <h2 style="margin:0 0 12px;font-size:15px;color:#111827;text-transform:uppercase;letter-spacing:.04em;">Seus ministérios</h2>
-    <p style="margin:0 0 14px;font-size:14px;color:#6b7280;line-height:1.5;">Links diretos com base nos ministérios em que você já serviu (do mais recente ao mais antigo):</p>
-    ${ministeriosHtml}
-    ${platformAccessHtml}
-  </td></tr>
-  <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:18px 36px;text-align:center;">
-    <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.5;">${BRAND_NAME}</p>
-  </td></tr>
-</table>
-</td></tr></table></body></html>`;
+    <h2 style="margin:0 0 12px;font-size:15px;color:${c.text};text-transform:uppercase;letter-spacing:.04em;">Escalas disponíveis</h2>
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 24px;">${escalasHtml}</table>` : ''}
+    <h2 style="margin:0 0 12px;font-size:15px;color:${c.text};text-transform:uppercase;letter-spacing:.04em;">Seus ministérios</h2>
+    <p style="margin:0 0 14px;font-size:14px;color:${c.textSecondary};">Links diretos com base nos ministérios em que você já serviu (do mais recente ao mais antigo):</p>
+    ${ministeriosHtml}`;
+
+  return buildCeleiroEmailHtml({
+    title: `Inscrições na escala — ${cfg.label}`,
+    preheader: `Escalas abertas para o culto de ${cfg.label.toLowerCase()}`,
+    bodyHtml,
+    afterCtaHtml: platformAccessHtml,
+    footerNote: BRAND_NAME,
+    appBase,
+  });
 }
 
 /**
@@ -257,6 +255,7 @@ export async function sendEscalaLembreteEmailsForIgreja({
           ministerioLinks,
           igrejaNome: igreja?.nome,
           platformAccessHtml,
+          appBase: base,
         }),
       });
       if (error) {
@@ -341,52 +340,49 @@ export function buildEscalaAberturaCustomEmailHtml({
   escalasResumo,
   ministerioLinks,
   igrejaNome,
+  appBase,
 }) {
+  const c = EMAIL_COLORS;
   const n = (nome || '').trim() || 'voluntário(a)';
   const ig = (igrejaNome || 'Celeiro São Paulo').trim();
   const intro = mensagemHtml?.trim()
-    ? `<div style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6;">${mensagemHtml}</div>`
-    : `<p style="margin:0 0 20px;font-size:16px;color:#374151;line-height:1.6;">As inscrições para as escalas abaixo estão disponíveis. Que tal se inscrever para servir?</p>`;
+    ? `<div style="margin:0 0 20px;color:${c.textSecondary};line-height:1.6;">${mensagemHtml}</div>`
+    : `<p style="margin:0 0 20px;color:${c.textSecondary};">As inscrições para as escalas abaixo estão disponíveis. Que tal se inscrever para servir?</p>`;
 
   const escalasHtml = (escalasResumo || []).map((e) => `
     <tr>
-      <td style="padding:10px 0;border-bottom:1px solid #e5e7eb;">
-        <p style="margin:0 0 6px;font-size:15px;color:#111827;font-weight:600;">${escapeHtmlEmail(e.nome).replace(/&lt;br&gt;/g, '<br>')}</p>
-        <p style="margin:0 0 8px;font-size:13px;color:#6b7280;">${escapeHtmlEmail(e.dataLabel).replace(/&lt;br&gt;/g, '<br>')}</p>
-        <a href="${e.url}" style="font-size:14px;color:#f59e0b;font-weight:600;text-decoration:none;">Ver escala e inscrever-se →</a>
+      <td style="padding:10px 0;border-bottom:1px solid ${c.border};">
+        <p style="margin:0 0 6px;font-size:15px;color:${c.text};font-weight:600;">${escapeHtmlEmail(e.nome).replace(/&lt;br&gt;/g, '<br>')}</p>
+        <p style="margin:0 0 8px;font-size:13px;color:${c.textSecondary};">${escapeHtmlEmail(e.dataLabel).replace(/&lt;br&gt;/g, '<br>')}</p>
+        <a href="${e.url}" style="font-size:14px;color:${c.accent};font-weight:600;text-decoration:none;">Ver escala e inscrever-se →</a>
       </td>
     </tr>`).join('');
 
   const ministeriosHtml = (ministerioLinks || []).length
     ? (ministerioLinks || []).map((m, i) => `
       <p style="margin:0 0 10px;">
-        <a href="${m.url}" style="display:inline-block;background:${i === 0 ? '#1a1a2e' : '#374151'};color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">${escapeHtmlEmail(m.ministerio).replace(/&lt;br&gt;/g, '<br>')}</a>
+        <a href="${m.url}" style="display:inline-block;background:${i === 0 ? c.accent : c.textSecondary};color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:600;font-size:14px;">${escapeHtmlEmail(m.ministerio).replace(/&lt;br&gt;/g, '<br>')}</a>
       </p>`).join('')
-    : `<p style="margin:0;font-size:14px;color:#6b7280;">Acesse o link da escala acima e escolha o ministério em que deseja servir.</p>`;
+    : `<p style="margin:0;font-size:14px;color:${c.textSecondary};">Acesse o link da escala acima e escolha o ministério em que deseja servir.</p>`;
 
-  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Inscrições na escala</title></head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;"><tr><td align="center">
-<table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
-  <tr><td style="background:#1a1a2e;padding:28px 36px;text-align:center;">
-    <p style="margin:0;font-size:12px;color:#f59e0b;text-transform:uppercase;letter-spacing:.08em;font-weight:600;">${ig}</p>
-    <h1 style="margin:8px 0 0;font-size:22px;color:#fff;font-weight:700;">Inscrições abertas na escala</h1>
-  </td></tr>
-  <tr><td style="padding:36px;">
-    <p style="margin:0 0 14px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${escapeHtmlEmail(n).replace(/&lt;br&gt;/g, '<br>')}</strong>!</p>
+  const bodyHtml = `
+    <p style="margin:0 0 6px;font-size:13px;color:${c.textMuted};text-transform:uppercase;letter-spacing:.06em;">${escapeHtmlEmail(ig).replace(/&lt;br&gt;/g, '<br>')}</p>
+    <p style="margin:0 0 14px;">Olá, <strong>${escapeHtmlEmail(n).replace(/&lt;br&gt;/g, '<br>')}</strong>!</p>
     ${intro}
     ${escalasResumo?.length ? `
-    <h2 style="margin:0 0 12px;font-size:15px;color:#111827;text-transform:uppercase;letter-spacing:.04em;">Escalas selecionadas</h2>
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;">${escalasHtml}</table>` : ''}
-    <h2 style="margin:0 0 12px;font-size:15px;color:#111827;text-transform:uppercase;letter-spacing:.04em;">Seus ministérios</h2>
-    <p style="margin:0 0 14px;font-size:14px;color:#6b7280;line-height:1.5;">Links diretos com base nos ministérios em que você já serviu:</p>
-    ${ministeriosHtml}
-  </td></tr>
-  <tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:18px 36px;text-align:center;">
-    <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.5;">${BRAND_NAME}</p>
-  </td></tr>
-</table>
-</td></tr></table></body></html>`;
+    <h2 style="margin:0 0 12px;font-size:15px;color:${c.text};text-transform:uppercase;letter-spacing:.04em;">Escalas selecionadas</h2>
+    <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="margin:0 0 24px;">${escalasHtml}</table>` : ''}
+    <h2 style="margin:0 0 12px;font-size:15px;color:${c.text};text-transform:uppercase;letter-spacing:.04em;">Seus ministérios</h2>
+    <p style="margin:0 0 14px;font-size:14px;color:${c.textSecondary};">Links diretos com base nos ministérios em que você já serviu:</p>
+    ${ministeriosHtml}`;
+
+  return buildCeleiroEmailHtml({
+    title: 'Inscrições abertas na escala',
+    preheader: 'Novas inscrições disponíveis — escolha seu ministério.',
+    bodyHtml,
+    footerNote: BRAND_NAME,
+    appBase,
+  });
 }
 
 export async function sendEscalaAberturaEmailsCustom({
@@ -483,6 +479,7 @@ export async function sendEscalaAberturaEmailsCustom({
           escalasResumo,
           ministerioLinks,
           igrejaNome: igreja?.nome,
+          appBase: base,
         }),
       });
       if (error) {

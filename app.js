@@ -4797,6 +4797,9 @@ function renderResumoVoluntariosEngajamento(data) {
   const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   setTxt('resumoVolTotal', data?.total ?? '—');
   setTxt('resumoVolNunca', data?.nuncaServiram ?? '—');
+  setTxt('resumoVolPrimeira7', data?.primeiraVez7d ?? '—');
+  setTxt('resumoVolPrimeira30', data?.primeiraVez30d ?? '—');
+  setTxt('resumoVolFormularios', data?.cadastrosFormularios ?? '—');
   setTxt('resumoVol30', data?.serviram30 ?? '—');
   setTxt('resumoVol60', data?.serviram60 ?? '—');
   setTxt('resumoVol90', data?.serviram90 ?? '—');

@@ -37,6 +37,7 @@ export function buildCheckinAberturaEmailHtml({
   qrImageUrl,
   igrejaNome,
   platformAccessHtml = '',
+  appBase,
 }) {
   const n = escapeHtml((nome || '').trim() || 'voluntário(a)');
   const titulo = escapeHtml((eventoLabel || 'Check-in de presença').trim());
@@ -62,8 +63,7 @@ export function buildCheckinAberturaEmailHtml({
     <p style="margin:20px 0 0;font-size:13px;color:${EMAIL_COLORS.textMuted};text-align:center;">
       Link direto:<br>
       <a href="${escapeHtml(checkinUrl)}" style="color:${EMAIL_COLORS.accent};text-decoration:none;font-weight:600;">${linkDisplay}</a>
-    </p>
-    ${platformAccessHtml}`;
+    </p>`;
 
   return buildCeleiroEmailHtml({
     title: 'Check-in aberto',
@@ -71,7 +71,9 @@ export function buildCheckinAberturaEmailHtml({
     bodyHtml,
     ctaHref: checkinUrl,
     ctaLabel: 'Fazer check-in agora',
+    afterCtaHtml: platformAccessHtml,
     footerNote: BRAND_NAME,
+    appBase,
   });
 }
 
@@ -180,6 +182,7 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
           qrImageUrl,
           igrejaNome: igreja?.nome,
           platformAccessHtml,
+          appBase,
         }),
       });
       if (error) {
