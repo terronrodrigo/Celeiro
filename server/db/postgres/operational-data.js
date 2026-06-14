@@ -24,6 +24,12 @@ function mapVoluntarioFromRow(row) {
   const email = emailFromVoluntarioRow(row);
   const ministerios = splitVoluntarioMinisterios({ ministerios: d.ministerios, ministerio: d.ministerio });
   const ministerio = ministerios.length ? ministerios.join(', ') : '';
+  const ministerioIds = Array.isArray(d.ministerio_ids)
+    ? d.ministerio_ids.map((x) => String(x ?? '').trim()).filter(Boolean)
+    : [];
+  const habilidades = Array.isArray(d.habilidades)
+    ? d.habilidades.map((x) => String(x ?? '').trim()).filter(Boolean)
+    : [];
   return {
     _id: row.id,
     email,
@@ -34,7 +40,13 @@ function mapVoluntarioFromRow(row) {
     cidade: d.cidade || '',
     ministerio,
     ministerios,
+    ministerioIds,
+    habilidades,
     telefone: d.telefone || d.whatsapp || '',
+    whatsapp: d.whatsapp || d.telefone || '',
+    nascimento: d.nascimento || '',
+    evangelico: d.evangelico || '',
+    igreja: d.igreja || '',
     batizado: normBatizadoPerfil(d.batizado),
     ativo: row.ativo !== false,
     fonte: row.fonte || 'postgres',

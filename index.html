@@ -23,7 +23,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=2.2.1">
+  <link rel="stylesheet" href="styles.css?v=2.2.2">
 </head>
 <body>
   <!-- Sprite de ícones Celeiro — traço minimalista, paleta bordô -->
@@ -452,33 +452,65 @@
             </div>
           </section>
 
-          <!-- Check-ins (final da página) -->
-          <section id="resumoCheckinsSection" style="margin-bottom:8px">
-            <div class="chart-header" style="margin-bottom:12px">
-              <h2>Check-ins</h2>
-              <p class="auth-subtitle" style="margin:4px 0 0">Presenças registradas por culto e tendência da semana</p>
+          <!-- Qualidade do cadastro (batismo e perfil membro) -->
+          <section class="chart-header" style="margin:8px 0 12px">
+            <h2>Qualidade do cadastro</h2>
+            <p class="auth-subtitle" style="margin:4px 0 0">Voluntários que já serviram — ideal: perfil de membro completo e batizado</p>
+          </section>
+          <section class="kpi-grid" id="kpiGridResumoVolQualidade" style="margin-bottom:16px">
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Já serviram</span></div>
+              <div class="kpi-value" id="resumoVolJaServiram">—</div>
+              <div class="kpi-footer">check-in ou escala aprovada</div>
             </div>
-            <section class="kpi-grid" style="margin-bottom:16px">
-              <div class="kpi-card">
-                <div class="kpi-header"><span class="kpi-label" id="resumoCkLabel">Check-ins · último culto</span></div>
-                <div class="kpi-value" id="resumoCkUltimoCulto">—</div>
-                <div class="kpi-footer">
-                  <span id="resumoCkUltimoCultoNome">—</span><br>
-                  Semana: <span id="resumoCkSemana">0</span> · Mês: <span id="resumoCkMes">0</span>
-                </div>
-              </div>
-            </section>
-            <section class="charts-row">
-              <div class="chart-card chart-main">
-                <div class="chart-header">
-                  <h2>Últimos 7 dias</h2>
-                  <p class="auth-subtitle" style="margin:4px 0 0">Total de presenças registradas por dia</p>
-                </div>
-                <div class="chart-container">
-                  <canvas id="resumoCheckins7dChart"></canvas>
-                </div>
-              </div>
-            </section>
+            <div class="kpi-card" style="border-color:#c9a227">
+              <div class="kpi-header"><span class="kpi-label">Servindo sem batismo</span></div>
+              <div class="kpi-value" id="resumoVolSemBatismo">—</div>
+              <div class="kpi-footer">prioridade para próximo batismo</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Não batizado (confirmado)</span></div>
+              <div class="kpi-value" id="resumoVolNaoBatizado">—</div>
+              <div class="kpi-footer">respondeu “não” no cadastro/check-in</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Batismo não informado</span></div>
+              <div class="kpi-value" id="resumoVolBatismoDesconhecido">—</div>
+              <div class="kpi-footer">ainda sem resposta no perfil</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Batizados servindo</span></div>
+              <div class="kpi-value" id="resumoVolBatizadosServindo">—</div>
+              <div class="kpi-footer">perfil indica batismo</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-header"><span class="kpi-label">Sem cadastro membro</span></div>
+              <div class="kpi-value" id="resumoVolSemMembro">—</div>
+              <div class="kpi-footer">faltam dados do formulário de membro</div>
+            </div>
+          </section>
+          <section class="table-card" id="resumoServindoSemBatismoSection" style="margin-bottom:16px">
+            <div class="chart-header">
+              <h2>Voluntários servindo sem batismo</h2>
+              <p class="auth-subtitle" style="margin:4px 0 0">Lista para acompanhamento antes do próximo batismo</p>
+            </div>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Nome</th>
+                    <th>Email</th>
+                    <th>Ministério</th>
+                    <th>Check-ins</th>
+                    <th>Batizado</th>
+                  </tr>
+                </thead>
+                <tbody id="resumoServindoSemBatismoBody"></tbody>
+              </table>
+            </div>
+            <div class="table-footer">
+              <span id="resumoServindoSemBatismoCount">0</span> voluntário(s)
+            </div>
           </section>
         </section>
 
@@ -487,6 +519,7 @@
           <section class="filters-row">
             <div class="filters-card" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
               <button type="button" class="btn btn-primary" id="btnNovoMinisterio"><span class="btn-leading-icon" aria-hidden="true"><svg><use href="#icon-plus"/></svg></span> Novo ministério</button>
+              <button type="button" class="btn btn-ghost" id="btnNormalizarVoluntariosMinisterios" title="Vincula textos legados do cadastro aos ministérios do catálogo">Vincular voluntários aos ministérios</button>
               <button type="button" class="btn btn-ghost" id="btnGerarTodosConvitesLider">Gerar links de cadastro (todos)</button>
               <button type="button" class="btn btn-ghost" id="btnCopiarTodosConvitesLider" disabled>Copiar todos os links</button>
             </div>
@@ -497,10 +530,10 @@
           </div>
           <div class="table-card">
             <div class="chart-header"><h2>Ministérios</h2></div>
-            <p class="auth-subtitle">Crie ministérios e defina líderes. <span id="ministrosCount" class="list-count">(0)</span></p>
+            <p class="auth-subtitle">Crie ministérios, defina líderes e acompanhe quantos voluntários estão vinculados. <span id="ministrosCount" class="list-count">(0)</span></p>
             <div class="table-wrapper">
               <table class="data-table">
-                <thead><tr><th>Nome</th><th>Líder</th><th>Ação</th></tr></thead>
+                <thead><tr><th>Nome</th><th>Voluntários</th><th>Ativos</th><th>Líder</th><th>Ação</th></tr></thead>
                 <tbody id="ministrosBody"></tbody>
               </table>
             </div>
@@ -1045,6 +1078,35 @@
                 </table>
               </div>
             </div>
+          </section>
+
+          <!-- Resumo de check-ins (movido do Resumo) -->
+          <section id="resumoCheckinsSection" style="margin-top:24px;margin-bottom:8px">
+            <div class="chart-header" style="margin-bottom:12px">
+              <h2>Resumo de check-ins</h2>
+              <p class="auth-subtitle" style="margin:4px 0 0">Presenças registradas por culto e tendência da semana</p>
+            </div>
+            <section class="kpi-grid" style="margin-bottom:16px">
+              <div class="kpi-card">
+                <div class="kpi-header"><span class="kpi-label" id="resumoCkLabel">Check-ins · último culto</span></div>
+                <div class="kpi-value" id="resumoCkUltimoCulto">—</div>
+                <div class="kpi-footer">
+                  <span id="resumoCkUltimoCultoNome">—</span><br>
+                  Semana: <span id="resumoCkSemana">0</span> · Mês: <span id="resumoCkMes">0</span>
+                </div>
+              </div>
+            </section>
+            <section class="charts-row">
+              <div class="chart-card chart-main">
+                <div class="chart-header">
+                  <h2>Últimos 7 dias</h2>
+                  <p class="auth-subtitle" style="margin:4px 0 0">Total de presenças registradas por dia</p>
+                </div>
+                <div class="chart-container">
+                  <canvas id="resumoCheckins7dChart"></canvas>
+                </div>
+              </div>
+            </section>
           </section>
         </section>
 
@@ -2203,6 +2265,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=2.2.1"></script>
+  <script defer src="app.js?v=2.2.2"></script>
 </body>
 </html>

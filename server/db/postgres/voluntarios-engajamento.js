@@ -6,6 +6,7 @@ import {
   pgEmailsComAtividadeRecente,
   pgListVoluntariosParaEmailBroadcast,
 } from './operational-data.js';
+import { normBatizadoPerfil } from './repos.js';
 import {
   candidaturaMatchesLiderMinisterios,
   voluntarioMatchesLiderMinisterios,
@@ -150,6 +151,30 @@ function servedInLastDays(email, activityMap, recentSet, days) {
   return act ? isWithinDays(act.msMax, days) : false;
 }
 
+/** Perfil de membro completo: dados essenciais do cadastro + batizado. */
+export function isVoluntarioPerfilMembroCompleto(vol) {
+  if (!vol) return false;
+  const nome = String(vol.nome || '').trim();
+  const tel = String(vol.telefone || vol.whatsapp || '').trim();
+  const nasc = String(vol.nascimento || '').trim();
+  const ev = String(vol.evangelico || '').trim();
+  const igreja = String(vol.igreja || '').trim();
+  const bat = normBatizadoPerfil(vol.batizado);
+  return Boolean(nome && tel && nasc && ev && igreja && bat === true);
+}
+
+async function loadMembroFormEmails(igrejaId) {
+  const pool = getPostgresPool();
+  const { rows } = await pool.query(
+    `SELECT DISTINCT LOWER(TRIM(dados->>'email')) AS em
+     FROM formulario_membro
+     WHERE igreja_id = $1
+       AND LOWER(TRIM(COALESCE(dados->>'email', ''))) LIKE '%@%'`,
+    [igrejaId],
+  );
+  return new Set(rows.map((r) => normEmail(r.em)).filter(Boolean));
+}
+
 /** Cadastros + formulários com email válido (base ampliada para engajamento). */
 export async function pgListPessoasVoluntariosBase(igrejaId) {
   const byEmail = new Map();
@@ -210,6 +235,14 @@ export async function pgVoluntariosEngajamentoResumo(igrejaId, { ministerioFiltr
   const pessoas = await pgListPessoasVoluntariosBase(igrejaId);
   const { candRows, ckRows } = await loadActivityRows(igrejaId);
   const activityMap = buildEmailActivityMap(candRows, ckRows);
+  const membroFormEmails = await loadMembroFormEmails(igrejaId);
+
+  const ckCountByEmail = new Map();
+  for (const r of ckRows) {
+    const em = normEmail(r.em);
+    if (!em) continue;
+    ckCountByEmail.set(em, (ckCountByEmail.get(em) || 0) + 1);
+  }
 
   const [recent30, recent60, recent90] = await Promise.all([
     pgEmailsComAtividadeRecente(igrejaId, 30),
@@ -225,6 +258,13 @@ export async function pgVoluntariosEngajamentoResumo(igrejaId, { ministerioFiltr
   let primeiraVez7d = 0;
   let primeiraVez30d = 0;
   let cadastrosFormularios = 0;
+  let jaServiram = 0;
+  let servindoSemBatismo = 0;
+  let servindoNaoBatizado = 0;
+  let servindoBatismoDesconhecido = 0;
+  let servindoBatizados = 0;
+  let servindoSemCadastroMembro = 0;
+  const servindoSemBatismoLista = [];
 
   for (const p of pessoas) {
     const em = normEmail(p.email);
@@ -246,8 +286,41 @@ export async function pgVoluntariosEngajamentoResumo(igrejaId, { ministerioFiltr
       const firstMs = act.msFirst !== Infinity ? act.msFirst : 0;
       if (firstMs && isWithinDays(firstMs, 7)) primeiraVez7d += 1;
       if (firstMs && isWithinDays(firstMs, 30)) primeiraVez30d += 1;
+
+      jaServiram += 1;
+      const bat = p.vol ? normBatizadoPerfil(p.vol.batizado) : null;
+      const temMembro = membroFormEmails.has(em) || isVoluntarioPerfilMembroCompleto(p.vol);
+      if (!temMembro) servindoSemCadastroMembro += 1;
+
+      if (bat === true) {
+        servindoBatizados += 1;
+      } else {
+        servindoSemBatismo += 1;
+        if (bat === false) servindoNaoBatizado += 1;
+        else servindoBatismoDesconhecido += 1;
+
+        if (p.vol) {
+          const mins = [...(act?.ministries || [])];
+          const ministerio = mins.length
+            ? mins.join(', ')
+            : (p.vol.ministerio || p.vol.ministerios?.join(', ') || '—');
+          servindoSemBatismoLista.push({
+            email: em,
+            nome: (p.nome || p.vol.nome || '').trim() || em.split('@')[0],
+            ministerio,
+            vezesCheckin: ckCountByEmail.get(em) || 0,
+            batizado: bat,
+          });
+        }
+      }
     }
   }
+
+  servindoSemBatismoLista.sort((a, b) => {
+    const ck = (b.vezesCheckin || 0) - (a.vezesCheckin || 0);
+    if (ck !== 0) return ck;
+    return (a.nome || a.email).localeCompare(b.nome || b.email, 'pt-BR');
+  });
 
   return {
     total,
@@ -258,6 +331,13 @@ export async function pgVoluntariosEngajamentoResumo(igrejaId, { ministerioFiltr
     primeiraVez7d,
     primeiraVez30d,
     cadastrosFormularios,
+    jaServiram,
+    servindoSemBatismo,
+    servindoNaoBatizado,
+    servindoBatismoDesconhecido,
+    servindoBatizados,
+    servindoSemCadastroMembro,
+    servindoSemBatismoLista,
   };
 }
 

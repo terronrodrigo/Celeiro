@@ -158,6 +158,11 @@ import { pgHistoricoMinisterio } from './db/postgres/historico-ministerio.js';
 import {
   pgVoluntariosEngajamentoResumo,
 } from './db/postgres/voluntarios-engajamento.js';
+import {
+  pgCountVoluntariosPorMinisterio,
+  pgNormalizeVoluntariosMinisterios,
+  pgListMinisteriosNaoResolvidos,
+} from './db/postgres/voluntarios-ministerios.js';
 import { pgHistoricoVoluntario } from './db/postgres/historico-voluntario.js';
 import {
   pgFindConviteByToken, pgUpsertConviteLider, pgListConvitesLider,
@@ -1680,6 +1685,21 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
   } catch (err) {
     console.error(err);
     sendError(res, 500, err.message || 'Erro ao carregar voluntários');
+  }
+});
+
+// POST /api/voluntarios/normalizar-ministerios — vincula textos legados ao catálogo (admin)
+app.post('/api/voluntarios/normalizar-ministerios', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
+  try {
+    if (!isPostgres()) return sendError(res, 503, 'Disponível em modo PostgreSQL.');
+    const dryRun = !!(req.body?.dryRun);
+    const result = await pgNormalizeVoluntariosMinisterios(req.tenantIgrejaId, { dryRun });
+    const naoResolvidos = await pgListMinisteriosNaoResolvidos(req.tenantIgrejaId, { limit: 25 });
+    if (!dryRun) invalidateCache();
+    res.json({ ok: true, ...result, naoResolvidos });
+  } catch (err) {
+    console.error('voluntarios/normalizar-ministerios:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao normalizar ministérios dos voluntários.');
   }
 });
 
@@ -4748,10 +4768,16 @@ app.get('/api/ministros', requireAuth, resolveTenant, requireAdmin, async (req, 
     if (isPostgres()) {
       const list = await pgListMinisterios(req.tenantIgrejaId);
       const leadersByMinist = await pgLeadersByMinisterioId(req.tenantIgrejaId);
-      return res.json(list.map((m) => ({
-        ...m,
-        lideres: leadersByMinist[String(m._id)] || [],
-      })));
+      const volCounts = await pgCountVoluntariosPorMinisterio(req.tenantIgrejaId);
+      return res.json(list.map((m) => {
+        const c = volCounts.get(String(m._id)) || {};
+        return {
+          ...m,
+          lideres: leadersByMinist[String(m._id)] || [],
+          totalVoluntarios: c.totalVoluntarios || 0,
+          ativosVoluntarios: c.ativosVoluntarios || 0,
+        };
+      }));
     }
     if (!guardMongoData(res, EMPTY_ARRAY)) return;
     const list = await Ministerio.find({ ...tQ(req) }).sort({ nome: 1 }).lean();
@@ -6880,6 +6906,13 @@ app.get('/api/dashboard/resumo/voluntarios-engajamento', requireAuth, resolveTen
         primeiraVez7d: 0,
         primeiraVez30d: 0,
         cadastrosFormularios: 0,
+        jaServiram: 0,
+        servindoSemBatismo: 0,
+        servindoNaoBatizado: 0,
+        servindoBatismoDesconhecido: 0,
+        servindoBatizados: 0,
+        servindoSemCadastroMembro: 0,
+        servindoSemBatismoLista: [],
         ministeriosDisponiveis: [],
       });
     }

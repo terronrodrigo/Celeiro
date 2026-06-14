@@ -1051,6 +1051,7 @@ function setView(view, options) {
       return fetchCheckinsWithFilters({ data: checkinData?.value || hoje });
     }).catch(() => fetchCheckinsWithFilters({ data: hoje }))
       .finally(() => setViewLoading('checkin', false));
+    fetchCheckinResumoSection();
   }
   const canSeeResumoVoluntarios = isAdmin || isLider || authRole === 'lider';
   if ((view === 'resumo' || view === 'voluntarios') && canSeeResumoVoluntarios) {
@@ -1082,15 +1083,22 @@ async function fetchVoluntarios(opts) {
     }
   }, VIEW_LOAD_TIMEOUT_MS);
   try {
+    const minPromise = authRole === 'admin'
+      ? authFetch(`${API_BASE}/api/ministros`)
+      : Promise.resolve(null);
     const r = await authFetch(`${API_BASE}/api/voluntarios`);
     if (settled) return;
     if (!r.ok) {
       const msg = await extractErrorMessage(r, `HTTP ${r.status}`);
       throw new Error(msg);
     }
-    const data = await r.json();
+    const [data, minData] = await Promise.all([
+      r.json(),
+      minPromise?.then((res) => (res?.ok ? res.json() : null)).catch(() => null),
+    ]);
     voluntarios = data.voluntarios || [];
     resumo = data.resumo || {};
+    if (Array.isArray(minData)) ministrosList = minData;
     render();
     if (authRole === 'admin') prefetchAllCheckinsForKpis();
     settled = true;
@@ -1300,7 +1308,7 @@ function renderMinistros() {
   if (countEl) countEl.textContent = `(${(ministrosList || []).length})`;
   if (!tbody) return;
   if (!ministrosList.length) {
-    tbody.innerHTML = '<tr><td colspan="3">Nenhum ministério. Clique em "Novo ministério" para criar.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5">Nenhum ministério. Clique em "Novo ministério" para criar.</td></tr>';
     return;
   }
   const list = ministrosList.slice(0, LIST_PAGE_SIZE);
@@ -1308,8 +1316,12 @@ function renderMinistros() {
     const lideres = m.lideres || [];
     const liderNomes = lideres.length ? lideres.map(l => escapeHtml(l.nome || l.email || '—')).join(', ') : '—';
     const temLink = !!convitesLiderByMinId[String(m._id)]?.link;
+    const totalVol = Number(m.totalVoluntarios) || 0;
+    const ativosVol = Number(m.ativosVoluntarios) || 0;
     return `<tr data-ministerio-id="${escapeAttr(m._id)}">
       <td>${escapeHtml(m.nome || '—')}</td>
+      <td>${totalVol}</td>
+      <td>${ativosVol}</td>
       <td>${liderNomes}</td>
       <td>
         <button type="button" class="btn btn-sm btn-ghost" data-convite-lider="${escapeAttr(m._id)}" title="Link para o líder criar email e senha">${temLink ? 'Copiar link cadastro' : 'Gerar link cadastro'}</button>
@@ -1320,7 +1332,7 @@ function renderMinistros() {
     </tr>`;
   }).join('');
   if (ministrosList.length > LIST_PAGE_SIZE) {
-    tbody.innerHTML += `<tr><td colspan="3" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${ministrosList.length} ministérios.</td></tr>`;
+    tbody.innerHTML += `<tr><td colspan="5" class="list-more-hint">Exibindo os primeiros ${LIST_PAGE_SIZE} de ${ministrosList.length} ministérios.</td></tr>`;
   }
   tbody.querySelectorAll('[data-convite-lider]').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -3106,12 +3118,21 @@ function ministeriosListFromVolApi(v) {
   if (Array.isArray(v.ministerios) && v.ministerios.length) {
     return [...new Set(v.ministerios.map((x) => String(x ?? '').trim()).filter(Boolean))];
   }
+  if (Array.isArray(v.ministerioIds) && v.ministerioIds.length && Array.isArray(ministrosList) && ministrosList.length) {
+    const names = v.ministerioIds
+      .map((id) => ministrosList.find((m) => String(m._id) === String(id))?.nome)
+      .filter(Boolean);
+    if (names.length) return [...new Set(names)];
+  }
   return String(v.ministerio || '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
 function voluntarioMinisteriosDisplay(v) {
   const a = ministeriosListFromVolApi(v);
-  return a.length ? a.join(', ') : '';
+  const main = a.length ? a.join(', ') : '';
+  const hab = Array.isArray(v.habilidades) && v.habilidades.length ? v.habilidades.join(', ') : '';
+  if (main && hab) return `${main} · extra: ${hab}`;
+  return main || hab || '';
 }
 
 function renderPerfilMinisteriosCheckboxes(selectedList) {
@@ -3731,8 +3752,11 @@ function getFilteredVoluntarios() {
     }
     if (filters.ministerio) {
       const want = String(filters.ministerio).trim();
+      const minEntry = (ministrosList || []).find((m) => String(m.nome || '').trim() === want);
+      const ids = Array.isArray(v.ministerioIds) ? v.ministerioIds.map(String) : [];
       const mins = ministeriosListFromVolApi(v).map((x) => String(x).trim());
-      if (!mins.includes(want)) return false;
+      const match = mins.includes(want) || (minEntry && ids.includes(String(minEntry._id)));
+      if (!match) return false;
     }
     if (filters.disponibilidade) {
       const disp = (v.disponibilidade || '').split(',').map(d => d.trim());
@@ -4089,7 +4113,12 @@ function populateSelect(selectEl, items, placeholder) {
 
 function updateFilters() {
   const vol = Array.isArray(voluntarios) ? voluntarios : [];
-  const ministerios = (countByMultiValueField(vol, 'ministerio') || []).map(([label]) => (label || '').trim()).filter(Boolean);
+  const catalogNames = (ministrosList || [])
+    .filter((m) => m.ativo !== false)
+    .map((m) => String(m.nome || '').trim())
+    .filter(Boolean);
+  const fromVol = (countByMultiValueField(vol, 'ministerio') || []).map(([label]) => (label || '').trim()).filter(Boolean);
+  const ministerios = catalogNames.length ? catalogNames : fromVol;
   const disp = (countByMultiValueField(vol, 'disponibilidade') || []).map(([label]) => String(label || '').trim()).filter(Boolean);
   const estados = countByField(vol, 'estado').map(([label]) => label);
   estados.sort((a, b) => {
@@ -4702,7 +4731,6 @@ async function fetchResumoGlobal() {
 
 function renderResumoGlobal(data) {
   const p = data?.pessoas || { voluntarios: 0, soCheckin: 0, total: 0, comEscala: 0, comCheckin: 0 };
-  const c = data?.checkins || { ultimoCulto: 0, semana: 0, mes: 0, serie7d: [], ultimoCultoInfo: null };
   const pm = data?.presencaMedia || { taxa: null, baseEscalas: 0, aprovados: 0, presentes: 0 };
   const top = Array.isArray(data?.topMinisterios) ? data.topMinisterios : [];
   const f = data?.formularios || { membros: 0, consolidacao: 0, batismo: 0, apresentacao: 0 };
@@ -4712,28 +4740,6 @@ function renderResumoGlobal(data) {
   setTxt('resumoPessoasVoluntarios', p.voluntarios + (p.soCheckin || 0));
   setTxt('resumoPessoasComEscala', p.comEscala || 0);
   setTxt('resumoPessoasComCheckin', p.comCheckin || 0);
-
-  const ult = c.ultimoCultoInfo;
-  const hojeTotal = c.hoje ?? 0;
-  const hojeComEscala = c.hojeComEscala ?? 0;
-  const hojeSemEscala = c.hojeSemEscala ?? 0;
-  const ckLabel = document.getElementById('resumoCkLabel');
-  if (hojeTotal > 0) {
-    if (ckLabel) ckLabel.textContent = 'Check-ins · hoje';
-    setTxt('resumoCkUltimoCulto', hojeTotal);
-    setTxt('resumoCkUltimoCultoNome', `${hojeComEscala} na escala · ${hojeSemEscala} sem escala`);
-  } else if (ult) {
-    if (ckLabel) ckLabel.textContent = 'Check-ins · último culto';
-    setTxt('resumoCkUltimoCulto', c.ultimoCulto ?? 0);
-    const d = ult.data ? formatEscalaDateOnly(ult.data) : '';
-    setTxt('resumoCkUltimoCultoNome', `${ult.label || 'Culto'}${d ? ` · ${d}` : ''}`);
-  } else {
-    if (ckLabel) ckLabel.textContent = 'Check-ins · hoje';
-    setTxt('resumoCkUltimoCulto', '—');
-    setTxt('resumoCkUltimoCultoNome', 'Nenhum check-in registrado hoje');
-  }
-  setTxt('resumoCkSemana', c.semana);
-  setTxt('resumoCkMes', c.mes);
 
   setTxt('resumoPresencaTaxa', pm.taxa != null ? `${pm.taxa}%` : '—');
   if (pm.taxa != null && pm.baseEscalas > 0) {
@@ -4771,8 +4777,45 @@ function renderResumoGlobal(data) {
       }).join('');
     }
   }
+}
 
-  renderResumoCheckins7d(c.serie7d || []);
+function renderCheckinResumoSection(c, ult, hojeTotal, hojeComEscala, hojeSemEscala) {
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const ckLabel = document.getElementById('resumoCkLabel');
+  if (!document.getElementById('resumoCheckinsSection')) return;
+  const ht = hojeTotal ?? c?.hoje ?? 0;
+  const hce = hojeComEscala ?? c?.hojeComEscala ?? 0;
+  const hse = hojeSemEscala ?? c?.hojeSemEscala ?? 0;
+  const ultInfo = ult ?? c?.ultimoCultoInfo;
+  if (ht > 0) {
+    if (ckLabel) ckLabel.textContent = 'Check-ins · hoje';
+    setTxt('resumoCkUltimoCulto', ht);
+    setTxt('resumoCkUltimoCultoNome', `${hce} na escala · ${hse} sem escala`);
+  } else if (ultInfo) {
+    if (ckLabel) ckLabel.textContent = 'Check-ins · último culto';
+    setTxt('resumoCkUltimoCulto', c?.ultimoCulto ?? 0);
+    const d = ultInfo.data ? formatEscalaDateOnly(ultInfo.data) : '';
+    setTxt('resumoCkUltimoCultoNome', `${ultInfo.label || 'Culto'}${d ? ` · ${d}` : ''}`);
+  } else {
+    if (ckLabel) ckLabel.textContent = 'Check-ins · hoje';
+    setTxt('resumoCkUltimoCulto', '—');
+    setTxt('resumoCkUltimoCultoNome', 'Nenhum check-in registrado hoje');
+  }
+  setTxt('resumoCkSemana', c?.semana ?? 0);
+  setTxt('resumoCkMes', c?.mes ?? 0);
+  renderResumoCheckins7d(c?.serie7d || []);
+}
+
+/** Carrega KPIs de check-ins na aba Check-ins (bloco movido do Resumo). */
+async function fetchCheckinResumoSection() {
+  if (!authToken || authRole !== 'admin') return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/dashboard/resumo`);
+    if (!r.ok) return;
+    const data = await r.json();
+    const c = data?.checkins || {};
+    renderCheckinResumoSection(c);
+  } catch (_) {}
 }
 
 /** KPIs de engajamento de voluntários (Resumo). */
@@ -4803,6 +4846,13 @@ function renderResumoVoluntariosEngajamento(data) {
   setTxt('resumoVol30', data?.serviram30 ?? '—');
   setTxt('resumoVol60', data?.serviram60 ?? '—');
   setTxt('resumoVol90', data?.serviram90 ?? '—');
+  setTxt('resumoVolJaServiram', data?.jaServiram ?? '—');
+  setTxt('resumoVolSemBatismo', data?.servindoSemBatismo ?? '—');
+  setTxt('resumoVolNaoBatizado', data?.servindoNaoBatizado ?? '—');
+  setTxt('resumoVolBatismoDesconhecido', data?.servindoBatismoDesconhecido ?? '—');
+  setTxt('resumoVolBatizadosServindo', data?.servindoBatizados ?? '—');
+  setTxt('resumoVolSemMembro', data?.servindoSemCadastroMembro ?? '—');
+  renderResumoServindoSemBatismoLista(data?.servindoSemBatismoLista || []);
 
   const filterSelect = document.getElementById('resumoVolEngMinisterio');
   const isAdminRole = authRole === 'admin';
@@ -4822,6 +4872,30 @@ function renderResumoVoluntariosEngajamento(data) {
       + leaderMins.map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('');
     if (currentVal && leaderMins.includes(currentVal)) filterSelect.value = currentVal;
   }
+}
+
+function renderResumoServindoSemBatismoLista(lista) {
+  const body = document.getElementById('resumoServindoSemBatismoBody');
+  const countEl = document.getElementById('resumoServindoSemBatismoCount');
+  const section = document.getElementById('resumoServindoSemBatismoSection');
+  if (!body) return;
+  const items = Array.isArray(lista) ? lista : [];
+  if (countEl) countEl.textContent = String(items.length);
+  if (section) section.style.display = '';
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="5" class="auth-subtitle">Nenhum voluntário cadastrado servindo sem batismo no filtro atual.</td></tr>';
+    return;
+  }
+  body.innerHTML = items.map((v) => {
+    const batLabel = v.batizado === false ? 'Não' : 'Não informado';
+    return `<tr>
+      <td>${escapeHtml(v.nome || '—')}</td>
+      <td>${escapeHtml(v.email || '—')}</td>
+      <td>${escapeHtml(v.ministerio || '—')}</td>
+      <td>${Number(v.vezesCheckin) || 0}</td>
+      <td>${escapeHtml(batLabel)}</td>
+    </tr>`;
+  }).join('');
 }
 
 let _resumoCkChart = null;
@@ -8109,6 +8183,33 @@ formNovoEventoFormulario?.addEventListener('submit', async (e) => {
 });
 
 document.getElementById('btnNovoMinisterio')?.addEventListener('click', () => { document.getElementById('ministerioNome').value = ''; document.getElementById('modalNovoMinisterio')?.classList.add('open'); });
+
+async function normalizarVoluntariosMinisterios() {
+  if (authRole !== 'admin') return;
+  if (!confirm('Vincular todos os voluntários aos ministérios do catálogo?\n\nTextos antigos do formulário serão padronizados; o que não casar com um ministério vira "habilidade extra".')) return;
+  const btn = document.getElementById('btnNormalizarVoluntariosMinisterios');
+  if (btn) { btn.disabled = true; btn.textContent = 'Vinculando…'; }
+  try {
+    const r = await authFetch(`${API_BASE}/api/voluntarios/normalizar-ministerios`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'Falha ao normalizar.');
+    const nao = Array.isArray(data.naoResolvidos) && data.naoResolvidos.length
+      ? `\n\nNão vinculados (amostra): ${data.naoResolvidos.slice(0, 8).map((x) => x.nome || x).join(', ')}`
+      : '';
+    alert(`Pronto!\n\nProcessados: ${data.processed || 0}\nAtualizados: ${data.updated || 0}\nCom ministério vinculado: ${data.vinculados || 0}\nSem ministério: ${data.semMinisterio || 0}\nCom habilidades extras: ${data.comHabilidades || 0}${nao}`);
+    await Promise.all([fetchMinistros(), fetchVoluntarios({ showGlobalLoading: false })]);
+  } catch (err) {
+    showToast(err.message || 'Erro ao vincular ministérios.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Vincular voluntários aos ministérios'; }
+  }
+}
+
+document.getElementById('btnNormalizarVoluntariosMinisterios')?.addEventListener('click', () => { void normalizarVoluntariosMinisterios(); });
 document.getElementById('btnGerarTodosConvitesLider')?.addEventListener('click', async () => {
   const btn = document.getElementById('btnGerarTodosConvitesLider');
   if (btn) { btn.disabled = true; btn.textContent = 'Gerando...'; }
