@@ -4,7 +4,7 @@
 import { randomUUID } from 'crypto';
 import { getPostgresPool } from './init.js';
 import { escalaDataToYMD, getDayRangeBrasilia, getHojeDateString } from '../../lib/brasilia.js';
-import { pgFindUserById, pgFindUsersByEmail, normBatizadoPerfil } from './repos.js';
+import { pgFindUserById, pgFindUsersByEmail, normBatizadoPerfil, mergeBatizadoIntoPerfilDados } from './repos.js';
 import { splitVoluntarioMinisterios } from '../../lib/ministerio-match.js';
 
 // Re-export para que outros módulos (server.js) usem o pool sem importar init.js direto.
@@ -350,10 +350,7 @@ export async function pgEnsureVoluntarioInList({
       dados.telefone = telStr;
     }
     if (batMerge !== null) {
-      const prev = normBatizadoPerfil(dados.batizado);
-      if (prev !== true && prev !== false) {
-        dados.batizado = batMerge;
-      }
+      mergeBatizadoIntoPerfilDados(dados, batMerge, { fromCheckin: fonte === 'checkin' });
     }
     mergeNovoMembroProfileFields(dados, patchExtra);
     if (patchExtra) Object.assign(dados, patchExtra);
@@ -379,6 +376,65 @@ export async function pgEnsureVoluntarioInList({
     [id, igrejaId, em, nomeStr || em, JSON.stringify(dados), fonte],
   );
   return id;
+}
+
+/** Sincroniza batismo do check-in para o perfil do voluntário (cria cadastro se faltar). */
+export async function pgSyncBatizadoPerfilFromCheckin(igrejaId, email, nome, ministerio, batizado) {
+  if (batizado !== true && batizado !== false) return null;
+  return pgEnsureVoluntarioInList({
+    email,
+    nome: nome || '',
+    ministerio: ministerio || '',
+    igrejaId,
+    fonte: 'checkin',
+    batizado,
+  });
+}
+
+/**
+ * Backfill: propaga batismo dos check-ins históricos para perfis sem resposta (ou "sim" perdido).
+ * Idempotente; retorna nº de perfis atualizados.
+ */
+export async function pgBackfillBatizadoFromCheckins(igrejaId = null) {
+  const params = [];
+  let where = '';
+  if (igrejaId) {
+    params.push(igrejaId);
+    where = ` AND ch.igreja_id = $${params.length}`;
+  }
+  const { rows } = await getPostgresPool().query(
+    `SELECT ch.igreja_id,
+            LOWER(TRIM(ch.email)) AS email,
+            BOOL_OR(LOWER(TRIM(COALESCE(ch.batizado, ''))) IN ('sim', 's', 'true')) AS has_sim,
+            (array_agg(ch.batizado ORDER BY ch.timestamp_ms DESC NULLS LAST))[1] AS latest,
+            (array_agg(NULLIF(TRIM(ch.nome), '') ORDER BY ch.timestamp_ms DESC NULLS LAST))[1] AS nome,
+            (array_agg(NULLIF(TRIM(ch.ministerio), '') ORDER BY ch.timestamp_ms DESC NULLS LAST))[1] AS ministerio
+     FROM checkins ch
+     WHERE ch.email IS NOT NULL
+       AND TRIM(ch.email) <> ''
+       AND ch.batizado IS NOT NULL
+       AND TRIM(ch.batizado) <> ''${where}
+     GROUP BY ch.igreja_id, LOWER(TRIM(ch.email))`,
+    params,
+  );
+  let atualizados = 0;
+  for (const r of rows) {
+    const em = String(r.email || '').trim().toLowerCase();
+    if (!em || !em.includes('@')) continue;
+    const batizado = r.has_sim === true
+      ? true
+      : (normBatizadoPerfil(r.latest) === false ? false : null);
+    if (batizado !== true && batizado !== false) continue;
+    const id = await pgSyncBatizadoPerfilFromCheckin(
+      r.igreja_id,
+      em,
+      r.nome || '',
+      r.ministerio || '',
+      batizado,
+    );
+    if (id) atualizados += 1;
+  }
+  return atualizados;
 }
 
 /**

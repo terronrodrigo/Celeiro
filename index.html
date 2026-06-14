@@ -23,7 +23,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=2.2.3">
+  <link rel="stylesheet" href="styles.css?v=2.2.4">
 </head>
 <body>
   <!-- Sprite de ícones Celeiro — traço minimalista, paleta bordô -->
@@ -468,17 +468,17 @@
             <div class="kpi-card">
               <div class="kpi-header"><span class="kpi-label">Não batizado (confirmado)</span></div>
               <div class="kpi-value" id="resumoVolNaoBatizado">—</div>
-              <div class="kpi-footer">respondeu “não” no cadastro/check-in</div>
+              <div class="kpi-footer">perfil ou check-in “não”</div>
             </div>
             <div class="kpi-card">
               <div class="kpi-header"><span class="kpi-label">Batismo não informado</span></div>
               <div class="kpi-value" id="resumoVolBatismoDesconhecido">—</div>
-              <div class="kpi-footer">ainda sem resposta no perfil</div>
+              <div class="kpi-footer">sem resposta no perfil nem no check-in</div>
             </div>
             <div class="kpi-card">
               <div class="kpi-header"><span class="kpi-label">Batizados servindo</span></div>
               <div class="kpi-value" id="resumoVolBatizadosServindo">—</div>
-              <div class="kpi-footer">perfil indica batismo</div>
+              <div class="kpi-footer">perfil ou check-in “sim”</div>
             </div>
             <div class="kpi-card">
               <div class="kpi-header"><span class="kpi-label">Sem cadastro membro</span></div>
@@ -2265,6 +2265,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=2.2.3"></script>
+  <script defer src="app.js?v=2.2.4"></script>
 </body>
 </html>

@@ -175,6 +175,48 @@ async function loadMembroFormEmails(igrejaId) {
   return new Set(rows.map((r) => normEmail(r.em)).filter(Boolean));
 }
 
+/**
+ * Batismo informado nos check-ins por email (sim em qualquer culto = batizado).
+ * @returns {Map<string, { hasSim: boolean, latest: string|null }>}
+ */
+async function loadBatizadoCheckinsMap(igrejaId) {
+  const pool = getPostgresPool();
+  const { rows } = await pool.query(
+    `SELECT LOWER(TRIM(email)) AS em,
+            BOOL_OR(LOWER(TRIM(COALESCE(batizado, ''))) IN ('sim', 's', 'true')) AS has_sim,
+            (array_agg(batizado ORDER BY timestamp_ms DESC NULLS LAST))[1] AS latest
+     FROM checkins
+     WHERE igreja_id = $1
+       AND LOWER(COALESCE(email, '')) LIKE '%@%'
+       AND batizado IS NOT NULL
+       AND TRIM(batizado) <> ''
+     GROUP BY LOWER(TRIM(email))`,
+    [igrejaId],
+  );
+  const map = new Map();
+  for (const r of rows) {
+    const em = normEmail(r.em);
+    if (!em) continue;
+    map.set(em, { hasSim: r.has_sim === true, latest: r.latest });
+  }
+  return map;
+}
+
+/**
+ * Resolve batismo: perfil do voluntário + respostas nos check-ins.
+ * Qualquer check-in "sim" conta como batizado; "não" só quando não há "sim".
+ */
+export function resolveBatizadoVoluntario(volBatizado, checkinInfo) {
+  const perfil = normBatizadoPerfil(volBatizado);
+  if (perfil === true) return { batizado: true, fonte: 'perfil' };
+  if (checkinInfo?.hasSim) return { batizado: true, fonte: 'checkin' };
+  if (perfil === false) return { batizado: false, fonte: 'perfil' };
+  const latest = normBatizadoPerfil(checkinInfo?.latest);
+  if (latest === false) return { batizado: false, fonte: 'checkin' };
+  if (latest === true) return { batizado: true, fonte: 'checkin' };
+  return { batizado: null, fonte: null };
+}
+
 /** Cadastros + formulários com email válido (base ampliada para engajamento). */
 export async function pgListPessoasVoluntariosBase(igrejaId) {
   const byEmail = new Map();
@@ -236,6 +278,7 @@ export async function pgVoluntariosEngajamentoResumo(igrejaId, { ministerioFiltr
   const { candRows, ckRows } = await loadActivityRows(igrejaId);
   const activityMap = buildEmailActivityMap(candRows, ckRows);
   const membroFormEmails = await loadMembroFormEmails(igrejaId);
+  const batizadoCheckinsMap = await loadBatizadoCheckinsMap(igrejaId);
 
   const ckCountByEmail = new Map();
   for (const r of ckRows) {
@@ -288,7 +331,10 @@ export async function pgVoluntariosEngajamentoResumo(igrejaId, { ministerioFiltr
       if (firstMs && isWithinDays(firstMs, 30)) primeiraVez30d += 1;
 
       jaServiram += 1;
-      const bat = p.vol ? normBatizadoPerfil(p.vol.batizado) : null;
+      const { batizado: bat, fonte: batFonte } = resolveBatizadoVoluntario(
+        p.vol?.batizado,
+        batizadoCheckinsMap.get(em),
+      );
       const temMembro = membroFormEmails.has(em) || isVoluntarioPerfilMembroCompleto(p.vol);
       if (!temMembro) servindoSemCadastroMembro += 1;
 
@@ -310,6 +356,7 @@ export async function pgVoluntariosEngajamentoResumo(igrejaId, { ministerioFiltr
             ministerio,
             vezesCheckin: ckCountByEmail.get(em) || 0,
             batizado: bat,
+            batizadoFonte: batFonte,
           });
         }
       }

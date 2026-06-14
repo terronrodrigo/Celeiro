@@ -9,6 +9,7 @@ import {
   getDayRangeBrasilia,
 } from '../../lib/brasilia.js';
 import { isCheckinEventAberto } from '../../lib/escala-checkin-rules.js';
+import { pgSyncBatizadoPerfilFromCheckin } from './operational-data.js';
 
 const EVENTOS_CHECKIN_MIGRATION_SQL = `
 ALTER TABLE eventos_checkin ADD COLUMN IF NOT EXISTS email_abertura_enviado_em TIMESTAMPTZ;
@@ -1246,7 +1247,14 @@ export async function pgCreateCheckin({
      AND data_checkin >= $4 AND data_checkin < $5 LIMIT 1`,
     [igrejaId, eventoId, em, dataCheckin, new Date(dataCheckin.getTime() + 86400000)],
   );
-  if (existing.length) return { duplicate: true, id: existing[0].id };
+  if (existing.length) {
+    if (batizado === true || batizado === false) {
+      try {
+        await pgSyncBatizadoPerfilFromCheckin(igrejaId, em, nome || '', ministerio || '', batizado);
+      } catch (_) {}
+    }
+    return { duplicate: true, id: existing[0].id };
+  }
 
   // Tenta vincular automaticamente a uma candidatura aprovada do mesmo email
   // para uma escala que aponta para este evento_checkin (Fase 2 da integração).
@@ -1281,6 +1289,9 @@ export async function pgCreateCheckin({
       dataCheckin, now, candidaturaId,
     ],
   );
+  try {
+    await pgSyncBatizadoPerfilFromCheckin(igrejaId, em, nome || '', ministerio || '', batizado);
+  } catch (_) {}
   return { id, created: true, candidaturaId };
 }
 

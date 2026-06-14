@@ -184,6 +184,28 @@ export function normBatizadoPerfil(raw) {
   return null;
 }
 
+/**
+ * Mescla batismo no JSON `dados` do voluntário.
+ * Check-in: "sim" sempre grava; "não" grava se perfil ainda não indica batizado.
+ */
+export function mergeBatizadoIntoPerfilDados(dados, batizado, { fromCheckin = false } = {}) {
+  const d = dados || {};
+  if (batizado !== true && batizado !== false) return d;
+  const prev = normBatizadoPerfil(d.batizado);
+  if (fromCheckin) {
+    if (batizado === true) {
+      d.batizado = true;
+    } else if (prev !== true) {
+      d.batizado = false;
+    }
+    return d;
+  }
+  if (prev !== true && prev !== false) {
+    d.batizado = batizado;
+  }
+  return d;
+}
+
 export async function pgFindVoluntarioByEmail(igrejaId, emailLower) {
   const { rows } = await getPostgresPool().query(
     'SELECT id, email, nome, dados, ativo, fonte FROM voluntarios WHERE igreja_id = $1 AND LOWER(email) = $2 LIMIT 1',

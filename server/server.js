@@ -143,6 +143,7 @@ import {
 import {
   pgListVoluntarios, pgListVoluntarioEmails, buildVoluntariosResumo, pgEnsureVoluntarioInList,
   pgBackfillVoluntariosFromCheckins,
+  pgBackfillBatizadoFromCheckins,
   pgListCheckins, pgListCandidaturasByEscala, pgFindCandidaturaById,
   pgListCheckinDates,
   pgUpdateCandidaturaStatus, pgBulkUpdateCandidaturaStatus, pgCandidaturaStatsByEmails,
@@ -2926,10 +2927,19 @@ app.post('/api/checkin-public', async (req, res) => {
         igrejaId: igrejaDoc._id, eventoId, email: em, nome: (nome || '').trim(), ministerio: (ministerio || '').trim(), batizado,
       });
       if (r.error === 'not_found') return sendError(res, 404, 'Evento não encontrado ou check-in encerrado.');
-      if (r.duplicate) return res.status(200).json({ message: 'Check-in já realizado.', checkin: { _id: r.id } });
+      if (r.duplicate) {
+        try {
+          await pgEnsureVoluntarioInList({
+            email: em, nome: (nome || '').trim(), ministerio: (ministerio || '').trim(),
+            igrejaId: igrejaDoc._id, fonte: 'checkin', batizado,
+          });
+        } catch (_) {}
+        return res.status(200).json({ message: 'Check-in já realizado.', checkin: { _id: r.id } });
+      }
       try {
         await pgEnsureVoluntarioInList({
-          email: em, nome: (nome || '').trim(), ministerio: (ministerio || '').trim(), igrejaId: igrejaDoc._id, fonte: 'checkin',
+          email: em, nome: (nome || '').trim(), ministerio: (ministerio || '').trim(),
+          igrejaId: igrejaDoc._id, fonte: 'checkin', batizado,
         });
       } catch (_) {}
       invalidateCache();
@@ -7299,6 +7309,8 @@ async function start() {
         if (f > 0) console.log(`✅ Auto-marca falta: ${f} candidatura(s) marcadas após fim_checkin.`);
         const v = await pgBackfillVoluntariosFromCheckins();
         if (v > 0) console.log(`✅ Backfill voluntarios←checkins: ${v} pessoa(s) adicionada(s) ao catálogo.`);
+        const b = await pgBackfillBatizadoFromCheckins();
+        if (b > 0) console.log(`✅ Backfill batismo←checkins: ${b} perfil(is) atualizado(s).`);
         const reopened = await pgReabrirEscalasDoDia();
         if (reopened > 0) console.log(`✅ Escalas do dia reabertas: ${reopened}.`);
       } catch (err) {
