@@ -78,6 +78,8 @@ function mapEscalaRow(row) {
     eventoCheckinId: d.eventoCheckinId || null,
     // { "Welcome": 8, "Streaming": 4 }; valores ausentes ou 0 = sem limite.
     capacidades: d.capacidades && typeof d.capacidades === 'object' ? d.capacidades : {},
+    inscricaoAte: d.inscricaoAte ? String(d.inscricaoAte).slice(0, 10) : null,
+    inscricaoAteHora: d.inscricaoAteHora ? String(d.inscricaoAteHora).trim() : null,
     createdAt: row.created_at,
     updatedAt: d.updatedAt || row.created_at,
   };
@@ -349,6 +351,12 @@ export async function pgUpdateEscala(id, igrejaId, patch) {
     capacidades: patch.capacidades !== undefined
       ? sanitizeCapacidades(patch.capacidades)
       : (current.capacidades || {}),
+    inscricaoAte: patch.inscricaoAte !== undefined
+      ? (patch.inscricaoAte ? String(patch.inscricaoAte).trim().slice(0, 10) : null)
+      : (current.inscricaoAte || null),
+    inscricaoAteHora: patch.inscricaoAteHora !== undefined
+      ? (patch.inscricaoAteHora ? (parseHHMM(patch.inscricaoAteHora) || String(patch.inscricaoAteHora).trim()) : null)
+      : (current.inscricaoAteHora || null),
     updatedAt: new Date().toISOString(),
   };
   await getPostgresPool().query(

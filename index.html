@@ -23,7 +23,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=2.2.5">
+  <link rel="stylesheet" href="styles.css?v=2.2.6">
 </head>
 <body>
   <!-- Sprite de ícones Celeiro — traço minimalista, paleta bordô -->
@@ -2137,6 +2137,24 @@
             Ativa (aceita candidaturas via link público)
           </label>
         </div>
+        <div id="editarEscalaPrazoHint" class="filters-card" style="display:none;margin-bottom:12px;padding:12px;border-left:4px solid #c9a227">
+          <p class="auth-subtitle" style="margin:0 0 8px"><strong>Inscrições fora do prazo.</strong> A regra padrão fecha no dia do culto. Defina um prazo abaixo para reabrir temporariamente.</p>
+          <button type="button" class="btn btn-ghost btn-sm" id="btnEditarEscalaReativarHoje">Reativar até hoje (fim do dia)</button>
+        </div>
+        <div class="form-group">
+          <label for="editarEscalaInscricaoAte">Prazo de inscrição até</label>
+          <input type="date" id="editarEscalaInscricaoAte">
+          <small style="color:var(--text-muted);display:block;margin-top:4px;">
+            Opcional. Mantém inscrições abertas até esta data (mesmo no dia do culto). Em branco = regra padrão.
+          </small>
+        </div>
+        <div class="form-group">
+          <label for="editarEscalaInscricaoAteHora">Horário limite (opcional)</label>
+          <input type="time" id="editarEscalaInscricaoAteHora">
+          <small style="color:var(--text-muted);display:block;margin-top:4px;">
+            Só no último dia do prazo. Ex.: 18:00 para fechar às 18h (horário de Brasília).
+          </small>
+        </div>
         <div class="form-group">
           <label for="editarEscalaCapacidades">Capacidade por ministério (opcional)</label>
           <textarea id="editarEscalaCapacidades" rows="3"
@@ -2265,6 +2283,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=2.2.5"></script>
+  <script defer src="app.js?v=2.2.6"></script>
 </body>
 </html>

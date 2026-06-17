@@ -5873,7 +5873,9 @@ function renderEscalasCriar() {
     const data = formatEscalaDateOnly(e.data);
     const aberta = e.candidaturaAberta === true;
     const ativoFlag = e.ativo !== false;
-    const statusLabel = aberta ? 'Aberta' : (ativoFlag ? 'Fora do prazo' : 'Inscrições fechadas');
+    const prazoExt = e.inscricaoAte ? String(e.inscricaoAte).slice(0, 10) : '';
+    let statusLabel = aberta ? 'Aberta' : (ativoFlag ? 'Fora do prazo' : 'Inscrições fechadas');
+    if (aberta && prazoExt) statusLabel = `Aberta · prazo ${formatEscalaDateOnly(prazoExt)}`;
     const statusClass = aberta ? 'evento-status-ativo' : 'evento-status-inativo';
     const eid = String(e._id);
     const checked = selectedEscalaIds.has(eid);
@@ -7019,11 +7021,27 @@ function openModalEditarEscala(id) {
   document.getElementById('editarEscalaData').value = escala.data ? new Date(escala.data).toISOString().slice(0, 10) : '';
   document.getElementById('editarEscalaDescricao').value = escala.descricao || '';
   document.getElementById('editarEscalaAtivo').checked = escala.ativo !== false;
+  const ateEl = document.getElementById('editarEscalaInscricaoAte');
+  const horaEl = document.getElementById('editarEscalaInscricaoAteHora');
+  if (ateEl) ateEl.value = escala.inscricaoAte ? String(escala.inscricaoAte).slice(0, 10) : '';
+  if (horaEl) horaEl.value = escala.inscricaoAteHora || '';
+  const hint = document.getElementById('editarEscalaPrazoHint');
+  const foraPrazo = escala.ativo !== false && escala.candidaturaAberta !== true;
+  if (hint) hint.style.display = foraPrazo ? '' : 'none';
   const capEl = document.getElementById('editarEscalaCapacidades');
   if (capEl) capEl.value = capacidadesToTextarea(escala.capacidades);
   m.classList.add('open');
   m.setAttribute('aria-hidden', 'false');
 }
+
+document.getElementById('btnEditarEscalaReativarHoje')?.addEventListener('click', () => {
+  const ateEl = document.getElementById('editarEscalaInscricaoAte');
+  const horaEl = document.getElementById('editarEscalaInscricaoAteHora');
+  const ativoEl = document.getElementById('editarEscalaAtivo');
+  if (ateEl) ateEl.value = getHojeDateString();
+  if (horaEl) horaEl.value = '23:59';
+  if (ativoEl) ativoEl.checked = true;
+});
 
 // ─── Form handlers: nova e editar escala ─────────────────────────────────────
 // Aceita formato "Min: 8" por linha; valores inválidos/zerados são ignorados.
@@ -7081,12 +7099,14 @@ document.getElementById('formEditarEscala')?.addEventListener('submit', async (e
   const data = document.getElementById('editarEscalaData')?.value || '';
   const descricao = document.getElementById('editarEscalaDescricao')?.value?.trim() || '';
   const ativo = document.getElementById('editarEscalaAtivo')?.checked !== false;
+  const inscricaoAte = document.getElementById('editarEscalaInscricaoAte')?.value?.trim() || null;
+  const inscricaoAteHora = document.getElementById('editarEscalaInscricaoAteHora')?.value?.trim() || null;
   const capacidades = parseCapacidadesTextarea(document.getElementById('editarEscalaCapacidades')?.value);
   try {
     const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nome, data: data || null, descricao, ativo, capacidades }),
+      body: JSON.stringify({ nome, data: data || null, descricao, ativo, capacidades, inscricaoAte, inscricaoAteHora }),
     });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
     document.getElementById('modalEditarEscala')?.classList.remove('open');

@@ -5632,10 +5632,10 @@ app.post('/api/escalas', requireAuth, resolveTenant, requireAdmin, async (req, r
 // PUT /api/escalas/:id — atualiza escala (admin only)
 app.put('/api/escalas/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const { nome, data, descricao, ativo, capacidades, eventoCheckinId } = req.body || {};
+    const { nome, data, descricao, ativo, capacidades, eventoCheckinId, inscricaoAte, inscricaoAteHora } = req.body || {};
     if (isPostgres()) {
       const escala = await pgUpdateEscala(req.params.id, req.tenantIgrejaId, {
-        nome, data, descricao, ativo, capacidades, eventoCheckinId,
+        nome, data, descricao, ativo, capacidades, eventoCheckinId, inscricaoAte, inscricaoAteHora,
       });
       if (!escala) return sendError(res, 404, 'Escala não encontrada.');
       return res.json(escala);

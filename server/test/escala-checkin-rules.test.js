@@ -34,6 +34,17 @@ describe('escala-checkin-rules', () => {
     assert.equal(isEscalaAbertaParaCandidatura(escala, null, '2026-05-17'), false);
   });
 
+  it('prazo estendido reabre inscrições no dia do culto', () => {
+    const escala = {
+      ativo: true,
+      data: '2026-05-17T03:00:00.000Z',
+      inscricaoAte: '2026-05-17',
+    };
+    assert.equal(isEscalaAbertaParaCandidatura(escala, null, '2026-05-17'), true);
+    const expirada = { ...escala, inscricaoAte: '2026-05-16' };
+    assert.equal(isEscalaAbertaParaCandidatura(expirada, null, '2026-05-17'), false);
+  });
+
   it('check-in respeita ativo e dia do evento', () => {
     const evento = {
       ativo: true,

@@ -48,10 +48,35 @@ export function getProximaOcorrenciaYmd(diaSemana, fromYmd = getHojeDateString()
 
 /**
  * Inscrição na escala: ativo do líder/admin + data futura + só a próxima ocorrência do culto recorrente.
- * No dia do culto (e após) inscrições fecham.
+ * No dia do culto (e após) inscrições fecham — salvo prazo estendido (inscricaoAte).
  */
+function normInscricaoAteYmd(raw) {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  return escalaDataToYMD(raw) || '';
+}
+
+/** Prazo manual definido no editar escala ainda válido? */
+export function isInscricaoPrazoExtendidoAtivo(escala, hoje = getHojeDateString()) {
+  const ate = normInscricaoAteYmd(escala?.inscricaoAte);
+  if (!ate) return false;
+  if (ate < hoje) return false;
+  if (ate > hoje) return true;
+  const horaLim = parseHHMM(escala?.inscricaoAteHora);
+  if (!horaLim) return true;
+  return getNowHHMMBrasilia() <= horaLim;
+}
+
 export function isEscalaAbertaParaCandidatura(escala, culto = null, hoje = getHojeDateString()) {
   if (!escala || escala.ativo === false) return false;
+
+  const prazoYmd = normInscricaoAteYmd(escala.inscricaoAte);
+  if (prazoYmd) {
+    if (isInscricaoPrazoExtendidoAtivo(escala, hoje)) return true;
+    return false;
+  }
+
   const ymd = escalaDataToYMD(escala.data);
   if (!ymd || ymd <= hoje) return false;
   if (escala.cultoRecorrenteId && culto && Number.isInteger(culto.diaSemana)) {
