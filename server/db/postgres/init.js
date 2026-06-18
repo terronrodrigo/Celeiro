@@ -189,6 +189,7 @@ const MINISTERIOS_PADRAO = [
   'Care / Saúde',
   'Parking / Estacionamento',
   'Segurança',
+  'Store',
   'Intercessão Online',
 ];
 

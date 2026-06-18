@@ -5,6 +5,7 @@ import {
   isEscalaAbertaParaCandidatura,
   isCheckinEventAberto,
   isWithinCheckinWindow,
+  buildReativacaoInscricaoPatch,
 } from '../lib/escala-checkin-rules.js';
 
 describe('escala-checkin-rules', () => {
@@ -32,6 +33,14 @@ describe('escala-checkin-rules', () => {
   it('escala fecha no dia do culto', () => {
     const escala = { ativo: true, data: '2026-05-17T03:00:00.000Z' };
     assert.equal(isEscalaAbertaParaCandidatura(escala, null, '2026-05-17'), false);
+  });
+
+  it('buildReativacaoInscricaoPatch define prazo no dia do culto', () => {
+    const escala = { ativo: true, data: '2026-05-17T03:00:00.000Z' };
+    const patch = buildReativacaoInscricaoPatch(escala, null, '2026-05-17');
+    assert.equal(patch.inscricaoAte, '2026-05-17');
+    assert.equal(patch.inscricaoAteHora, null);
+    assert.equal(isEscalaAbertaParaCandidatura({ ...escala, ...patch }, null, '2026-05-17'), true);
   });
 
   it('prazo estendido reabre inscrições no dia do culto', () => {

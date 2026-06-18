@@ -126,6 +126,7 @@ const MINISTERIOS_PADRAO = [
   'Care / Saúde',
   'Parking / Estacionamento',
   'Segurança',
+  'Store',
   'Intercessão Online',
 ];
 
@@ -1365,8 +1366,49 @@ async function createMinisterio(e) {
 }
 
 let assignLiderMinisterioId = null;
-/** Lista de usuários exibida no modal (pode incluir usuários adicionados pela busca por email). */
+/** Lista completa de usuários no modal (contas com login). */
 let assignLiderUserList = [];
+/** IDs selecionados (persiste ao filtrar a lista). */
+let assignLiderSelectedIds = new Set();
+
+function normalizeLeaderSearchText(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .trim();
+}
+
+/** Corresponde nome (parcial, sobrenome) ou email conforme a digitação. */
+function userMatchesLeaderSearch(user, query) {
+  const q = normalizeLeaderSearchText(query);
+  if (!q) return true;
+  const hay = normalizeLeaderSearchText(`${user.nome || ''} ${user.email || ''}`);
+  const tokens = q.split(/\s+/).filter(Boolean);
+  return tokens.every((tok) => hay.includes(tok));
+}
+
+function getAssignLiderCheckedIds() {
+  const container = document.getElementById('assignLiderCheckboxes');
+  if (!container) return new Set();
+  return new Set(
+    Array.from(container.querySelectorAll('input[type="checkbox"]:checked'))
+      .map((cb) => cb.getAttribute('data-user-id'))
+      .filter(Boolean)
+      .map(String),
+  );
+}
+
+function syncAssignLiderSelectionFromDom() {
+  const container = document.getElementById('assignLiderCheckboxes');
+  if (!container) return;
+  container.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+    const id = cb.getAttribute('data-user-id');
+    if (!id) return;
+    if (cb.checked) assignLiderSelectedIds.add(String(id));
+    else assignLiderSelectedIds.delete(String(id));
+  });
+}
 
 async function openAssignLider(ministerioId, ministerioNome) {
   assignLiderMinisterioId = ministerioId;
@@ -1374,7 +1416,8 @@ async function openAssignLider(ministerioId, ministerioNome) {
   if (nomeEl) nomeEl.textContent = `Ministério: ${ministerioNome || ministerioId}`;
   const msgEl = document.getElementById('assignLiderSearchMsg');
   if (msgEl) msgEl.textContent = '';
-  document.getElementById('assignLiderSearchEmail')?.value && (document.getElementById('assignLiderSearchEmail').value = '');
+  const searchEl = document.getElementById('assignLiderSearchQuery');
+  if (searchEl) searchEl.value = '';
   if (!usersList.length) {
     try {
       const r = await authFetch(`${API_BASE}/api/users`);
@@ -1382,56 +1425,48 @@ async function openAssignLider(ministerioId, ministerioNome) {
     } catch (_) {}
   }
   assignLiderUserList = (usersList || []).slice();
-  renderAssignLiderCheckboxes();
+  const ministerio = (ministrosList || []).find(m => String(m._id) === String(ministerioId));
+  assignLiderSelectedIds = new Set((ministerio?.lideres || []).map((l) => String(l._id)));
+  renderAssignLiderCheckboxes('');
   document.getElementById('modalAssignLider')?.classList.add('open');
 }
 
-function renderAssignLiderCheckboxes() {
-  const ministerio = assignLiderMinisterioId && (ministrosList || []).find(m => String(m._id) === String(assignLiderMinisterioId));
-  const liderIds = new Set((ministerio?.lideres || []).map(l => String(l._id)));
+function renderAssignLiderCheckboxes(filterQuery = '') {
+  syncAssignLiderSelectionFromDom();
   const container = document.getElementById('assignLiderCheckboxes');
+  const msgEl = document.getElementById('assignLiderSearchMsg');
   if (!container) return;
-  container.innerHTML = assignLiderUserList.map(u => {
+
+  const q = (filterQuery || '').trim();
+  const filtered = assignLiderUserList.filter((u) => userMatchesLeaderSearch(u, q));
+
+  if (!filtered.length) {
+    container.innerHTML = '<p class="auth-subtitle" style="margin:0">Nenhum usuário encontrado para este filtro.</p>';
+    if (msgEl) {
+      msgEl.textContent = q
+        ? `${assignLiderUserList.length} conta(s) no total · 0 correspondência`
+        : 'Nenhuma conta cadastrada.';
+    }
+    return;
+  }
+
+  container.innerHTML = filtered.map((u) => {
     const id = u._id;
     const label = `${u.nome || u.email} (${u.role || 'voluntario'})`;
-    const checked = liderIds.has(String(id)) ? ' checked' : '';
+    const checked = assignLiderSelectedIds.has(String(id)) ? ' checked' : '';
     return `<label class="checkbox-label" style="display:block; margin-bottom:6px;"><input type="checkbox" data-user-id="${escapeAttr(id)}"${checked}> ${escapeHtml(label)}</label>`;
   }).join('');
+
+  if (msgEl) {
+    msgEl.textContent = q
+      ? `${filtered.length} de ${assignLiderUserList.length} usuário(s)`
+      : `${assignLiderUserList.length} usuário(s) com conta na plataforma`;
+  }
 }
 
-async function assignLiderSearchByEmail() {
-  const input = document.getElementById('assignLiderSearchEmail');
-  const msgEl = document.getElementById('assignLiderSearchMsg');
-  const email = (input?.value || '').trim().toLowerCase();
-  if (!msgEl) return;
-  if (!email || !email.includes('@')) { msgEl.textContent = 'Digite um email válido.'; return; }
-  msgEl.textContent = 'Buscando...';
-  try {
-    const r = await authFetch(`${API_BASE}/api/users/by-email?email=${encodeURIComponent(email)}`);
-    if (!r.ok) {
-      const data = await r.json().catch(() => ({}));
-      msgEl.textContent = data.error || 'Nenhum usuário com este email. A pessoa precisa ter uma conta (login) no sistema.';
-      return;
-    }
-    const user = await r.json();
-    const already = assignLiderUserList.some(u => String(u._id) === String(user._id));
-    if (!already) {
-      assignLiderUserList.push(user);
-      const container = document.getElementById('assignLiderCheckboxes');
-      if (container) {
-        const label = `${user.nome || user.email} (${user.role || 'voluntario'})`;
-        const div = document.createElement('label');
-        div.className = 'checkbox-label';
-        div.style.cssText = 'display:block; margin-bottom:6px;';
-        div.innerHTML = `<input type="checkbox" data-user-id="${escapeAttr(String(user._id))}" checked> ${escapeHtml(label)}`;
-        container.appendChild(div);
-      }
-    }
-    msgEl.textContent = `Adicionado: ${user.nome || user.email}. Clique em Salvar líderes para confirmar.`;
-    if (input) input.value = '';
-  } catch (e) {
-    msgEl.textContent = e.message === 'AUTH_REQUIRED' ? 'Sessão expirada.' : 'Erro ao buscar. Tente novamente.';
-  }
+function filterAssignLiderList() {
+  const q = document.getElementById('assignLiderSearchQuery')?.value || '';
+  renderAssignLiderCheckboxes(q);
 }
 
 function openEditarMinisterio(id, nome) {
@@ -1475,8 +1510,8 @@ async function excluirMinisterio(id, nome) {
 
 async function assignLider() {
   if (!assignLiderMinisterioId) return;
-  const container = document.getElementById('assignLiderCheckboxes');
-  const checked = container ? Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.getAttribute('data-user-id')).filter(Boolean) : [];
+  syncAssignLiderSelectionFromDom();
+  const checked = [...assignLiderSelectedIds];
   try {
     const r = await authFetch(`${API_BASE}/api/ministros/${assignLiderMinisterioId}`, {
       method: 'PUT',
@@ -3074,9 +3109,10 @@ function nascimentoDateInputToApi(value) {
 function renderMinisterioSelect(selectId, currentValue) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
+  const list = getMinisteriosFormularioList();
   const value = (typeof currentValue === 'string' ? currentValue : (sel.dataset.lastValue || sel.value)) || '';
-  const isOutro = value && value !== '__outro__' && !MINISTERIOS_PADRAO.includes(value);
-  sel.innerHTML = '<option value="">Selecione</option>' + MINISTERIOS_PADRAO.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('') + '<option value="__outro__">Outro</option>';
+  const isOutro = value && value !== '__outro__' && !list.includes(value);
+  sel.innerHTML = '<option value="">Selecione</option>' + list.map(m => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('') + '<option value="__outro__">Outro</option>';
   if (isOutro) {
     sel.value = '__outro__';
     const outroInput = document.getElementById(selectId + 'Outro');
@@ -3132,15 +3168,39 @@ function voluntarioMinisteriosDisplay(v) {
   return main || hab || '';
 }
 
+let ministeriosFormularioCache = null;
+
+function getMinisteriosFormularioList() {
+  return (ministeriosFormularioCache && ministeriosFormularioCache.length)
+    ? ministeriosFormularioCache
+    : MINISTERIOS_PADRAO;
+}
+
+async function loadMinisteriosFormulario(selectId) {
+  try {
+    const r = await fetch(`${API_BASE}/api/cadastro/meta?igreja=${encodeURIComponent(getTenantSlugForLinks())}`);
+    if (r.ok) {
+      const data = await r.json().catch(() => ({}));
+      if (Array.isArray(data.ministerios) && data.ministerios.length) {
+        ministeriosFormularioCache = data.ministerios;
+      }
+    }
+  } catch (_) { /* fallback em MINISTERIOS_PADRAO */ }
+  if (!ministeriosFormularioCache?.length) ministeriosFormularioCache = MINISTERIOS_PADRAO.slice();
+  if (selectId) renderMinisterioSelect(selectId);
+  return ministeriosFormularioCache;
+}
+
 function renderPerfilMinisteriosCheckboxes(selectedList) {
   const container = document.getElementById('perfilMinisterioGroup');
   if (!container) return;
   const sel = new Set((selectedList || []).map((s) => String(s).trim()).filter(Boolean));
-  const padraoSet = new Set(MINISTERIOS_PADRAO);
+  const catalog = getMinisteriosFormularioList();
+  const padraoSet = new Set(catalog);
   const extras = [...sel].filter((s) => !padraoSet.has(s));
   const outroVal = extras.join(', ');
 
-  let html = MINISTERIOS_PADRAO.map((m) => {
+  let html = catalog.map((m) => {
     const checked = sel.has(m) ? ' checked' : '';
     return `<label class="checkbox-label" style="display:block;margin-bottom:6px;"><input type="checkbox" name="perfilMinisterioCb" value="${escapeAttr(m)}"${checked}> ${escapeHtml(m)}</label>`;
   }).join('');
@@ -3184,6 +3244,7 @@ function populatePerfilEstado() {
 async function fetchPerfil() {
   if (!authToken) return;
   populatePerfilEstado();
+  await loadMinisteriosFormulario();
   try {
     const r = await authFetch(`${API_BASE}/api/me/perfil`);
     if (!r.ok) {
@@ -5874,6 +5935,7 @@ function renderEscalasCriar() {
     const aberta = e.candidaturaAberta === true;
     const ativoFlag = e.ativo !== false;
     const prazoExt = e.inscricaoAte ? String(e.inscricaoAte).slice(0, 10) : '';
+    const foraPrazo = ativoFlag && !aberta;
     let statusLabel = aberta ? 'Aberta' : (ativoFlag ? 'Fora do prazo' : 'Inscrições fechadas');
     if (aberta && prazoExt) statusLabel = `Aberta · prazo ${formatEscalaDateOnly(prazoExt)}`;
     const statusClass = aberta ? 'evento-status-ativo' : 'evento-status-inativo';
@@ -5889,7 +5951,9 @@ function renderEscalasCriar() {
       <td class="escala-actions-cell" data-label="">
         <div class="escala-actions-wrap">
           <button class="btn btn-sm btn-ghost" data-escala-edit="${escapeAttr(eid)}">Editar</button>
-          <button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(eid)}">${ativoFlag ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>
+          ${foraPrazo
+    ? `<button class="btn btn-sm btn-primary" data-escala-reativar="${escapeAttr(eid)}">Reativar inscrições</button>`
+    : `<button class="btn btn-sm btn-ghost" data-escala-toggle="${escapeAttr(eid)}">${ativoFlag ? 'Fechar inscrições' : 'Reabrir inscrições'}</button>`}
           <button class="btn btn-sm btn-ghost" data-escala-delete="${escapeAttr(eid)}">Excluir</button>
         </div>
       </td>
@@ -5966,6 +6030,7 @@ function renderEscalasCriar() {
     btn.addEventListener('click', () => openModalCopiarLinkMinisterio(btn.getAttribute('data-escala-link-ministerio')));
   });
   container.querySelectorAll('[data-escala-edit]').forEach(btn => { btn.addEventListener('click', () => openModalEditarEscala(btn.getAttribute('data-escala-edit'))); });
+  container.querySelectorAll('[data-escala-reativar]').forEach(btn => { btn.addEventListener('click', () => reativarEscalaInscricoes(btn.getAttribute('data-escala-reativar'))); });
   container.querySelectorAll('[data-escala-toggle]').forEach(btn => { btn.addEventListener('click', () => toggleEscalaAtivo(btn.getAttribute('data-escala-toggle'))); });
   container.querySelectorAll('[data-escala-delete]').forEach(btn => { btn.addEventListener('click', () => excluirEscala(btn.getAttribute('data-escala-delete'))); });
   container.querySelectorAll('.row-check-escala').forEach((cb) => {
@@ -6806,15 +6871,42 @@ async function atualizarStatusCandidatura(id, status, meta = null) {
 async function toggleEscalaAtivo(id) {
   const escala = escalasList.find(e => String(e._id) === id);
   if (!escala) return;
+  const reopening = escala.ativo === false;
   try {
     const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ativo: !escala.ativo }),
+      body: JSON.stringify(reopening ? { reativarInscricoes: true } : { ativo: false }),
     });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    const updated = await r.json().catch(() => null);
+    if (updated?._id) {
+      escalasList = escalasList.map((e) => (String(e._id) === String(updated._id) ? { ...e, ...updated } : e));
+      renderEscalasCriar();
+    }
     await fetchEscalasCriar();
   } catch (e) { alert(e.message || 'Erro ao alterar status.'); }
+}
+
+async function reativarEscalaInscricoes(id) {
+  const escala = escalasList.find(e => String(e._id) === id);
+  if (!escala) return;
+  if (!confirm(`Reativar inscrições para "${escala.nome || 'esta escala'}"?`)) return;
+  try {
+    const r = await authFetch(`${API_BASE}/api/escalas/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reativarInscricoes: true }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha ao reativar');
+    const updated = await r.json().catch(() => null);
+    if (updated?.candidaturaAberta === true) {
+      alert('Inscrições reativadas. O link público já aceita novas candidaturas.');
+    } else if (updated?.candidaturaAberta === false) {
+      alert('Prazo salvo, mas a escala ainda aparece fechada. Verifique a data do culto ou use Editar para ajustar o prazo.');
+    }
+    await fetchEscalasCriar();
+  } catch (e) { alert(e.message || 'Erro ao reativar inscrições.'); }
 }
 
 async function excluirEscala(id) {
@@ -7039,7 +7131,7 @@ document.getElementById('btnEditarEscalaReativarHoje')?.addEventListener('click'
   const horaEl = document.getElementById('editarEscalaInscricaoAteHora');
   const ativoEl = document.getElementById('editarEscalaAtivo');
   if (ateEl) ateEl.value = getHojeDateString();
-  if (horaEl) horaEl.value = '23:59';
+  if (horaEl) horaEl.value = '';
   if (ativoEl) ativoEl.checked = true;
 });
 
@@ -7109,7 +7201,13 @@ document.getElementById('formEditarEscala')?.addEventListener('submit', async (e
       body: JSON.stringify({ nome, data: data || null, descricao, ativo, capacidades, inscricaoAte, inscricaoAteHora }),
     });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha');
+    const updated = await r.json().catch(() => null);
     document.getElementById('modalEditarEscala')?.classList.remove('open');
+    if (updated?.candidaturaAberta === true) {
+      alert('Escala salva. Inscrições abertas.');
+    } else if (updated?.candidaturaAberta === false && ativo) {
+      alert('Escala salva, mas inscrições ainda fechadas. Defina um prazo de inscrição até hoje ou uma data futura.');
+    }
     fetchEscalasCriar();
   } catch (err) { alert(err.message || 'Erro ao salvar escala.'); }
 });
@@ -8274,8 +8372,7 @@ document.getElementById('modalAssignLiderClose')?.addEventListener('click', () =
 document.getElementById('modalAssignLiderCancel')?.addEventListener('click', () => document.getElementById('modalAssignLider')?.classList.remove('open'));
 document.getElementById('modalAssignLider')?.querySelector('.modal-backdrop')?.addEventListener('click', () => document.getElementById('modalAssignLider')?.classList.remove('open'));
 document.getElementById('btnAssignLider')?.addEventListener('click', assignLider);
-document.getElementById('btnAssignLiderSearch')?.addEventListener('click', assignLiderSearchByEmail);
-document.getElementById('assignLiderSearchEmail')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); assignLiderSearchByEmail(); } });
+document.getElementById('assignLiderSearchQuery')?.addEventListener('input', debounce(filterAssignLiderList, 200));
 
 function closeModalUserRole() {
   const modal = document.getElementById('modalUserRole');
@@ -8702,8 +8799,7 @@ function showCadastroPublico() {
   if (estadoSelect && estadoSelect.options.length <= 1) {
     estadoSelect.innerHTML = '<option value="">Selecione o estado (UF)</option>' + UFS_BR.map(uf => `<option value="${uf}">${uf}</option>`).join('');
   }
-  renderMinisterioSelect('cadastroMinisterio');
-  toggleMinisterioOutroVisibility('cadastroMinisterio');
+  void loadMinisteriosFormulario('cadastroMinisterio').then(() => toggleMinisterioOutroVisibility('cadastroMinisterio'));
 }
 
 function hideCadastroPublico() {

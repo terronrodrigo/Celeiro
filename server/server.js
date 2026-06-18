@@ -140,6 +140,7 @@ import {
   isWithinCheckinWindow,
   isCheckinEventAberto,
   isEscalaAbertaParaCandidatura,
+  buildReativacaoInscricaoPatch,
   sortEscalasByDataDesc,
   checkinFechadoMensagem,
 } from './lib/escala-checkin-rules.js';
@@ -471,6 +472,39 @@ function normalizarWhatsapp(val) {
   if (digits.length !== 10 && digits.length !== 11) return null;
   return digits;
 }
+
+/** Catálogo de ministérios para formulários públicos (cadastro de voluntários, etc.). */
+async function listMinisteriosParaFormularioPublico(igrejaId) {
+  if (isPostgres()) {
+    const mins = await pgListMinisterios(igrejaId);
+    if (mins.length > 0) {
+      return mins.filter((m) => m.ativo !== false).map((m) => m.nome).filter(Boolean);
+    }
+  } else if (isMongo()) {
+    const ministerios = await Ministerio.find({ igrejaId, ativo: true }).sort({ nome: 1 }).select('nome').lean();
+    if (ministerios.length > 0) return ministerios.map((m) => m.nome).filter(Boolean);
+  }
+  return [
+    'Suporte Geral', 'Welcome / Recepção', 'Experience / Auditório', 'Streaming / Ao Vivo',
+    'Produção Ao Vivo', 'Lab / Mídia', 'Produção', 'Intercessão Presencial', 'Sala de Voluntários',
+    'Kids / Min. Infantil', 'Consolidação', 'Care / Saúde', 'Parking / Estacionamento', 'Segurança',
+    'Store', 'Intercessão Online',
+  ];
+}
+
+// GET /api/cadastro/meta — lista de ministérios para o formulário público de voluntários
+app.get('/api/cadastro/meta', async (req, res) => {
+  try {
+    if (!isDbReady()) return sendError(res, 503, 'Serviço temporariamente indisponível.');
+    const igrejaDoc = await publicIgrejaFromRequest(req);
+    if (!igrejaDoc) return sendError(res, 404, 'Igreja não encontrada. Use ?igreja=slug na URL.');
+    const ministerios = await listMinisteriosParaFormularioPublico(igrejaDoc._id);
+    res.json({ ministerios });
+  } catch (err) {
+    console.error('cadastro/meta:', err?.message || err);
+    sendError(res, 500, err.message || 'Erro ao carregar ministérios.');
+  }
+});
 
 app.post('/api/cadastro', async (req, res) => {
   try {
@@ -5632,13 +5666,28 @@ app.post('/api/escalas', requireAuth, resolveTenant, requireAdmin, async (req, r
 // PUT /api/escalas/:id — atualiza escala (admin only)
 app.put('/api/escalas/:id', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   try {
-    const { nome, data, descricao, ativo, capacidades, eventoCheckinId, inscricaoAte, inscricaoAteHora } = req.body || {};
+    const {
+      nome, data, descricao, ativo, capacidades, eventoCheckinId,
+      inscricaoAte, inscricaoAteHora, reativarInscricoes,
+    } = req.body || {};
     if (isPostgres()) {
-      const escala = await pgUpdateEscala(req.params.id, req.tenantIgrejaId, {
+      const current = await pgFindEscalaById(req.params.id, req.tenantIgrejaId);
+      if (!current) return sendError(res, 404, 'Escala não encontrada.');
+      let patch = {
         nome, data, descricao, ativo, capacidades, eventoCheckinId, inscricaoAte, inscricaoAteHora,
-      });
+      };
+      const reopening = ativo === true && current.ativo === false;
+      const needsAutoPrazo = (reativarInscricoes === true || reopening) && inscricaoAte === undefined;
+      if (needsAutoPrazo) {
+        const culto = current.cultoRecorrenteId
+          ? await pgFindCultoRecorrente(current.cultoRecorrenteId, req.tenantIgrejaId)
+          : null;
+        Object.assign(patch, buildReativacaoInscricaoPatch(current, culto));
+      }
+      const escala = await pgUpdateEscala(req.params.id, req.tenantIgrejaId, patch);
       if (!escala) return sendError(res, 404, 'Escala não encontrada.');
-      return res.json(escala);
+      const [enriched] = await enrichEscalasCandidatura(req.tenantIgrejaId, [escala]);
+      return res.json(enriched);
     }
     const update = {};
     if (nome !== undefined) update.nome = String(nome).trim();

@@ -563,11 +563,8 @@
               <div class="modal-body">
                 <p class="auth-subtitle" id="assignLiderMinisterioNome"></p>
                 <div class="form-group">
-                  <label class="block-label">Buscar voluntário por email</label>
-                  <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-                    <input type="email" id="assignLiderSearchEmail" placeholder="email@exemplo.com" style="flex:1;min-width:180px">
-                    <button type="button" class="btn btn-primary" id="btnAssignLiderSearch">Buscar</button>
-                  </div>
+                  <label class="block-label" for="assignLiderSearchQuery">Filtrar por nome ou email</label>
+                  <input type="search" id="assignLiderSearchQuery" placeholder="Ex.: Maria, Silva ou maria@..." autocomplete="off" style="width:100%">
                   <p id="assignLiderSearchMsg" class="form-hint" style="margin-top:6px"></p>
                 </div>
                 <div class="form-group" id="assignLiderCheckboxesWrap">
@@ -2283,6 +2280,6 @@
       }
     })();
   </script>
-  <script defer src="app.js?v=2.2.6"></script>
+  <script defer src="app.js?v=2.2.9"></script>
 </body>
 </html>

@@ -68,6 +68,22 @@ export function isInscricaoPrazoExtendidoAtivo(escala, hoje = getHojeDateString(
   return getNowHHMMBrasilia() <= horaLim;
 }
 
+/** Campos para reabrir inscrições (ex.: culto hoje ou escala fechada manualmente). */
+export function buildReativacaoInscricaoPatch(escala, culto = null, hoje = getHojeDateString()) {
+  const base = {
+    ...escala,
+    ativo: true,
+    inscricaoAte: null,
+    inscricaoAteHora: null,
+  };
+  if (isEscalaAbertaParaCandidatura(base, culto, hoje)) {
+    return { ativo: true, inscricaoAte: null, inscricaoAteHora: null };
+  }
+  const ymd = escalaDataToYMD(escala.data) || hoje;
+  const ate = ymd < hoje ? hoje : ymd;
+  return { ativo: true, inscricaoAte: ate, inscricaoAteHora: null };
+}
+
 export function isEscalaAbertaParaCandidatura(escala, culto = null, hoje = getHojeDateString()) {
   if (!escala || escala.ativo === false) return false;
 
