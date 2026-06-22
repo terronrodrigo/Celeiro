@@ -1,6 +1,8 @@
+import { normalizeAppBase } from './app-url.js';
+
 /** Monta URL pública de inscrição na escala (?escala=id&ministerio=…&igreja=slug). */
 export function buildEscalaPublicUrl({ appBase, escalaId, igrejaSlug, ministerio = null }) {
-  const base = (appBase || '').replace(/\/$/, '') || 'https://voluntariosceleirosp.com';
+  const base = normalizeAppBase(appBase);
   const id = (escalaId || '').toString().trim();
   const slug = (igrejaSlug || 'celeiro-sp').toString().trim().toLowerCase();
   if (!id) return base;

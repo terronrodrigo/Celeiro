@@ -6,6 +6,7 @@ import {
   escalaDataToYMD,
   getHojeDateString,
 } from './brasilia.js';
+import { defaultResendFrom, normalizeAppBase } from './app-url.js';
 import { isEscalaAbertaParaCandidatura, getNowHHMMBrasilia } from './escala-checkin-rules.js';
 import { buildEscalaPublicUrl } from './escala-public-url.js';
 import { isEscalaLembreteMorningWindow } from './escala-lembrete-email.js';
@@ -46,7 +47,7 @@ export async function listProximasEscalasAbertas(igrejaId, { limit = 3, appBase,
     const c = await pgFindCultoRecorrente(id, igrejaId);
     if (c) cultoMap.set(id, c);
   }));
-  const base = (appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
+  const base = normalizeAppBase(appBase);
   const slug = igrejaSlug || 'celeiro-sp';
   const abertas = [];
   for (const e of escalas) {
@@ -146,14 +147,14 @@ export async function sendCheckinAgradecimentoEmail({
 
   const igreja = await pgFindIgrejaById(igrejaId);
   const slug = igreja?.slug || 'celeiro-sp';
-  const base = (appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
+  const base = normalizeAppBase(appBase);
 
   const [{ resumo }, proximasEscalas] = await Promise.all([
     pgHistoricoVoluntario(igrejaId, em),
     listProximasEscalasAbertas(igrejaId, { limit: 3, appBase: base, igrejaSlug: slug }),
   ]);
 
-  const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+  const from = defaultResendFrom();
   const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
   const resend = new Resend(apiKey);
   const dataLabel = formatDataPtBr(checkinYmd);

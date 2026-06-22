@@ -47,6 +47,7 @@ import {
   pgListMinisterios, pgFindMinisterioByNome, pgCreateMinisterio, pgLeadersByMinisterioId,
   pgListUsers, pgFindUserByEmailInIgreja, pgCreateUser, pgUpdateUser, pgUpsertUserWithPasswordHash,
   pgSetUserResetToken, pgFindUserByResetToken, pgUpdateUserPassword,
+  pgUpdateUserEmailAndVoluntario,
   pgFindVoluntarioByEmail, pgUpsertVoluntarioPerfil,
   pgSetUserFotoUrl, pgFindUserFotoUrl,
   pgFindMinisterioById, pgUpdateMinisterio, pgDeleteMinisterio, pgSetMinisterioLideres,
@@ -76,7 +77,8 @@ import {
   pgGetEventoCheckinVinculoEscalas,
   pgAssociarEventoCheckinAEscala,
 } from './db/postgres/escalas-checkin.js';
-import { buildCheckinPublicUrl, resolveAppBaseUrl } from './lib/checkin-public-url.js';
+import { buildCheckinPublicUrl } from './lib/checkin-public-url.js';
+import { defaultResendFrom, legacyRedirectHosts, normalizeAppBase, resolveAppBaseUrl } from './lib/app-url.js';
 import { generateCheckinQrPng, generateCheckinQrEmailBuffer } from './lib/checkin-qrcode.js';
 import { sendCheckinAberturaEmailsForEvento, runCheckinAberturaEmailJob } from './lib/checkin-abertura-email.js';
 import {
@@ -230,6 +232,18 @@ function escalaDataToYMD(dateVal) {
 
 const app = express();
 app.set('trust proxy', 1); // Necessário quando atrás de reverse proxy (Railway, Render, etc.)
+
+// Redireciona domínio legado (voluntariosceleirosp.com) → APP_URL (app.celeirosp.com)
+app.use((req, res, next) => {
+  const legacyHosts = legacyRedirectHosts();
+  if (!legacyHosts.length) return next();
+  const host = (req.get('host') || '').split(':')[0].toLowerCase();
+  if (!legacyHosts.includes(host)) return next();
+  const targetBase = normalizeAppBase();
+  const path = req.originalUrl || req.url || '/';
+  return res.redirect(301, `${targetBase}${path.startsWith('/') ? path : `/${path}`}`);
+});
+
 const PORT = process.env.PORT || 3001;
 const AUTH_TOKEN_TTL_HOURS = Number(process.env.AUTH_TOKEN_TTL_HOURS || 24);
 const ADMIN_USER = (process.env.ADMIN_USER || '').trim();
@@ -295,7 +309,10 @@ app.get('/api/whatsapp/webhook', (req, res) => whatsappHandler.handleVerify(req,
 app.post('/api/whatsapp/webhook', whatsappWebhookLimiter, express.raw({ type: 'application/json' }), (req, res) => whatsappHandler.handleWebhook(req, res));
 
 app.use(express.json());
-app.use('/uploads', express.static(join(__dirname, 'uploads')));
+app.use('/uploads', express.static(join(__dirname, 'uploads'), {
+  maxAge: '7d',
+  immutable: true,
+}));
 
 const VOLUNTARIOS_CSV_PATH = (process.env.VOLUNTARIOS_CSV_PATH || '').trim();
 const CHECKIN_CSV_PATH = (process.env.CHECKIN_CSV_PATH || '').trim();
@@ -334,6 +351,20 @@ async function persistAuthToken(token, data) {
   } catch (err) {
     console.error('Erro ao persistir sessão:', err.message || err);
     return false;
+  }
+}
+
+async function updateCurrentAuthEmail(req, email) {
+  const em = String(email || '').trim().toLowerCase();
+  if (!req?.token || !em) return;
+  const current = await loadAuthTokenData(req.token);
+  if (!current) return;
+  const nextData = { ...current, email: em };
+  authTokens.set(req.token, nextData);
+  if (isPostgres()) {
+    await pgSaveAuthSession(req.token, nextData).catch((err) => {
+      console.error('Erro ao atualizar email da sessão:', err.message || err);
+    });
   }
 }
 
@@ -407,6 +438,57 @@ app.get('/api/health', (req, res) => {
     uptime: process.uptime(),
     db: getDbMode(),
     postgres: isPostgres() ? 'connected' : 'disconnected',
+  });
+});
+
+app.get('/api/health/full', async (_req, res) => {
+  const startedAt = Date.now();
+  const checks = {
+    db: { ok: false, mode: getDbMode(), ready: isDbReady() },
+    config: {
+      ok: true,
+      appUrl: normalizeAppBase(),
+      corsOrigins,
+      hasResend: !!process.env.RESEND_API_KEY,
+      hasSetupSecret: !!SETUP_SECRET,
+      setupSecretStrong: !SETUP_SECRET || SETUP_SECRET.length >= 24,
+      legacyRedirectHosts: legacyRedirectHosts(),
+      resendFromConfigured: !!process.env.RESEND_FROM_EMAIL,
+    },
+    cache: {
+      voluntariosAgeMs: cache.voluntariosTime ? Date.now() - cache.voluntariosTime : null,
+      checkinsAgeMs: cache.checkinsTime ? Date.now() - cache.checkinsTime : null,
+      ttlMs: CACHE_TTL,
+    },
+  };
+
+  try {
+    if (!isDbReady()) {
+      checks.db.error = 'db_not_ready';
+    } else if (isPostgres()) {
+      const { rows } = await getPostgresPool().query('SELECT NOW() AS now');
+      checks.db.ok = true;
+      checks.db.now = rows?.[0]?.now || null;
+      checks.config.hasAdmin = await pgHasAdmin();
+    } else if (isMongo()) {
+      checks.db.ok = mongoose.connection.readyState === 1;
+      checks.db.readyState = mongoose.connection.readyState;
+      checks.config.hasAdmin = !!(await User.exists({ role: 'admin' }));
+    }
+  } catch (err) {
+    checks.db.ok = false;
+    checks.db.error = err?.message || 'db_check_failed';
+  }
+
+  checks.config.ok = !!checks.config.hasAdmin || checks.config.setupSecretStrong;
+  const ok = checks.db.ok && checks.config.ok;
+  res.status(ok ? 200 : 503).json({
+    ok,
+    service: BRAND_SHORT,
+    env: process.env.NODE_ENV || 'development',
+    uptimeSec: Math.round(process.uptime()),
+    durationMs: Date.now() - startedAt,
+    checks,
   });
 });
 
@@ -720,9 +802,7 @@ app.get('/api/whatsapp/mensagem-escala', requireAuth, resolveTenant, async (req,
     }
 
     const slug = req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG;
-    const base = (process.env.APP_URL || '').replace(/\/$/, '')
-      || `${req.protocol}://${req.get('host')}`;
-    const appBase = base || 'https://voluntariosceleirosp.com';
+    const appBase = resolveAppBaseUrl(req);
     let checkinUrl = '';
     if (eventoCheckinId) {
       checkinUrl = `${appBase}?checkin=${encodeURIComponent(eventoCheckinId)}&igreja=${encodeURIComponent(slug)}`;
@@ -1280,6 +1360,11 @@ app.post('/api/setup', async (req, res) => {
     }
     const { secret, email, nome, senha } = req.body || {};
     if (!SETUP_SECRET) return res.status(400).json({ error: 'Setup não configurado no servidor.' });
+    const hasAdmin = isMongo() ? await User.exists({ role: 'admin' }) : await pgHasAdmin();
+    if (hasAdmin) return res.status(404).json({ error: 'Setup indisponível.' });
+    if (process.env.NODE_ENV === 'production' && SETUP_SECRET.length < 24) {
+      return res.status(503).json({ error: 'Setup indisponível. Configure um SETUP_SECRET forte antes de criar o primeiro admin.' });
+    }
     if (String(secret).trim() !== SETUP_SECRET) return res.status(403).json({ error: 'Código de setup inválido.' });
     const emailVal = (email || '').trim().toLowerCase();
     const nomeVal = (nome || '').trim();
@@ -1287,9 +1372,6 @@ app.post('/api/setup', async (req, res) => {
     if (!emailVal || !emailVal.includes('@')) return res.status(400).json({ error: 'Email válido é obrigatório.' });
     if (!nomeVal) return res.status(400).json({ error: 'Nome é obrigatório.' });
     if (!senhaVal || senhaVal.length < 6) return res.status(400).json({ error: 'Senha deve ter no mínimo 6 caracteres.' });
-
-    const hasAdmin = isMongo() ? await User.exists({ role: 'admin' }) : await pgHasAdmin();
-    if (hasAdmin) return res.status(400).json({ error: 'Já existe um admin. Use login normal.' });
 
     if (isMongo()) {
       const existingGlobal = await User.exists({ email: emailVal, igrejaId: null });
@@ -1555,6 +1637,12 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
   try {
     const isLider = req.userRole === 'lider';
     const ministerioNomes = (req.userMinisterioNomes || []).map((n) => String(n).trim()).filter(Boolean);
+    const qParam = (req.query.q || req.query.search || '').toString().trim().slice(0, 120);
+    const rawLimit = Number(req.query.limit);
+    const rawOffset = Number(req.query.offset);
+    const hasServerPaging = Number.isFinite(rawLimit) && rawLimit > 0;
+    const pageLimit = hasServerPaging ? Math.min(Math.max(1, rawLimit), 500) : null;
+    const pageOffset = Math.max(0, Number.isFinite(rawOffset) ? rawOffset : 0);
 
     // Aceita string CSV ou array (perfil novo grava arrays no JSONB do voluntário).
     const splitMulti = (v) => {
@@ -1591,6 +1679,8 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
       return mongoAttachParticipacaoStats(req, list);
     };
     if (
+      !hasServerPaging &&
+      !qParam &&
       isCacheValid('voluntarios') &&
       cache.voluntariosIgrejaId != null &&
       String(cache.voluntariosIgrejaId) === tenantIdStr &&
@@ -1603,17 +1693,22 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
     }
 
     if (isPostgres()) {
-      let voluntariosPg = await pgListVoluntarios(req.tenantIgrejaId);
+      let voluntariosPg = await pgListVoluntarios(req.tenantIgrejaId, {
+        q: isLider ? '' : qParam,
+        offset: isLider ? 0 : pageOffset,
+        limit: isLider ? null : pageLimit,
+      });
+      const pagination = voluntariosPg.pagination || null;
       voluntariosPg = filterByMinisterio(voluntariosPg);
       const resumoPg = buildVoluntariosResumo(voluntariosPg);
       const payloadPgCache = { voluntarios: voluntariosPg, resumo: resumoPg };
-      if (!isLider) {
+      if (!isLider && !hasServerPaging && !qParam) {
         cache.voluntarios = payloadPgCache;
         cache.voluntariosTime = Date.now();
         cache.voluntariosIgrejaId = tenantIdStr;
       }
       const withStats = await pgAttachParticipacaoStats(req.tenantIgrejaId, voluntariosPg);
-      return res.json({ voluntarios: withStats, resumo: buildResumo(withStats) });
+      return res.json({ voluntarios: withStats, resumo: buildResumo(withStats), ...(pagination ? { pagination } : {}) });
     }
 
     if (!guardMongoData(res, EMPTY_VOLUNTARIOS, 'Banco de dados indisponível.')) return;
@@ -1702,17 +1797,42 @@ app.get('/api/voluntarios', requireAuth, resolveTenant, requireAdminOrLider, asy
       v.fotoUrl = usersByEmail[(v.email || '').toLowerCase()] || null;
     });
 
+    let responseList = normalizedAll;
+    if (qParam && !isLider) {
+      const q = qParam.toLowerCase();
+      responseList = responseList.filter((v) => {
+        const mins = splitVoluntarioMinisterios(v).join(' ').toLowerCase();
+        return String(v.nome || '').toLowerCase().includes(q)
+          || String(v.email || '').toLowerCase().includes(q)
+          || String(v.cidade || '').toLowerCase().includes(q)
+          || String(v.estado || '').toLowerCase().includes(q)
+          || String(v.ministerio || '').toLowerCase().includes(q)
+          || mins.includes(q);
+      });
+    }
+    const pagination = hasServerPaging && !isLider
+      ? {
+        total: responseList.length,
+        offset: pageOffset,
+        limit: pageLimit,
+        hasMore: pageOffset + pageLimit < responseList.length,
+      }
+      : null;
+    if (pagination) responseList = responseList.slice(pageOffset, pageOffset + pageLimit);
+
     const fullData = {
       voluntarios: normalizedAll,
       resumo: buildResumo(normalizedAll),
     };
-    cache.voluntarios = fullData;
-    cache.voluntariosTime = Date.now();
-    cache.voluntariosIgrejaId = req.tenantIgrejaId;
+    if (!hasServerPaging && !qParam) {
+      cache.voluntarios = fullData;
+      cache.voluntariosTime = Date.now();
+      cache.voluntariosIgrejaId = req.tenantIgrejaId;
+    }
 
     if (!isLider) {
-      const withStats = await mongoAttachParticipacaoStats(req, normalizedAll);
-      return res.json({ voluntarios: withStats, resumo: buildResumo(withStats) });
+      const withStats = await mongoAttachParticipacaoStats(req, responseList);
+      return res.json({ voluntarios: withStats, resumo: buildResumo(withStats), ...(pagination ? { pagination } : {}) });
     }
     const filtered = filterByMinisterio(normalizedAll);
     const withStatsF = await mongoAttachParticipacaoStats(req, filtered);
@@ -2288,14 +2408,12 @@ async function sendCandidaturaAprovacaoEmailPg(candidaturaPg, req) {
   if (!apiKey || !candidaturaPg?.email) return false;
   const escala = await pgFindEscalaById(candidaturaPg.escalaId, req.tenantIgrejaId);
   const slug = req.tenantIgrejaSlug || DEFAULT_IGREJA_SLUG;
-  const base = (process.env.APP_URL || '').replace(/\/$/, '')
-    || `${req.protocol}://${req.get('host')}`;
-  const appBase = base || 'https://voluntariosceleirosp.com';
+  const appBase = resolveAppBaseUrl(req);
   const checkinUrl = escala?.eventoCheckinId
     ? `${appBase}?checkin=${encodeURIComponent(escala.eventoCheckinId)}&igreja=${encodeURIComponent(slug)}`
     : appBase;
   const resend = new Resend(apiKey);
-  const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+  const from = defaultResendFrom();
   const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
   const nomeDisplay = (candidaturaPg.nome || '').trim() || 'voluntário(a)';
   const escalaNome = escala?.nome || 'Escala';
@@ -3774,7 +3892,7 @@ app.get('/api/me/perfil', requireAuth, async (req, res) => {
         : (await pgFindUsersByEmail(emailLookup)).find(
           (u) => !req.authIgrejaIdStr || String(u.igrejaId || '') === String(req.authIgrejaIdStr || ''),
         ) || (await pgFindUsersByEmail(emailLookup))[0];
-      const email = (req.userEmail || userRow?.email || emailLookup || '').toLowerCase().trim();
+      const email = (userRow?.email || req.userEmail || emailLookup || '').toLowerCase().trim();
       if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
       const igrejaId = userRow?.igrejaId || req.authIgrejaIdStr || req.tenantIgrejaId;
       const perfil = igrejaId ? await pgFindVoluntarioByEmail(igrejaId, email) : null;
@@ -3791,7 +3909,7 @@ app.get('/api/me/perfil', requireAuth, async (req, res) => {
           ? { igrejaId: req.authIgrejaIdStr }
           : { igrejaId: null }),
       }).select('email fotoUrl igrejaId').lean();
-    const email = (req.userEmail || userRow?.email || '').toLowerCase().trim();
+    const email = (userRow?.email || req.userEmail || '').toLowerCase().trim();
     if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
     const volFilter = { email };
     if (userRow?.igrejaId) volFilter.igrejaId = userRow.igrejaId;
@@ -3814,13 +3932,16 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
       const userRow = req.userId
         ? await pgFindUserById(req.userId)
         : null;
-      const email = (req.userEmail || userRow?.email || '').toLowerCase().trim();
+      const email = (userRow?.email || req.userEmail || '').toLowerCase().trim();
       if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
       const igrejaId = userRow?.igrejaId || req.authIgrejaIdStr;
       if (!igrejaId) return sendError(res, 400, 'Conta sem igreja vinculada. Contate o administrador.');
       const body = { ...req.body };
+      const requestedEmail = (body.email || '').toString().trim().toLowerCase();
       delete body.email;
       delete body._id;
+      let effectiveEmail = email;
+      if (requestedEmail && requestedEmail !== email && !requestedEmail.includes('@')) return sendError(res, 400, 'Email inválido.');
       normalizeVoluntarioMinisteriosPatch(body);
       if (body.areas && typeof body.areas === 'string') {
         body.areas = body.areas.split(',').map((a) => a.trim()).filter(Boolean);
@@ -3850,15 +3971,27 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
       }
       if (body.estado != null) body.estado = normalizarEstado(body.estado);
       if (body.cidade != null) body.cidade = normalizarCidade(body.cidade);
-      const perfil = await pgUpsertVoluntarioPerfil(igrejaId, email, body);
+      if (requestedEmail && requestedEmail !== email) {
+        const updatedUser = await pgUpdateUserEmailAndVoluntario({
+          userId: userRow._id,
+          igrejaId,
+          oldEmail: email,
+          newEmail: requestedEmail,
+        });
+        effectiveEmail = (updatedUser?.email || requestedEmail).toLowerCase().trim();
+        req.userEmail = effectiveEmail;
+        await updateCurrentAuthEmail(req, effectiveEmail);
+      }
+      const perfil = await pgUpsertVoluntarioPerfil(igrejaId, effectiveEmail, body);
       invalidateCache();
-      return res.json(perfil);
+      return res.json({ ...perfil, email: effectiveEmail });
     }
     if (!isMongo()) return sendError(res, 503, 'Perfil indisponível.');
-    const email = req.userEmail || (req.userId && (await User.findById(req.userId).select('email igrejaId').lean())?.email);
+    const sessionUser = req.userId ? await User.findById(req.userId).select('email igrejaId').lean() : null;
+    const email = sessionUser?.email || req.userEmail;
     if (!email) return sendError(res, 403, 'Perfil disponível apenas para usuários com email.');
     const uRow = req.userId
-      ? await User.findById(req.userId).select('igrejaId').lean()
+      ? sessionUser
       : await User.findOne({
         email: email.toLowerCase(),
         ...(req.authIgrejaIdStr && mongoose.Types.ObjectId.isValid(req.authIgrejaIdStr)
@@ -3867,8 +4000,11 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
       }).select('igrejaId').lean();
     if (!uRow?.igrejaId) return sendError(res, 400, 'Conta sem igreja vinculada. Contate o administrador.');
     const body = { ...req.body };
+    const requestedEmail = (body.email || '').toString().trim().toLowerCase();
     delete body.email;
     delete body._id;
+    let effectiveEmail = email.toLowerCase();
+    if (requestedEmail && requestedEmail !== effectiveEmail && !requestedEmail.includes('@')) return sendError(res, 400, 'Email inválido.');
     normalizeVoluntarioMinisteriosPatch(body);
     if (body.areas && typeof body.areas === 'string') body.areas = body.areas.split(',').map(a => a.trim()).filter(Boolean);
     if (body.batizado !== undefined) {
@@ -3892,15 +4028,30 @@ app.put('/api/me/perfil', requireAuth, async (req, res) => {
     }
     if (body.estado != null) body.estado = normalizarEstado(body.estado);
     if (body.cidade != null) body.cidade = normalizarCidade(body.cidade);
+    if (requestedEmail && requestedEmail !== effectiveEmail) {
+      const existingUser = await User.findOne({ email: requestedEmail, igrejaId: uRow.igrejaId, _id: { $ne: req.userId } }).select('_id').lean();
+      if (existingUser) return sendError(res, 409, 'Este email já está em uso nesta igreja.');
+      const existingVol = await Voluntario.findOne({ email: requestedEmail, igrejaId: uRow.igrejaId }).select('_id').lean();
+      if (existingVol) return sendError(res, 409, 'Este email já está em uso no cadastro de pessoas desta igreja.');
+      await User.updateOne({ _id: req.userId, igrejaId: uRow.igrejaId }, { $set: { email: requestedEmail } });
+      await Voluntario.updateOne(
+        { email: effectiveEmail, igrejaId: uRow.igrejaId },
+        { $set: { email: requestedEmail } },
+      );
+      effectiveEmail = requestedEmail;
+      req.userEmail = effectiveEmail;
+      await updateCurrentAuthEmail(req, effectiveEmail);
+    }
     const perfil = await Voluntario.findOneAndUpdate(
-      { email: email.toLowerCase(), igrejaId: uRow.igrejaId },
-      { $set: body, $setOnInsert: { email: email.toLowerCase(), igrejaId: uRow.igrejaId, ativo: true, fonte: 'manual' } },
+      { email: effectiveEmail, igrejaId: uRow.igrejaId },
+      { $set: body, $setOnInsert: { email: effectiveEmail, igrejaId: uRow.igrejaId, ativo: true, fonte: 'manual' } },
       { new: true, upsert: true, runValidators: true }
     ).lean();
     invalidateCache();
-    res.json(perfil);
+    res.json({ ...perfil, email: effectiveEmail });
   } catch (err) {
     console.error(err);
+    if (err?.code === 'email_conflict') return sendError(res, 409, err.message);
     sendError(res, 500, err.message || 'Erro ao salvar perfil.');
   }
 });
@@ -4188,7 +4339,7 @@ app.get('/api/versiculo-dia', requireAuth, async (req, res) => {
 app.post('/api/send-email', requireAuth, resolveTenant, requireAdmin, async (req, res) => {
   const { to, subject, html, text, voluntarios: voluntariosMap } = req.body;
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+  const from = defaultResendFrom();
   const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
 
   if (!apiKey) {
@@ -4400,10 +4551,10 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 
       const resetToken = crypto.randomBytes(32).toString('hex');
       await pgSetUserResetToken(user._id, resetToken, new Date(Date.now() + RESET_TOKEN_EXPIRES_MS));
-      const baseUrl = (process.env.APP_URL || '').trim() || `${req.protocol || 'https'}://${req.get('host') || req.headers.host || ''}`;
+      const baseUrl = resolveAppBaseUrl(req);
       const resetLink = `${baseUrl.replace(/\/$/, '')}?reset=${resetToken}`;
       const apiKey = process.env.RESEND_API_KEY;
-      const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+      const from = defaultResendFrom();
       const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
       if (apiKey) {
         const resend = new Resend(apiKey);
@@ -4456,10 +4607,10 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       { _id: user._id },
       { $set: { resetToken, resetTokenExpires: new Date(Date.now() + RESET_TOKEN_EXPIRES_MS) } }
     );
-    const baseUrl = (process.env.APP_URL || '').trim() || `${req.protocol || 'https'}://${req.get('host') || req.headers.host || ''}`;
+    const baseUrl = resolveAppBaseUrl(req);
     const resetLink = `${baseUrl.replace(/\/$/, '')}?reset=${resetToken}`;
     const apiKey = process.env.RESEND_API_KEY;
-    const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+    const from = defaultResendFrom();
     const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
     if (apiKey) {
       const resend = new Resend(apiKey);
@@ -4649,8 +4800,7 @@ app.post('/api/users', requireAuth, resolveTenant, requireAdmin, async (req, res
 });
 
 function buildConviteLiderPublicUrl(req, igrejaSlug, token) {
-  const base = (process.env.APP_URL || '').trim()
-    || `${req.protocol}://${req.get('host')}`;
+  const base = resolveAppBaseUrl(req);
   return `${base.replace(/\/$/, '')}/?igreja=${encodeURIComponent(igrejaSlug)}&convite-lider=${encodeURIComponent(token)}`;
 }
 
@@ -5121,8 +5271,10 @@ app.post('/api/send-cadastro-incompleto', requireAuth, resolveTenant, requireAdm
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) return sendError(res, 500, 'RESEND_API_KEY não configurada.');
     const dryRun = String(req.query.dry || 'false') !== 'false';
-    const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+    const from = defaultResendFrom();
     const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
+    const appBase = resolveAppBaseUrl(req);
+    const appHost = appBase.replace(/^https?:\/\//, '');
 
     let elegíveis;
     if (isPostgres()) {
@@ -5150,7 +5302,7 @@ app.post('/api/send-cadastro-incompleto', requireAuth, resolveTenant, requireAdm
 
     const buildHtml = (nome) => {
       const n = (nome || '').trim() || 'voluntário(a)';
-      return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Complete seu cadastro — ${BRAND_SHORT}</title></head><body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;"><tr><td align="center"><table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);"><tr><td style="background:#1a1a2e;padding:32px 40px;text-align:center;"><p style="margin:0;font-size:13px;color:#f59e0b;text-transform:uppercase;letter-spacing:.1em;font-weight:600;">Celeiro São Paulo</p><h1 style="margin:8px 0 0;font-size:24px;color:#ffffff;font-weight:700;">House of Prayer</h1></td></tr><tr><td style="padding:40px 40px 32px;"><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${n}</strong>! 👋</p><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;"><strong>Obrigado por servir como voluntário no Celeiro São Paulo!</strong> Sua dedicação é fundamental para que o propósito de Deus se cumpra aqui.</p><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Recebemos o seu check-in — mas ainda não temos seus dados completos em nossa base de voluntários. Para que possamos te conhecer melhor e manter um registro organizado do time, pedimos que você crie sua conta na plataforma e preencha suas informações.</p><table cellpadding="0" cellspacing="0" style="margin:32px auto;"><tr><td style="border-radius:8px;background:#f59e0b;"><a href="https://voluntariosceleirosp.com/" style="display:inline-block;padding:14px 36px;font-size:16px;font-weight:700;color:#1a1a2e;text-decoration:none;border-radius:8px;letter-spacing:.02em;">Criar minha conta agora →</a></td></tr></table><p style="margin:0 0 8px;font-size:15px;color:#374151;line-height:1.6;">Após criar sua conta e fazer login, você poderá:</p><ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.8;"><li>Acompanhar o histórico completo dos seus check-ins</li><li>Manter seus dados de contato atualizados</li><li>Ver os eventos e cultos disponíveis para voluntários</li></ul><p style="margin:0;font-size:15px;color:#374151;line-height:1.6;">Ficamos felizes em ter você no time. Se tiver qualquer dúvida, é só responder este email.</p></td></tr><tr><td style="padding:0 40px 40px;"><table cellpadding="0" cellspacing="0"><tr><td style="border-left:3px solid #f59e0b;padding-left:16px;"><p style="margin:0;font-size:15px;font-weight:700;color:#1a1a2e;">Com gratidão,</p><p style="margin:4px 0 0;font-size:14px;color:#6b7280;">${BRAND_NAME}</p><p style="margin:4px 0 0;font-size:13px;color:#9ca3af;"><a href="https://voluntariosceleirosp.com/" style="color:#f59e0b;text-decoration:none;">voluntariosceleirosp.com</a></p></td></tr></table></td></tr><tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:20px 40px;text-align:center;"><p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6;">Você recebeu este email porque realizou um check-in como voluntário no Celeiro SP.<br>Celeiro São Paulo · São Paulo, SP</p></td></tr></table></td></tr></table></body></html>`;
+      return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Complete seu cadastro — ${BRAND_SHORT}</title></head><body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;"><tr><td align="center"><table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);"><tr><td style="background:#1a1a2e;padding:32px 40px;text-align:center;"><p style="margin:0;font-size:13px;color:#f59e0b;text-transform:uppercase;letter-spacing:.1em;font-weight:600;">Celeiro São Paulo</p><h1 style="margin:8px 0 0;font-size:24px;color:#ffffff;font-weight:700;">House of Prayer</h1></td></tr><tr><td style="padding:40px 40px 32px;"><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${n}</strong>! 👋</p><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;"><strong>Obrigado por servir como voluntário no Celeiro São Paulo!</strong> Sua dedicação é fundamental para que o propósito de Deus se cumpra aqui.</p><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Recebemos o seu check-in — mas ainda não temos seus dados completos em nossa base de voluntários. Para que possamos te conhecer melhor e manter um registro organizado do time, pedimos que você crie sua conta na plataforma e preencha suas informações.</p><table cellpadding="0" cellspacing="0" style="margin:32px auto;"><tr><td style="border-radius:8px;background:#f59e0b;"><a href="${appBase}/" style="display:inline-block;padding:14px 36px;font-size:16px;font-weight:700;color:#1a1a2e;text-decoration:none;border-radius:8px;letter-spacing:.02em;">Criar minha conta agora →</a></td></tr></table><p style="margin:0 0 8px;font-size:15px;color:#374151;line-height:1.6;">Após criar sua conta e fazer login, você poderá:</p><ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.8;"><li>Acompanhar o histórico completo dos seus check-ins</li><li>Manter seus dados de contato atualizados</li><li>Ver os eventos e cultos disponíveis para voluntários</li></ul><p style="margin:0;font-size:15px;color:#374151;line-height:1.6;">Ficamos felizes em ter você no time. Se tiver qualquer dúvida, é só responder este email.</p></td></tr><tr><td style="padding:0 40px 40px;"><table cellpadding="0" cellspacing="0"><tr><td style="border-left:3px solid #f59e0b;padding-left:16px;"><p style="margin:0;font-size:15px;font-weight:700;color:#1a1a2e;">Com gratidão,</p><p style="margin:4px 0 0;font-size:14px;color:#6b7280;">${BRAND_NAME}</p><p style="margin:4px 0 0;font-size:13px;color:#9ca3af;"><a href="${appBase}/" style="color:#f59e0b;text-decoration:none;">${appHost}</a></p></td></tr></table></td></tr><tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:20px 40px;text-align:center;"><p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6;">Você recebeu este email porque realizou um check-in como voluntário no Celeiro SP.<br>Celeiro São Paulo · São Paulo, SP</p></td></tr></table></td></tr></table></body></html>`;
     };
 
     const resend = new Resend(apiKey);
@@ -5561,7 +5713,7 @@ app.post('/api/candidaturas/bulk-status', requireAuth, resolveTenant, async (req
             const resend = new Resend(process.env.RESEND_API_KEY);
             if (process.env.RESEND_API_KEY && escala) {
               await resend.emails.send({
-                from: process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>',
+                from: defaultResendFrom(),
                 to: c.email,
                 reply_to: process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com',
                 subject: `Participação confirmada — ${escala.nome || 'Escala'}`,
@@ -6370,7 +6522,7 @@ app.post('/api/candidaturas', candidaturaPublicLimiter, async (req, res) => {
         const escalaNome = escala?.nome || 'Escala';
         const nomeDisplay = (nome || '').toString().trim() || 'voluntário(a)';
         const resend = new Resend(apiKey);
-        const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+        const from = defaultResendFrom();
         const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
         await resend.emails.send({
           from, to: em, reply_to: replyTo,
@@ -6673,7 +6825,8 @@ app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, 
         try {
           const escala = await Escala.findOne({ _id: candidatura.escalaId, ...tQ(req) }).lean();
           const resend = new Resend(apiKey);
-          const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+          const from = defaultResendFrom();
+          const appBase = resolveAppBaseUrl(req);
           const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
           const nomeDisplay = (candidatura.nome || '').trim() || 'voluntário(a)';
           const escalaNome = escala?.nome || 'Escala';
@@ -6702,7 +6855,7 @@ app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, 
         <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">Você pode acompanhar suas escalas diretamente na plataforma:</p>
         <table cellpadding="0" cellspacing="0" style="margin:0 auto 24px;">
           <tr><td style="border-radius:8px;background:#f59e0b;">
-            <a href="https://voluntariosceleirosp.com/" style="display:inline-block;padding:14px 36px;font-size:16px;font-weight:700;color:#1a1a2e;text-decoration:none;border-radius:8px;">Ver minhas escalas →</a>
+            <a href="${appBase}/" style="display:inline-block;padding:14px 36px;font-size:16px;font-weight:700;color:#1a1a2e;text-decoration:none;border-radius:8px;">Ver minhas escalas →</a>
           </td></tr>
         </table>
         <p style="margin:0;font-size:15px;color:#374151;line-height:1.6;">Obrigado por servir! Se tiver dúvidas, responda este email.</p>
@@ -7294,7 +7447,18 @@ app.get('/', (req, res, next) => {
 });
 
 // Servir arquivos estáticos (deve estar APÓS as rotas da API)
-app.use(express.static(join(__dirname, '..')));
+app.use(express.static(join(__dirname, '..'), {
+  maxAge: '1h',
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      return;
+    }
+    if (/\.(?:js|css|png|jpg|jpeg|webp|gif|svg|ico|woff2?)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    }
+  },
+}));
 
 /** Correção única: check-ins com eventoId e dataCheckin errado (bug getEventDateStringSaoPaulo).
  *  Idempotente — registros já corretos não são tocados. */

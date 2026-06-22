@@ -1,12 +1,13 @@
 import { BRAND_NAME } from './brand.js';
 import { Resend } from 'resend';
 import { buildCeleiroEmailHtml, EMAIL_COLORS, escapeHtml } from './email-layout.js';
+import { DEFAULT_APP_URL, defaultResendFrom, normalizeAppBase } from './app-url.js';
 import { createMagicLoginLinkForEmail, buildPlatformAccessEmailBlock } from './magic-login.js';
 import { pgFindIgrejaById } from '../db/postgres/repos.js';
 import { listProximasEscalasAbertas } from './checkin-agradecimento-email.js';
 
 const DEFAULT_WHATSAPP_GROUP_URL = 'https://chat.whatsapp.com/GstzVqxAPeqIxGQwvAuLqJ?s=cl&p=i&ilr=2';
-const DEFAULT_VOLUNTARIO_FORM_URL = 'https://voluntariosceleirosp.com/f/vU7Ezsc';
+const DEFAULT_VOLUNTARIO_FORM_URL = `${DEFAULT_APP_URL}/f/vU7Ezsc`;
 
 function whatsappGroupUrl() {
   return (process.env.VOLUNTARIO_WHATSAPP_GROUP_URL || DEFAULT_WHATSAPP_GROUP_URL).trim();
@@ -21,7 +22,7 @@ function resendClient() {
   if (!apiKey) return null;
   return {
     resend: new Resend(apiKey),
-    from: process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>',
+    from: defaultResendFrom(),
     replyTo: process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com',
   };
 }
@@ -134,7 +135,7 @@ export async function sendVoluntarioCadastroAcolhimentoEmail({
     ? { nome: igrejaNome, slug: igrejaSlug || 'celeiro-sp' }
     : await pgFindIgrejaById(igrejaId);
   const slug = igreja?.slug || igrejaSlug || 'celeiro-sp';
-  const base = (appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
+  const base = normalizeAppBase(appBase);
   const proximasEscalas = await listProximasEscalasAbertas(igrejaId, {
     limit: 2,
     appBase: base,
@@ -222,7 +223,7 @@ export async function sendNovoMembroAcolhimentoEmail({
       voluntarioUrl: formUrl,
       igrejaNome: igNome,
       platformAccessHtml,
-      appBase: (appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, ''),
+      appBase: normalizeAppBase(appBase),
     }),
   });
 

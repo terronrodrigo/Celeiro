@@ -19,7 +19,7 @@ const MODE = process.argv.includes('--send') ? 'send'
 
 const mongoUri = (process.env.MONGODB_URI || '').trim().replace(/^["']|["']$/g, '');
 const resendKey = (process.env.RESEND_API_KEY || '').trim();
-const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <voluntarios@celeirosp.com>';
 const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
 const TEST_EMAIL = 'rodrigo.terron@gmail.com';
 
@@ -33,7 +33,7 @@ function buildHtml(nome) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Complete seu cadastro — Celeiro SP</title>
+  <title>Complete seu cadastro — Celeiro São Paulo</title>
 </head>
 <body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;">
@@ -44,8 +44,8 @@ function buildHtml(nome) {
           <!-- Header -->
           <tr>
             <td style="background:#1a1a2e;padding:32px 40px;text-align:center;">
-              <p style="margin:0;font-size:13px;color:#f59e0b;text-transform:uppercase;letter-spacing:.1em;font-weight:600;">Igreja Celeiro São Paulo</p>
-              <h1 style="margin:8px 0 0;font-size:24px;color:#ffffff;font-weight:700;">Equipe de Voluntários</h1>
+              <p style="margin:0;font-size:13px;color:#f59e0b;text-transform:uppercase;letter-spacing:.1em;font-weight:600;">Celeiro São Paulo</p>
+              <h1 style="margin:8px 0 0;font-size:24px;color:#ffffff;font-weight:700;">House of Prayer</h1>
             </td>
           </tr>
 
@@ -72,7 +72,7 @@ function buildHtml(nome) {
               <table cellpadding="0" cellspacing="0" style="margin:32px auto;">
                 <tr>
                   <td style="border-radius:8px;background:#f59e0b;">
-                    <a href="https://voluntariosceleirosp.com/"
+                    <a href="https://app.celeirosp.com/"
                        style="display:inline-block;padding:14px 36px;font-size:16px;font-weight:700;color:#1a1a2e;text-decoration:none;border-radius:8px;letter-spacing:.02em;">
                       Criar minha conta agora →
                     </a>
@@ -103,9 +103,9 @@ function buildHtml(nome) {
                 <tr>
                   <td style="border-left:3px solid #f59e0b;padding-left:16px;">
                     <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a2e;">Com gratidão,</p>
-                    <p style="margin:4px 0 0;font-size:14px;color:#6b7280;">Equipe Voluntários Celeiro São Paulo</p>
+                    <p style="margin:4px 0 0;font-size:14px;color:#6b7280;">Celeiro São Paulo</p>
                     <p style="margin:4px 0 0;font-size:13px;color:#9ca3af;">
-                      <a href="https://voluntariosceleirosp.com/" style="color:#f59e0b;text-decoration:none;">voluntariosceleirosp.com</a>
+                      <a href="https://app.celeirosp.com/" style="color:#f59e0b;text-decoration:none;">app.celeirosp.com</a>
                     </p>
                   </td>
                 </tr>
@@ -117,8 +117,8 @@ function buildHtml(nome) {
           <tr>
             <td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:20px 40px;text-align:center;">
               <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6;">
-                Você recebeu este email porque realizou um check-in como voluntário no Celeiro SP.<br>
-                Igreja Celeiro São Paulo · São Paulo, SP
+                Você recebeu este email porque realizou um check-in como voluntário no Celeiro São Paulo.<br>
+                Celeiro São Paulo · São Paulo, SP
               </p>
             </td>
           </tr>
@@ -180,7 +180,7 @@ async function main() {
         from,
         to: v.email,
         reply_to: replyTo,
-        subject: 'Complete seu cadastro — Voluntários Celeiro SP',
+        subject: 'Complete seu cadastro — Celeiro São Paulo',
         html: buildHtml(v.nome),
       });
       if (error) throw new Error(error.message || JSON.stringify(error));

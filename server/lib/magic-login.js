@@ -9,6 +9,7 @@ import {
   pgMarkMagicLoginTokenUsed,
 } from '../db/postgres/magic-login.js';
 import { EMAIL_COLORS, escapeHtml } from './email-layout.js';
+import { normalizeAppBase } from './app-url.js';
 
 const MAGIC_LINK_TTL_DAYS = Number(process.env.MAGIC_LINK_TTL_DAYS || 14);
 
@@ -33,7 +34,7 @@ export async function buildMagicLoginUrl({
   appBase,
   useShortLink = true,
 }) {
-  const base = (appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
+  const base = normalizeAppBase(appBase);
   const target = buildMagicLoginTarget({ token, igrejaSlug });
   if (!target) return base;
   if (useShortLink && igrejaId) {

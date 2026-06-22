@@ -77,6 +77,54 @@ export async function pgFindUserById(id) {
   return mapUserRow(rows[0]);
 }
 
+export async function pgUpdateUserEmailAndVoluntario({ userId, igrejaId, oldEmail, newEmail }) {
+  const oldEmailLower = String(oldEmail || '').trim().toLowerCase();
+  const newEmailLower = String(newEmail || '').trim().toLowerCase();
+  if (!userId || !igrejaId || !oldEmailLower || !newEmailLower) {
+    throw new Error('Dados insuficientes para alterar email.');
+  }
+  const pool = getPostgresPool();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: existingUsers } = await client.query(
+      'SELECT id FROM users WHERE igreja_id = $1 AND LOWER(email) = $2 AND id <> $3 LIMIT 1',
+      [igrejaId, newEmailLower, userId],
+    );
+    if (existingUsers.length) {
+      const err = new Error('Este email já está em uso nesta igreja.');
+      err.code = 'email_conflict';
+      throw err;
+    }
+    const { rows: existingVols } = await client.query(
+      'SELECT id FROM voluntarios WHERE igreja_id = $1 AND LOWER(email) = $2 AND LOWER(email) <> $3 LIMIT 1',
+      [igrejaId, newEmailLower, oldEmailLower],
+    );
+    if (existingVols.length) {
+      const err = new Error('Este email já está em uso no cadastro de pessoas desta igreja.');
+      err.code = 'email_conflict';
+      throw err;
+    }
+    await client.query(
+      'UPDATE users SET email = $2 WHERE id = $1 AND igreja_id = $3',
+      [userId, newEmailLower, igrejaId],
+    );
+    await client.query(
+      `UPDATE voluntarios
+       SET email = $3, dados = COALESCE(dados, '{}'::jsonb) || jsonb_build_object('email', $3), updated_at = NOW()
+       WHERE igreja_id = $1 AND LOWER(email) = $2`,
+      [igrejaId, oldEmailLower, newEmailLower],
+    );
+    await client.query('COMMIT');
+    return pgFindUserById(userId);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function pgHasAdmin() {
   const { rows } = await getPostgresPool().query(
     "SELECT 1 FROM users WHERE role = 'admin' LIMIT 1",

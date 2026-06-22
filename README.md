@@ -1,6 +1,6 @@
-# Plataforma de voluntários – Celeiro São Paulo
+# Celeiro São Paulo
 
-Aplicação em **https://voluntariosceleirosp.com/** para gestão de voluntários: check-in, escalas, cultos recorrentes, formulários e e-mail via [Resend](https://resend.com).
+Aplicação em **https://app.celeirosp.com/** para gestão de pessoas, voluntários, check-in, escalas, cultos recorrentes, formulários e e-mail via [Resend](https://resend.com).
 
 **Produção:** PostgreSQL no Railway (`DATABASE_URL`, `DB_PROVIDER=postgres`). MongoDB é opcional apenas para migração de dados antigos.
 
@@ -70,7 +70,7 @@ A API sobe em `http://localhost:3001` e expõe:
 
 ### 4. Frontend
 
-Em desenvolvimento, o servidor em `server/` já serve o `index.html`. O front chama a API em `http://localhost:3001`; em outro host, ajuste `API_BASE` em `app.js`. Em produção, defina `APP_URL=https://voluntariosceleirosp.com` (sem barra final) para metadados e links corretos.
+Em desenvolvimento, o servidor em `server/` já serve o `index.html`. O front chama a API em `http://localhost:3001`; em outro host, ajuste `API_BASE` em `app.js`. Em produção, defina `APP_URL=https://app.celeirosp.com` (sem barra final) para metadados e links corretos.
 
 ### 5. Login (admin)
 

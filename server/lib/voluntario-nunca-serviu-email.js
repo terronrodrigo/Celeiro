@@ -3,6 +3,7 @@ import { Resend } from 'resend';
 import { getHojeDateString, weekdayBrasilia } from './brasilia.js';
 import { getNowHHMMBrasilia } from './escala-checkin-rules.js';
 import { buildCeleiroEmailHtml, EMAIL_COLORS, escapeHtml } from './email-layout.js';
+import { defaultResendFrom, normalizeAppBase } from './app-url.js';
 import { createMagicLoginLinkForEmail, buildPlatformAccessEmailBlock } from './magic-login.js';
 import { pgFindIgrejaById, pgListIgrejas } from '../db/postgres/repos.js';
 import {
@@ -98,8 +99,8 @@ export async function sendVoluntarioNuncaServiuEmailsForIgreja({
   }
 
   const igreja = await pgFindIgrejaById(igrejaId);
-  const base = (appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
-  const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+  const base = normalizeAppBase(appBase);
+  const from = defaultResendFrom();
   const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
   const resend = new Resend(apiKey);
   const igNome = igreja?.nome || BRAND_NAME;

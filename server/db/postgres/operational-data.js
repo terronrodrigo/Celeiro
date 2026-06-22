@@ -187,8 +187,13 @@ export async function pgApplyCheckinComplemento(igrejaId, emailLower, { telefone
   return { ok: true };
 }
 
-export async function pgListVoluntarios(igrejaId) {
+export async function pgListVoluntarios(igrejaId, opts = {}) {
   const pool = getPostgresPool();
+  const q = String(opts.q || opts.search || '').trim().toLowerCase();
+  const offset = Math.max(0, Number(opts.offset) || 0);
+  const rawLimit = Number(opts.limit);
+  const hasPaging = Number.isFinite(rawLimit) && rawLimit > 0;
+  const limit = hasPaging ? Math.min(Math.max(1, rawLimit), 500) : null;
   const { rows: volRows } = await pool.query(
     `SELECT id, email, nome, dados, ativo, fonte FROM voluntarios
      WHERE igreja_id = $1 AND ${VOLUNTARIO_ATIVO_SQL} ORDER BY LOWER(email)`,
@@ -223,7 +228,27 @@ export async function pgListVoluntarios(igrejaId) {
     });
   }
 
-  return [...byEmail.values()];
+  let list = [...byEmail.values()];
+  if (q) {
+    list = list.filter((v) => {
+      const mins = splitVoluntarioMinisterios(v).join(' ').toLowerCase();
+      return String(v.nome || '').toLowerCase().includes(q)
+        || String(v.email || '').toLowerCase().includes(q)
+        || String(v.cidade || '').toLowerCase().includes(q)
+        || String(v.estado || '').toLowerCase().includes(q)
+        || String(v.ministerio || '').toLowerCase().includes(q)
+        || mins.includes(q);
+    });
+  }
+  const total = list.length;
+  if (hasPaging) {
+    list = list.slice(offset, offset + limit);
+    Object.defineProperty(list, 'pagination', {
+      enumerable: false,
+      value: { total, offset, limit, hasMore: offset + limit < total },
+    });
+  }
+  return list;
 }
 
 export async function pgListVoluntarioEmails(igrejaId) {

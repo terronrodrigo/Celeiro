@@ -7,6 +7,7 @@ import {
   buildCheckinShortLinkTarget,
 } from './checkin-public-url.js';
 import { buildCeleiroEmailHtml, EMAIL_COLORS, escapeHtml } from './email-layout.js';
+import { defaultResendFrom, normalizeAppBase } from './app-url.js';
 import { createMagicLoginLinkForEmail, buildPlatformAccessEmailBlock } from './magic-login.js';
 import { pgListVoluntarios } from '../db/postgres/operational-data.js';
 import { pgFindIgrejaById } from '../db/postgres/repos.js';
@@ -100,7 +101,7 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
   if (!apiKey) return { sent: 0, failed: 0, total: 0, skipped: true, reason: 'no_resend' };
 
   const igreja = await pgFindIgrejaById(evento.igrejaId);
-  const appBase = (opts.appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
+  const appBase = normalizeAppBase(opts.appBase);
   const igrejaSlug = igreja?.slug || 'celeiro-sp';
   const { href: checkinUrl, display: checkinUrlDisplay } = await resolveCheckinShareUrl({
     appBase,
@@ -135,7 +136,7 @@ export async function sendCheckinAberturaEmailsForEvento(evento, opts = {}) {
     return { sent: 0, failed: 0, total: 0, checkinUrl };
   }
 
-  const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+  const from = defaultResendFrom();
   const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
   const resend = new Resend(apiKey);
   const subject = `Check-in aberto — ${eventoLabel}${eventoDataLabel ? ` (${eventoDataLabel})` : ''}`;

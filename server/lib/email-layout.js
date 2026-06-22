@@ -1,4 +1,5 @@
 import { BRAND_NAME, BRAND_SHORT, BRAND_TAGLINE } from './brand.js';
+import { normalizeAppBase } from './app-url.js';
 
 /** Paleta Celeiro v3 para emails (clientes não suportam CSS variables). */
 export const EMAIL_COLORS = {
@@ -23,7 +24,7 @@ function escapeHtml(s) {
 
 /** URL absoluta do logo preto (mesmo da plataforma: fundo claro). */
 export function emailLogoUrl(appBase) {
-  const base = (appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
+  const base = normalizeAppBase(appBase);
   return `${base}/assets/logo-hop-dark-transparent.png`;
 }
 

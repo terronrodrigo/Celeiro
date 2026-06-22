@@ -431,6 +431,9 @@ function updateAuthUi() {
 /** Limpa dados em memória e DOM de conteúdo por usuário, para não exibir tela do login anterior ao trocar de perfil. */
 function clearUserContent() {
   voluntarios = [];
+  voluntariosPagination = null;
+  voluntariosServerQuery = '';
+  voluntariosPageOffset = 0;
   resumo = {};
   checkins = [];
   checkinResumo = {};
@@ -525,6 +528,9 @@ function persistIgrejaSlugToStorage(slug) {
 /** Limpa dados carregados da API para trocar de tenant sem perder a view atual. */
 function clearTenantScopedData() {
   voluntarios = [];
+  voluntariosPagination = null;
+  voluntariosServerQuery = '';
+  voluntariosPageOffset = 0;
   resumo = {};
   checkins = [];
   checkinResumo = {};
@@ -919,6 +925,8 @@ function runWithTimeout(viewName, fetchFn, timeoutMs) {
 
 const LIST_PAGE_SIZE = 50;
 let voluntariosPageOffset = 0;
+let voluntariosPagination = null;
+let voluntariosServerQuery = '';
 let checkinsDisplayLimit = LIST_PAGE_SIZE;
 let checkinsMinisterioDisplayLimit = LIST_PAGE_SIZE;
 let eventosCheckinDisplayLimit = LIST_PAGE_SIZE;
@@ -1069,6 +1077,10 @@ async function fetchVoluntarios(opts) {
     updateAuthUi();
     return;
   }
+  const q = (searchInput?.value || '').trim();
+  const useServerSearch = authRole === 'admin' && currentView === 'voluntarios' && q.length >= 2;
+  const serverOffset = Math.max(0, Number(opts.serverOffset) || 0);
+  const appendServerPage = useServerSearch && serverOffset > 0 && q === voluntariosServerQuery;
   const useGlobalLoading = opts.showGlobalLoading !== false;
   if (useGlobalLoading) showLoading(true);
   let settled = false;
@@ -1084,7 +1096,13 @@ async function fetchVoluntarios(opts) {
     const minPromise = authRole === 'admin'
       ? authFetch(`${API_BASE}/api/ministros`)
       : Promise.resolve(null);
-    const r = await authFetch(`${API_BASE}/api/voluntarios`);
+    const params = new URLSearchParams();
+    if (useServerSearch) {
+      params.set('q', q);
+      params.set('limit', String(LIST_PAGE_SIZE));
+      params.set('offset', String(serverOffset));
+    }
+    const r = await authFetch(`${API_BASE}/api/voluntarios${params.toString() ? `?${params.toString()}` : ''}`);
     if (settled) return;
     if (!r.ok) {
       const msg = await extractErrorMessage(r, `HTTP ${r.status}`);
@@ -1094,7 +1112,11 @@ async function fetchVoluntarios(opts) {
       r.json(),
       minPromise?.then((res) => (res?.ok ? res.json() : null)).catch(() => null),
     ]);
-    voluntarios = data.voluntarios || [];
+    const nextVoluntarios = data.voluntarios || [];
+    voluntarios = appendServerPage ? [...voluntarios, ...nextVoluntarios] : nextVoluntarios;
+    voluntariosPagination = useServerSearch ? (data.pagination || null) : null;
+    voluntariosServerQuery = useServerSearch ? q : '';
+    if (!useServerSearch) voluntariosPageOffset = 0;
     resumo = data.resumo || {};
     if (Array.isArray(minData)) ministrosList = minData;
     render();
@@ -3321,6 +3343,7 @@ async function savePerfil(e) {
   const areasStr = perfilAreas?.value?.trim();
   const payload = {
     nome: perfilNome?.value?.trim(),
+    email: perfilEmail?.value?.trim(),
     nascimento: nascimentoDateInputToApi(perfilNascimento?.value) || undefined,
     whatsapp: whatsappRaw || undefined,
     pais: perfilPais?.value?.trim(),
@@ -3345,6 +3368,21 @@ async function savePerfil(e) {
       body: JSON.stringify(payload),
     });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Falha ao salvar');
+    const saved = await r.json().catch(() => ({}));
+    if (saved?.email) {
+      authEmail = String(saved.email).trim().toLowerCase();
+      if (perfilEmail) perfilEmail.value = authEmail;
+      try {
+        const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          parsed.email = authEmail;
+          if (parsed.user && typeof parsed.user === 'object') parsed.user.email = authEmail;
+          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
+        }
+      } catch (_) {}
+      updateUserCard();
+    }
     alert('Perfil salvo.');
   } catch (e) {
     alert(e.message || 'Erro ao salvar perfil.');
@@ -3843,6 +3881,18 @@ function updateVoluntariosRangeAndMore(total) {
   const rangeEl = document.getElementById('voluntariosRange');
   const btnMore = document.getElementById('btnVerMaisVoluntarios');
   if (!rangeEl) return;
+  if (voluntariosPagination) {
+    const loaded = Array.isArray(voluntarios) ? voluntarios.length : 0;
+    const allTotal = Number(voluntariosPagination.total) || loaded;
+    if (allTotal <= LIST_PAGE_SIZE && loaded >= allTotal) {
+      rangeEl.textContent = '';
+      if (btnMore) btnMore.style.display = 'none';
+      return;
+    }
+    rangeEl.textContent = ` — exibindo ${Math.min(loaded, allTotal)} de ${allTotal}`;
+    if (btnMore) btnMore.style.display = voluntariosPagination.hasMore ? 'inline-block' : 'none';
+    return;
+  }
   const showing = Math.min(voluntariosPageOffset + LIST_PAGE_SIZE, total);
   if (total <= LIST_PAGE_SIZE) {
     rangeEl.textContent = '';
@@ -3861,7 +3911,7 @@ function renderTable(list) {
   voluntariosBody.innerHTML = '';
   const arr = Array.isArray(list) ? list : [];
   const total = arr.length;
-  const slice = arr.slice(voluntariosPageOffset, voluntariosPageOffset + LIST_PAGE_SIZE);
+  const slice = voluntariosPagination ? arr : arr.slice(voluntariosPageOffset, voluntariosPageOffset + LIST_PAGE_SIZE);
   slice.forEach(v => {
     const tr = document.createElement('tr');
     const email = (v.email || '').toLowerCase();
@@ -7834,6 +7884,16 @@ document.getElementById('topIgrejaSelect')?.addEventListener('change', async () 
 });
 
 const debouncedSearch = debounce(() => {
+  voluntariosPageOffset = 0;
+  const q = (searchInput?.value || '').trim();
+  if (currentView === 'voluntarios' && authRole === 'admin' && q.length >= 2) {
+    fetchVoluntarios({ showGlobalLoading: false, serverOffset: 0 });
+    return;
+  }
+  if (voluntariosPagination || voluntariosServerQuery) {
+    fetchVoluntarios({ showGlobalLoading: false });
+    return;
+  }
   refreshVoluntariosView();
 }, 300);
 searchInput?.addEventListener('input', debouncedSearch);
@@ -7965,6 +8025,11 @@ document.getElementById('usuariosSearch')?.addEventListener('change', () => { if
 document.getElementById('usuariosFilterAtivo')?.addEventListener('change', () => { if (currentView === 'usuarios') fetchUsers(); });
 btnClearFilters?.addEventListener('click', clearFilters);
 document.getElementById('btnVerMaisVoluntarios')?.addEventListener('click', () => {
+  if (voluntariosPagination) {
+    const nextOffset = Number(voluntariosPagination.offset || 0) + Number(voluntariosPagination.limit || LIST_PAGE_SIZE);
+    fetchVoluntarios({ showGlobalLoading: false, serverOffset: nextOffset });
+    return;
+  }
   voluntariosPageOffset += LIST_PAGE_SIZE;
   renderTable(getFilteredVoluntarios());
 });

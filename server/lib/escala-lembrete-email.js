@@ -1,5 +1,6 @@
 import { BRAND_NAME } from './brand.js';
 import { Resend } from 'resend';
+import { defaultResendFrom, normalizeAppBase } from './app-url.js';
 import {
   formatDataPtBr,
   escalaDataToYMD,
@@ -169,7 +170,7 @@ export async function sendEscalaLembreteEmailsForIgreja({
 
   const igreja = await pgFindIgrejaById(igrejaId);
   const slug = igreja?.slug || 'celeiro-sp';
-  const base = (appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
+  const base = normalizeAppBase(appBase);
   const cultoDataLabel = formatDataPtBr(cultoDataYmd);
 
   const escalasResumo = upcomingEscalas.map((e) => ({
@@ -202,7 +203,7 @@ export async function sendEscalaLembreteEmailsForIgreja({
     return { sent: 0, failed: 0, total: 0 };
   }
 
-  const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+  const from = defaultResendFrom();
   const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
   const resend = new Resend(apiKey);
   const subject = `${cfg.assuntoPrefix}${cultoDataLabel ? ` — ${cultoDataLabel}` : ''} · Inscrições abertas`;
@@ -409,7 +410,7 @@ export async function sendEscalaAberturaEmailsCustom({
 
   const igreja = await pgFindIgrejaById(igrejaId);
   const slug = igreja?.slug || 'celeiro-sp';
-  const base = (appBase || process.env.APP_URL || 'https://voluntariosceleirosp.com').replace(/\/$/, '');
+  const base = normalizeAppBase(appBase);
   const mensagemHtml = escapeHtmlEmail(mensagem);
 
   const escalasResumo = abertas.map((e) => {
@@ -435,7 +436,7 @@ export async function sendEscalaAberturaEmailsCustom({
     : [];
   const pastEscalaById = new Map(pastEscalas.map((e) => [String(e._id), e]));
 
-  const from = process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>';
+  const from = defaultResendFrom();
   const replyTo = process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com';
   const resend = new Resend(apiKey);
   const tituloEscalas = abertas.length === 1

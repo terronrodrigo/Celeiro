@@ -8,7 +8,7 @@ import { Resend } from 'resend';
 
 const to = process.argv[2] || 'rodrigo.terron@gmail.com';
 const apiKey = (process.env.RESEND_API_KEY || '').trim();
-const from = (process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <info@voluntariosceleirosp.com>').trim();
+const from = (process.env.RESEND_FROM_EMAIL || 'Celeiro São Paulo <voluntarios@celeirosp.com>').trim();
 const replyTo = (process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com').trim();
 
 if (!apiKey) {
@@ -24,8 +24,8 @@ async function main() {
     from,
     to,
     reply_to: replyTo,
-    subject: 'Teste Resend - Celeiro SP',
-    html: '<p>Este é um email de teste do dashboard Celeiro SP.</p><p>Se você recebeu, o Resend está configurado corretamente.</p><p>— Celeiro SP</p>',
+    subject: 'Teste Resend - Celeiro São Paulo',
+    html: '<p>Este é um email de teste da plataforma Celeiro São Paulo.</p><p>Se você recebeu, o Resend está configurado corretamente.</p><p>— Celeiro São Paulo</p>',
   });
   if (error) {
     console.error('Falha ao enviar:', error.message);
