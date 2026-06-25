@@ -78,6 +78,7 @@ import {
   pgAssociarEventoCheckinAEscala,
 } from './db/postgres/escalas-checkin.js';
 import { buildCheckinPublicUrl } from './lib/checkin-public-url.js';
+import { appendAccountDeletionNotice } from './lib/email-layout.js';
 import { defaultResendFrom, legacyRedirectHosts, normalizeAppBase, resolveAppBaseUrl } from './lib/app-url.js';
 import { generateCheckinQrPng, generateCheckinQrEmailBuffer } from './lib/checkin-qrcode.js';
 import { sendCheckinAberturaEmailsForEvento, runCheckinAberturaEmailJob } from './lib/checkin-abertura-email.js';
@@ -2420,7 +2421,7 @@ async function sendCandidaturaAprovacaoEmailPg(candidaturaPg, req) {
   await resend.emails.send({
     from, to: candidaturaPg.email, reply_to: replyTo,
     subject: `Participação confirmada — ${escalaNome}`,
-    html: `<!DOCTYPE html><html lang="pt-BR"><body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif">
+    html: appendAccountDeletionNotice(`<!DOCTYPE html><html lang="pt-BR"><body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,sans-serif">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0"><tr><td align="center">
   <table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
     <tr><td style="background:#1a1a2e;padding:32px 40px;text-align:center">
@@ -2436,7 +2437,7 @@ async function sendCandidaturaAprovacaoEmailPg(candidaturaPg, req) {
       <p style="font-size:14px;color:#6b7280">Se preferir, abra a plataforma e vá em "Escalas" para acompanhar.</p>
     </td></tr>
   </table>
-</td></tr></table></body></html>`,
+</td></tr></table></body></html>`),
   });
   return true;
 }
@@ -4374,7 +4375,10 @@ app.post('/api/send-email', requireAuth, resolveTenant, requireAdmin, async (req
   try {
     const results = [];
     for (const email of validTo) {
-      const htmlFinal = baseHtml ? personalize(baseHtml, email) : undefined;
+      const htmlFinal = baseHtml ? appendAccountDeletionNotice(personalize(baseHtml, email)) : undefined;
+      const textFinal = !html && text
+        ? `${personalize(text, email)}\n\nPara solicitar a exclusão da sua conta, envie um email para info@celeirosp.com.`
+        : undefined;
       try {
         const { data, error } = await resend.emails.send({
           from,
@@ -4382,7 +4386,7 @@ app.post('/api/send-email', requireAuth, resolveTenant, requireAdmin, async (req
           reply_to: replyTo,
           subject,
           html: htmlFinal,
-          text: !html && text ? personalize(text, email) : undefined,
+          text: textFinal,
         });
         results.push({ email, id: data?.id, error: error?.message });
       } catch (e) {
@@ -4564,7 +4568,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
           to: email,
           reply_to: replyTo,
           subject: `Redefinição de senha - ${BRAND_SHORT}`,
-          html: `<p>Olá, ${nome}!</p><p>Você solicitou a redefinição de senha. Clique no link abaixo para definir uma nova senha (válido por 1 hora):</p><p><a href="${resetLink}">Redefinir senha</a></p><p>Se você não solicitou isso, ignore este email.</p><p>— ${BRAND_NAME}</p>`,
+          html: appendAccountDeletionNotice(`<p>Olá, ${nome}!</p><p>Você solicitou a redefinição de senha. Clique no link abaixo para definir uma nova senha (válido por 1 hora):</p><p><a href="${resetLink}">Redefinir senha</a></p><p>Se você não solicitou isso, ignore este email.</p><p>— ${BRAND_NAME}</p>`),
         });
       }
       return res.json({ message: genericMessage });
@@ -4620,7 +4624,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
         to: email,
         reply_to: replyTo,
         subject: `Redefinição de senha - ${BRAND_SHORT}`,
-        html: `<p>Olá, ${nome}!</p><p>Você solicitou a redefinição de senha. Clique no link abaixo para definir uma nova senha (válido por 1 hora):</p><p><a href="${resetLink}">Redefinir senha</a></p><p>Se você não solicitou isso, ignore este email.</p><p>— ${BRAND_NAME}</p>`,
+        html: appendAccountDeletionNotice(`<p>Olá, ${nome}!</p><p>Você solicitou a redefinição de senha. Clique no link abaixo para definir uma nova senha (válido por 1 hora):</p><p><a href="${resetLink}">Redefinir senha</a></p><p>Se você não solicitou isso, ignore este email.</p><p>— ${BRAND_NAME}</p>`),
       });
     }
     return res.json({ message: genericMessage });
@@ -5302,7 +5306,7 @@ app.post('/api/send-cadastro-incompleto', requireAuth, resolveTenant, requireAdm
 
     const buildHtml = (nome) => {
       const n = (nome || '').trim() || 'voluntário(a)';
-      return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Complete seu cadastro — ${BRAND_SHORT}</title></head><body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;"><tr><td align="center"><table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);"><tr><td style="background:#1a1a2e;padding:32px 40px;text-align:center;"><p style="margin:0;font-size:13px;color:#f59e0b;text-transform:uppercase;letter-spacing:.1em;font-weight:600;">Celeiro São Paulo</p><h1 style="margin:8px 0 0;font-size:24px;color:#ffffff;font-weight:700;">House of Prayer</h1></td></tr><tr><td style="padding:40px 40px 32px;"><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${n}</strong>! 👋</p><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;"><strong>Obrigado por servir como voluntário no Celeiro São Paulo!</strong> Sua dedicação é fundamental para que o propósito de Deus se cumpra aqui.</p><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Recebemos o seu check-in — mas ainda não temos seus dados completos em nossa base de voluntários. Para que possamos te conhecer melhor e manter um registro organizado do time, pedimos que você crie sua conta na plataforma e preencha suas informações.</p><table cellpadding="0" cellspacing="0" style="margin:32px auto;"><tr><td style="border-radius:8px;background:#f59e0b;"><a href="${appBase}/" style="display:inline-block;padding:14px 36px;font-size:16px;font-weight:700;color:#1a1a2e;text-decoration:none;border-radius:8px;letter-spacing:.02em;">Criar minha conta agora →</a></td></tr></table><p style="margin:0 0 8px;font-size:15px;color:#374151;line-height:1.6;">Após criar sua conta e fazer login, você poderá:</p><ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.8;"><li>Acompanhar o histórico completo dos seus check-ins</li><li>Manter seus dados de contato atualizados</li><li>Ver os eventos e cultos disponíveis para voluntários</li></ul><p style="margin:0;font-size:15px;color:#374151;line-height:1.6;">Ficamos felizes em ter você no time. Se tiver qualquer dúvida, é só responder este email.</p></td></tr><tr><td style="padding:0 40px 40px;"><table cellpadding="0" cellspacing="0"><tr><td style="border-left:3px solid #f59e0b;padding-left:16px;"><p style="margin:0;font-size:15px;font-weight:700;color:#1a1a2e;">Com gratidão,</p><p style="margin:4px 0 0;font-size:14px;color:#6b7280;">${BRAND_NAME}</p><p style="margin:4px 0 0;font-size:13px;color:#9ca3af;"><a href="${appBase}/" style="color:#f59e0b;text-decoration:none;">${appHost}</a></p></td></tr></table></td></tr><tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:20px 40px;text-align:center;"><p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6;">Você recebeu este email porque realizou um check-in como voluntário no Celeiro SP.<br>Celeiro São Paulo · São Paulo, SP</p></td></tr></table></td></tr></table></body></html>`;
+      return appendAccountDeletionNotice(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Complete seu cadastro — ${BRAND_SHORT}</title></head><body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;"><table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;"><tr><td align="center"><table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);"><tr><td style="background:#1a1a2e;padding:32px 40px;text-align:center;"><p style="margin:0;font-size:13px;color:#f59e0b;text-transform:uppercase;letter-spacing:.1em;font-weight:600;">Celeiro São Paulo</p><h1 style="margin:8px 0 0;font-size:24px;color:#ffffff;font-weight:700;">House of Prayer</h1></td></tr><tr><td style="padding:40px 40px 32px;"><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Olá, <strong>${n}</strong>! 👋</p><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;"><strong>Obrigado por servir como voluntário no Celeiro São Paulo!</strong> Sua dedicação é fundamental para que o propósito de Deus se cumpra aqui.</p><p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">Recebemos o seu check-in — mas ainda não temos seus dados completos em nossa base de voluntários. Para que possamos te conhecer melhor e manter um registro organizado do time, pedimos que você crie sua conta na plataforma e preencha suas informações.</p><table cellpadding="0" cellspacing="0" style="margin:32px auto;"><tr><td style="border-radius:8px;background:#f59e0b;"><a href="${appBase}/" style="display:inline-block;padding:14px 36px;font-size:16px;font-weight:700;color:#1a1a2e;text-decoration:none;border-radius:8px;letter-spacing:.02em;">Criar minha conta agora →</a></td></tr></table><p style="margin:0 0 8px;font-size:15px;color:#374151;line-height:1.6;">Após criar sua conta e fazer login, você poderá:</p><ul style="margin:0 0 24px;padding-left:20px;color:#374151;font-size:15px;line-height:1.8;"><li>Acompanhar o histórico completo dos seus check-ins</li><li>Manter seus dados de contato atualizados</li><li>Ver os eventos e cultos disponíveis para voluntários</li></ul><p style="margin:0;font-size:15px;color:#374151;line-height:1.6;">Ficamos felizes em ter você no time. Se tiver qualquer dúvida, é só responder este email.</p></td></tr><tr><td style="padding:0 40px 40px;"><table cellpadding="0" cellspacing="0"><tr><td style="border-left:3px solid #f59e0b;padding-left:16px;"><p style="margin:0;font-size:15px;font-weight:700;color:#1a1a2e;">Com gratidão,</p><p style="margin:4px 0 0;font-size:14px;color:#6b7280;">${BRAND_NAME}</p><p style="margin:4px 0 0;font-size:13px;color:#9ca3af;"><a href="${appBase}/" style="color:#f59e0b;text-decoration:none;">${appHost}</a></p></td></tr></table></td></tr><tr><td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:20px 40px;text-align:center;"><p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.6;">Você recebeu este email porque realizou um check-in como voluntário no Celeiro SP.<br>Celeiro São Paulo · São Paulo, SP</p></td></tr></table></td></tr></table></body></html>`);
     };
 
     const resend = new Resend(apiKey);
@@ -5717,7 +5721,7 @@ app.post('/api/candidaturas/bulk-status', requireAuth, resolveTenant, async (req
                 to: c.email,
                 reply_to: process.env.RESEND_REPLY_TO || 'voluntariosceleiro@gmail.com',
                 subject: `Participação confirmada — ${escala.nome || 'Escala'}`,
-                html: `<p>Olá! Sua participação na escala <strong>${escala.nome}</strong> foi confirmada. Obrigado por servir!</p>`,
+                html: appendAccountDeletionNotice(`<p>Olá! Sua participação na escala <strong>${escala.nome}</strong> foi confirmada. Obrigado por servir!</p>`),
               });
               await Candidatura.updateOne({ _id: c._id, ...tQ(req) }, { emailEnviado: true });
             }
@@ -6527,7 +6531,7 @@ app.post('/api/candidaturas', candidaturaPublicLimiter, async (req, res) => {
         await resend.emails.send({
           from, to: em, reply_to: replyTo,
           subject: `Recebemos sua candidatura — ${escalaNome}`,
-          html: `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Recebemos sua candidatura</title></head>
+          html: appendAccountDeletionNotice(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Recebemos sua candidatura</title></head>
 <body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;">
   <tr><td align="center">
@@ -6557,7 +6561,7 @@ app.post('/api/candidaturas', candidaturaPublicLimiter, async (req, res) => {
     </table>
   </td></tr>
 </table>
-</body></html>`,
+</body></html>`),
         });
       } catch (_) {}
     }
@@ -6833,7 +6837,7 @@ app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, 
           const { error } = await resend.emails.send({
             from, to: candidatura.email, reply_to: replyTo,
             subject: `Participação confirmada — ${escalaNome}`,
-            html: `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Participação confirmada</title></head>
+            html: appendAccountDeletionNotice(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Participação confirmada</title></head>
 <body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 0;">
   <tr><td align="center">
@@ -6874,7 +6878,7 @@ app.put('/api/candidaturas/:id/status', requireAuth, resolveTenant, async (req, 
     </table>
   </td></tr>
 </table>
-</body></html>`,
+</body></html>`),
           });
           if (!error) await Candidatura.updateOne({ _id: candidatura._id, ...tQ(req) }, { emailEnviado: true });
         } catch (_) {}

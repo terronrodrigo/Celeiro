@@ -14,12 +14,34 @@ export const EMAIL_COLORS = {
   accentSoft: '#f3e8e4',
 };
 
+export const ACCOUNT_DELETION_EMAIL = 'info@celeirosp.com';
+
 function escapeHtml(s) {
   return String(s ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+export function accountDeletionMailto() {
+  const subject = encodeURIComponent('Solicitação de exclusão de conta');
+  const body = encodeURIComponent('Olá, gostaria de solicitar a exclusão da minha conta na plataforma Celeiro São Paulo.');
+  return `mailto:${ACCOUNT_DELETION_EMAIL}?subject=${subject}&body=${body}`;
+}
+
+export function buildAccountDeletionNotice() {
+  const c = EMAIL_COLORS;
+  return `<p style="margin:10px 0 0;font-size:11px;color:${c.textMuted};line-height:1.5;">Se quiser solicitar a exclusão da sua conta e dos seus dados de cadastro na plataforma, envie um email para <a href="${accountDeletionMailto()}" style="color:${c.accent};text-decoration:underline;">${ACCOUNT_DELETION_EMAIL}</a>.</p>`;
+}
+
+export function appendAccountDeletionNotice(html) {
+  const notice = buildAccountDeletionNotice();
+  const block = `<div style="font-family:'DM Sans','Segoe UI',Arial,sans-serif;text-align:center;padding:16px 24px;color:${EMAIL_COLORS.textMuted};">${notice}</div>`;
+  const source = String(html || '');
+  if (source.includes(ACCOUNT_DELETION_EMAIL) || source.includes('Solicitação de exclusão de conta')) return source;
+  if (/<\/body>/i.test(source)) return source.replace(/<\/body>/i, `${block}</body>`);
+  return `${source}${block}`;
 }
 
 /** URL absoluta do logo preto (mesmo da plataforma: fundo claro). */
@@ -94,6 +116,7 @@ ${pre}
       <tr>
         <td style="background:${c.accentSoft};border-top:1px solid ${c.border};padding:18px 28px;text-align:center;">
           <p style="margin:0;font-size:12px;color:${c.textMuted};line-height:1.5;">${escapeHtml(footerNote || BRAND_NAME)}</p>
+          ${buildAccountDeletionNotice()}
         </td>
       </tr>
     </table>
